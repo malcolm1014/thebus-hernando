@@ -1,0 +1,19 @@
+{
+  "name": "thebus-hernando",
+  "version": "1.0.0",
+  "description": "Offline-first 90s-terminal transit assistant for Hernando County, FL. Vanilla JS/HTML/CSS bundled into a native Android shell via Capacitor.",
+  "scripts": {
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "add:android": "cap add android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/preferences": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

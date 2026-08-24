@@ -1,0 +1,183 @@
+const { gtfsTimeToMinutes } = require('./gtfsParse');
+
+const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+/**
+ * Flattens relational GTFS tables into the shape the mobile client wants:
+ * fast lookup by stop, with arrival times pre-converted to minutes-past-
+ * midnight so the client never has to parse a time string or join tables
+ * on-device.
+ *
+ * Output shape:
+ * {
+ *   generatedAt: ISO string,
+ *   services: { [service_id]: { monday..sunday: bool, startDate, endDate, addedDates: [], removedDates: [] } },
+ *   routes:   { [route_id]: { id, shortName, longName, color, textColor, stopIds: [stop_id in first-seen trip order] } },
+ *   stops:    {
+ *     [stop_id]: {
+ *       id, name, lat, lon,
+ *       routes: [
+ *         { routeId, shortName, longName, color,
+ *           arrivals: [ { tripId, serviceId, headsign, minutes } ]  // sorted ascending, minutes may exceed 1440
+ *         }
+ *       ]
+ *     }
+ *   }
+ * }
+ */
+function transform({ routes, trips, stops, stopTimes, calendar, calendarDates }) {
+  // --- services: which days of the week / date exceptions each service_id runs ---
+  const services = {};
+  for (const c of calendar) {
+    services[c.service_id] = {
+      monday: c.monday === '1',
+      tuesday: c.tuesday === '1',
+      wednesday: c.wednesday === '1',
+      thursday: c.thursday === '1',
+      friday: c.friday === '1',
+      saturday: c.saturday === '1',
+      sunday: c.sunday === '1',
+      startDate: c.start_date,
+      endDate: c.end_date,
+      addedDates: [],
+      removedDates: [],
+    };
+  }
+  for (const cd of calendarDates) {
+    if (!services[cd.service_id]) {
+      // service defined only via exceptions (no calendar.txt row) -- start empty
+      services[cd.service_id] = {
+        monday: false, tuesday: false, wednesday: false, thursday: false,
+        friday: false, saturday: false, sunday: false,
+        startDate: null, endDate: null, addedDates: [], removedDates: [],
+      };
+    }
+    if (cd.exception_type === '1') services[cd.service_id].addedDates.push(cd.date);
+    else if (cd.exception_type === '2') services[cd.service_id].removedDates.push(cd.date);
+  }
+
+  // --- routes lookup ---
+  const routeById = {};
+  for (const r of routes) {
+    routeById[r.route_id] = {
+      id: r.route_id,
+      shortName: r.route_short_name || '',
+      longName: r.route_long_name || '',
+      color: r.route_color ? `#${r.route_color}` : null,
+      textColor: r.route_text_color ? `#${r.route_text_color}` : null,
+      stopIds: [], // filled below, first-seen trip order (a reasonable proxy for stop sequence)
+    };
+  }
+
+  // --- trip_id -> {route_id, service_id, headsign} ---
+  const tripInfo = {};
+  for (const t of trips) {
+    tripInfo[t.trip_id] = {
+      routeId: t.route_id,
+      serviceId: t.service_id,
+      headsign: t.trip_headsign || '', // resolved below once stop_times are walked, if still blank
+    };
+  }
+
+  // --- stops lookup, seeded from stops.txt ---
+  const stopById = {};
+  for (const s of stops) {
+    stopById[s.stop_id] = {
+      id: s.stop_id,
+      name: s.stop_name || s.stop_id,
+      lat: s.stop_lat ? Number(s.stop_lat) : null,
+      lon: s.stop_lon ? Number(s.stop_lon) : null,
+      routesById: {}, // temp working map, flattened to an array at the end
+    };
+  }
+
+  // --- walk stop_times.txt: this is the big join that builds arrivals ---
+  // Group by trip first so we can preserve each trip's real stop sequence
+  // (needed for routes[].stopIds) while also emitting per-stop arrivals.
+  const stopTimesByTrip = new Map();
+  for (const st of stopTimes) {
+    if (!stopTimesByTrip.has(st.trip_id)) stopTimesByTrip.set(st.trip_id, []);
+    stopTimesByTrip.get(st.trip_id).push(st);
+  }
+
+  const seenRouteStops = new Map(); // routeId -> Set of stopIds already recorded, to keep stopIds ordered+unique
+
+  for (const [tripId, rows] of stopTimesByTrip) {
+    const trip = tripInfo[tripId];
+    if (!trip) continue; // orphaned stop_time row with no matching trip
+    const route = routeById[trip.routeId];
+    if (!route) continue;
+
+    rows.sort((a, b) => Number(a.stop_sequence) - Number(b.stop_sequence));
+
+    // Some feeds (Hernando County's included) leave trip_headsign blank
+    // entirely. Fall back to the trip's actual final stop as the
+    // effective destination -- still real data, just derived instead of
+    // authored, and far more useful to a rider than repeating the route
+    // name back at them.
+    if (!trip.headsign) {
+      const lastStopId = rows[rows.length - 1].stop_id;
+      trip.headsign = stopById[lastStopId] ? stopById[lastStopId].name : '';
+    }
+
+    if (!seenRouteStops.has(route.id)) seenRouteStops.set(route.id, new Set());
+    const seenSet = seenRouteStops.get(route.id);
+
+    for (const st of rows) {
+      const stop = stopById[st.stop_id];
+      if (!stop) continue; // stop_time referencing an unknown stop_id
+
+      if (!seenSet.has(st.stop_id)) {
+        seenSet.add(st.stop_id);
+        route.stopIds.push(st.stop_id);
+      }
+
+      const minutes = gtfsTimeToMinutes(st.arrival_time || st.departure_time);
+      if (minutes === null) continue;
+
+      if (!stop.routesById[route.id]) {
+        stop.routesById[route.id] = {
+          routeId: route.id,
+          shortName: route.shortName,
+          longName: route.longName,
+          color: route.color,
+          arrivals: [],
+        };
+      }
+      stop.routesById[route.id].arrivals.push({
+        tripId,
+        serviceId: trip.serviceId,
+        headsign: trip.headsign,
+        minutes,
+      });
+    }
+  }
+
+  // --- flatten stop.routesById -> stop.routes[], sort arrivals ascending ---
+  const stopsOut = {};
+  for (const stop of Object.values(stopById)) {
+    const routesArr = Object.values(stop.routesById);
+    for (const r of routesArr) r.arrivals.sort((a, b) => a.minutes - b.minutes);
+    stopsOut[stop.id] = {
+      id: stop.id,
+      name: stop.name,
+      lat: stop.lat,
+      lon: stop.lon,
+      routes: routesArr,
+    };
+  }
+
+  const routesOut = {};
+  for (const r of Object.values(routeById)) {
+    routesOut[r.id] = r;
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    services,
+    routes: routesOut,
+    stops: stopsOut,
+  };
+}
+
+module.exports = { transform, DOW_KEYS };

@@ -1,0 +1,101 @@
+const fs = require('fs');
+const express = require('express');
+const cors = require('cors');
+const cron = require('node-cron');
+const config = require('./src/config');
+const { runEtl } = require('./src/etl');
+
+const app = express();
+app.use(cors());
+
+let etlRunning = false;
+
+async function ensureInitialData() {
+  if (fs.existsSync(config.outputPath)) return;
+  console.log('[server] no transit_data.json on disk yet, running initial ETL...');
+  await runEtl();
+}
+
+/**
+ * GET /api/version
+ * Returns just the dataset's content hash + generation timestamp, so the
+ * client can cheaply decide whether it needs to re-download.
+ */
+app.get('/api/version', (req, res) => {
+  if (!fs.existsSync(config.outputPath)) {
+    return res.status(503).json({ error: 'dataset not generated yet' });
+  }
+  const data = JSON.parse(fs.readFileSync(config.outputPath, 'utf8'));
+  res.json({ version: data.version, generatedAt: data.generatedAt });
+});
+
+/**
+ * GET /api/download
+ * Serves the full flattened dataset. This is the only endpoint that ships
+ * the actual transit data -- the backend never interprets rider queries.
+ */
+app.get('/api/download', (req, res) => {
+  if (!fs.existsSync(config.outputPath)) {
+    return res.status(503).json({ error: 'dataset not generated yet' });
+  }
+  res.setHeader('Content-Type', 'application/json');
+  fs.createReadStream(config.outputPath).pipe(res);
+});
+
+/**
+ * POST /api/refresh
+ * Manually triggers a re-pull of the GTFS feed. Protected by a shared
+ * secret (header: x-refresh-secret) since it's an outward-facing write
+ * path and hitting it too often would hammer the county's feed server.
+ * Intended for use by an external cron pinger (see .env.example) when
+ * running on a free tier that spins the service down when idle.
+ */
+app.post('/api/refresh', express.json(), async (req, res) => {
+  const provided = req.header('x-refresh-secret');
+  if (!config.refreshSecret || provided !== config.refreshSecret) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  if (etlRunning) {
+    return res.status(409).json({ error: 'etl already running' });
+  }
+  etlRunning = true;
+  try {
+    const result = await runEtl();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[server] ETL refresh failed:', err);
+    res.status(500).json({ error: 'etl failed', message: err.message });
+  } finally {
+    etlRunning = false;
+  }
+});
+
+app.get('/healthz', (req, res) => res.send('ok'));
+
+async function main() {
+  await ensureInitialData();
+
+  if (config.etlCron) {
+    cron.schedule(config.etlCron, async () => {
+      if (etlRunning) return;
+      etlRunning = true;
+      try {
+        await runEtl();
+      } catch (err) {
+        console.error('[server] scheduled ETL failed:', err);
+      } finally {
+        etlRunning = false;
+      }
+    });
+    console.log(`[server] scheduled ETL cron: "${config.etlCron}"`);
+  }
+
+  app.listen(config.port, () => {
+    console.log(`[server] listening on :${config.port}`);
+  });
+}
+
+main().catch((err) => {
+  console.error('[server] failed to start:', err);
+  process.exit(1);
+});

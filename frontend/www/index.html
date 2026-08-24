@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>TheBus // Hernando County Transit</title>
+<link rel="stylesheet" href="css/terminal.css" />
+</head>
+<body>
+  <div id="crt">
+    <div id="screen">
+      <div id="boot-banner">
+        THEBUS TRANSIT TERMINAL v1.0<br/>
+        HERNANDO COUNTY PUBLIC TRANSPORTATION<br/>
+        <span id="boot-status">INITIALIZING OFFLINE DATASET...</span>
+      </div>
+
+      <div id="history" aria-live="polite"></div>
+
+      <div id="input-line">
+        <span class="prompt">&gt;</span>
+        <span id="input-text"></span><span id="cursor">_</span>
+      </div>
+
+      <!-- Real (invisible) input captures keystrokes/mobile keyboard; the
+           spans above render the retro look. Kept off-screen, not
+           display:none, so mobile soft keyboards still open on focus. -->
+      <input id="hidden-input" type="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/intentParser.js"></script>
+  <script src="js/queryEngine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
