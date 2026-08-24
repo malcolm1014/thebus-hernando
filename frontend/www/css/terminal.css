@@ -1,11 +1,15 @@
 /* ---- 90s MS-DOS / CRT terminal aesthetic ---- */
 
 @font-face {
-  /* VT323 not bundled (keeps this offline-buildable with zero binary
-     assets) -- falls straight through to the monospace stack below.
-     Drop a VT323.woff2 into assets/ and uncomment to use it for real. */
+  /* Self-hosted (assets/fonts/VT323-Regular.woff2, OFL-1.1) so the app
+     actually renders in VT323 offline on a device that doesn't have it
+     installed -- which is every device. `local('VT323')` alone (the
+     previous approach) silently falls through to Courier New on
+     virtually everyone's phone, since almost nobody has this font
+     installed system-wide. */
   font-family: 'VT323';
-  src: local('VT323');
+  src: local('VT323'), url('../assets/fonts/VT323-Regular.woff2') format('woff2');
+  font-display: swap;
 }
 
 :root {
@@ -27,7 +31,9 @@ html, body {
 
 body {
   font-family: 'VT323', 'Courier New', Courier, monospace;
-  font-size: 22px;
+  /* VT323 is a bitmap-style pixel font -- legible sizes run larger than
+     a normal typeface; 22px reads too small on a phone. */
+  font-size: 28px;
   color: var(--fg);
 }
 
@@ -64,13 +70,31 @@ body {
   z-index: 3;
 }
 
+/* Subtle brightness-modulation flicker, like a real CRT's beam never
+   being perfectly steady. Off entirely for motion-sensitive viewers. */
+@media (prefers-reduced-motion: no-preference) {
+  #crt { animation: crt-flicker 6s infinite; }
+}
+
+@keyframes crt-flicker {
+  0%, 100% { filter: brightness(1); }
+  92% { filter: brightness(1); }
+  93% { filter: brightness(0.94); }
+  94% { filter: brightness(1.03); }
+  95% { filter: brightness(0.97); }
+  96% { filter: brightness(1); }
+}
+
 #screen {
   position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   padding: 16px;
-  text-shadow: 0 0 4px var(--fg), 0 0 1px var(--fg);
+  /* Layered blur radii approximate a phosphor bloom without duplicating
+     DOM content for a real blurred-copy layer (not worth the extra
+     paint cost on a phone for this effect). */
+  text-shadow: 0 0 1px var(--fg), 0 0 2px var(--fg), 0 0 6px var(--fg-dim), 0 0 12px var(--fg-dim);
 }
 
 #boot-banner {
@@ -106,14 +130,17 @@ body {
   align-items: baseline;
   border-top: 1px solid var(--fg-dim);
   padding-top: 8px;
-  font-size: 24px;
+  font-size: 30px;
 }
 
 .prompt { color: var(--fg-bright); margin-right: 8px; }
 
 #cursor {
-  animation: blink 1s steps(1) infinite;
   margin-left: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #cursor { animation: blink 1s steps(1) infinite; }
 }
 
 @keyframes blink {

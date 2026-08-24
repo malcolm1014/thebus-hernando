@@ -63,14 +63,31 @@
     inputTextEl.textContent = hiddenInput.value;
   }
 
-  hiddenInput.addEventListener('input', renderInputText);
+  function submitAndClear() {
+    const value = hiddenInput.value;
+    hiddenInput.value = '';
+    renderInputText();
+    handleSubmit(value);
+  }
+
+  hiddenInput.addEventListener('input', (e) => {
+    // Many Android soft keyboards (Gboard, SwiftKey) submit via a plain
+    // `input` event carrying this inputType instead of ever firing a
+    // real `keydown` Enter -- the keydown handler below alone misses
+    // those entirely. The IME may have already inserted a literal
+    // newline into the value before this fires; strip it either way.
+    if (e.inputType === 'insertLineBreak') {
+      hiddenInput.value = hiddenInput.value.replace(/\n/g, '');
+      submitAndClear();
+      return;
+    }
+    renderInputText();
+  });
 
   hiddenInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleSubmit(hiddenInput.value);
-      hiddenInput.value = '';
-      renderInputText();
+      submitAndClear();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (historyPointer > 0) {
@@ -95,6 +112,19 @@
   // the only thing actually capable of receiving keystrokes / opening the
   // mobile keyboard.
   document.getElementById('screen').addEventListener('click', () => hiddenInput.focus());
+
+  // iOS Safari shrinks the *visual* viewport (not the layout viewport)
+  // when the on-screen keyboard opens, which `height: 100%` doesn't
+  // track on its own -- the input line can end up hidden behind the
+  // keyboard. Pin #crt's actual height to the visual viewport instead.
+  if (window.visualViewport) {
+    const crtEl = document.getElementById('crt');
+    const syncViewportHeight = () => {
+      crtEl.style.height = `${window.visualViewport.height}px`;
+    };
+    window.visualViewport.addEventListener('resize', syncViewportHeight);
+    syncViewportHeight();
+  }
 
   async function boot() {
     setStatus('INITIALIZING OFFLINE DATASET...');

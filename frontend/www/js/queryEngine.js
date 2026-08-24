@@ -6,8 +6,6 @@
  * run on a phone with zero network access.
  */
 (function (global) {
-  const DOW_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-
   let dataset = null;
   let index = null; // { routes: [{id, shortName, longName}], stops: [{id, name}] }
 
@@ -23,32 +21,53 @@
     return index;
   }
 
-  /** yyyymmdd string for a Date, in local device time -- matches GTFS calendar_dates format. */
-  function toGtfsDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}${m}${day}`;
+  /**
+   * GTFS arrival times are the AGENCY's local wall-clock time, not UTC
+   * and not necessarily the querying device's own timezone -- a phone
+   * with its region/timezone set wrong (or a rider traveling with a
+   * phone still on home-timezone) would otherwise get wrong "X min away"
+   * answers. This reads the device's instant (`now`, a real Date, so
+   * still correct in an absolute sense) but reports weekday/date/time-
+   * of-day AS SEEN IN the agency's own timezone, via Intl -- no
+   * date-math library needed.
+   */
+  function getAgencyClock(now, timeZone) {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+      weekday: 'long',
+    });
+    const parts = {};
+    for (const p of fmt.formatToParts(now)) parts[p.type] = p.value;
+    return {
+      dow: parts.weekday.toLowerCase(),
+      dateStr: `${parts.year}${parts.month}${parts.day}`,
+      minutes: Number(parts.hour) * 60 + Number(parts.minute),
+    };
   }
 
-  /** Is `serviceId` running on device date `now`? Checks weekday flags, the calendar date range, then exceptions. */
-  function isServiceActive(serviceId, now) {
+  function agencyTz() {
+    return (dataset && dataset.agencyTimezone) || 'America/New_York';
+  }
+
+  /** Is `serviceId` running on the given (already agency-local) weekday/date? */
+  function isServiceActiveForClock(serviceId, dow, dateStr) {
     const svc = dataset.services[serviceId];
     if (!svc) return false;
-    const dateStr = toGtfsDate(now);
-
     if (svc.removedDates.includes(dateStr)) return false;
     if (svc.addedDates.includes(dateStr)) return true;
-
-    const dow = DOW_KEYS[now.getDay()];
     if (!svc[dow]) return false;
     if (svc.startDate && dateStr < svc.startDate) return false;
     if (svc.endDate && dateStr > svc.endDate) return false;
     return true;
   }
 
-  function minutesNow(now) {
-    return now.getHours() * 60 + now.getMinutes();
+  /** Is `serviceId` running on device instant `now`, per the agency's own calendar day? */
+  function isServiceActive(serviceId, now) {
+    const clock = getAgencyClock(now, agencyTz());
+    return isServiceActiveForClock(serviceId, clock.dow, clock.dateStr);
   }
 
   /**
@@ -79,30 +98,54 @@
     return `${h}:${String(min).padStart(2, '0')} ${suffix}`;
   }
 
-  /** Next N active arrivals for one stop, optionally filtered to a single route. */
+  function toArrivalRecord(routeEntry, arr, minutesUntil, wallMinutes, isTomorrow) {
+    return {
+      routeId: routeEntry.routeId,
+      shortName: routeEntry.shortName,
+      longName: routeEntry.longName,
+      headsign: arr.headsign,
+      minutesUntil,
+      clock: formatClock(wallMinutes),
+      isTomorrow: !!isTomorrow, // rolled forward past midnight -- MUST be flagged, "AT 6:03 AM" bare reads as today's already-passed 6am, not tomorrow's first bus
+    };
+  }
+
+  /**
+   * Next N active arrivals for one stop, optionally filtered to a single
+   * route, correct across midnight in both directions:
+   *  - a trip scheduled e.g. "25:30" (>= 1440 min) belongs to a service
+   *    day that STARTED YESTERDAY -- it only counts if yesterday's
+   *    service was active and that after-midnight instant hasn't
+   *    actually passed yet on today's real clock.
+   *  - a trip already passed earlier today only rolls forward to "later"
+   *    if the service actually recurs tomorrow (a Friday-only route
+   *    doesn't get treated as running again a few hours after a Friday
+   *    night query).
+   */
   function nextArrivals(stopId, routeId, now, limit) {
     const stop = dataset.stops[stopId];
     if (!stop) return [];
-    const nowMin = minutesNow(now);
+    const tz = agencyTz();
+    const today = getAgencyClock(now, tz);
+    const yesterday = getAgencyClock(new Date(now.getTime() - 24 * 60 * 60 * 1000), tz);
+    const tomorrow = getAgencyClock(new Date(now.getTime() + 24 * 60 * 60 * 1000), tz);
     const results = [];
 
     for (const routeEntry of stop.routes) {
       if (routeId && routeEntry.routeId !== routeId) continue;
       for (const arr of routeEntry.arrivals) {
-        if (!isServiceActive(arr.serviceId, now)) continue;
-        // GTFS times can exceed 1440 for past-midnight trips; treat those
-        // as "later today" by taking minutes mod 1440 relative to now.
-        const arrMinToday = arr.minutes % 1440;
-        let delta = arrMinToday - nowMin;
-        if (delta < 0) delta += 1440; // wraps to "tomorrow" within the same active service day
-        results.push({
-          routeId: routeEntry.routeId,
-          shortName: routeEntry.shortName,
-          longName: routeEntry.longName,
-          headsign: arr.headsign,
-          minutesUntil: delta,
-          clock: formatClock(arrMinToday),
-        });
+        if (arr.minutes >= 1440) {
+          const wallMinutes = arr.minutes - 1440;
+          if (wallMinutes < today.minutes) continue; // that after-midnight moment already passed today
+          if (!isServiceActiveForClock(arr.serviceId, yesterday.dow, yesterday.dateStr)) continue;
+          results.push(toArrivalRecord(routeEntry, arr, wallMinutes - today.minutes, wallMinutes));
+          continue;
+        }
+        if (isServiceActiveForClock(arr.serviceId, today.dow, today.dateStr) && arr.minutes >= today.minutes) {
+          results.push(toArrivalRecord(routeEntry, arr, arr.minutes - today.minutes, arr.minutes));
+        } else if (isServiceActiveForClock(arr.serviceId, tomorrow.dow, tomorrow.dateStr)) {
+          results.push(toArrivalRecord(routeEntry, arr, (1440 - today.minutes) + arr.minutes, arr.minutes, true));
+        }
       }
     }
 
@@ -110,18 +153,48 @@
     return limit ? results.slice(0, limit) : results;
   }
 
+  /** Past this many minutes out, show a plain clock time instead of a countdown -- "in 47 min" implies false precision this far ahead; industry-standard cutover for transit-arrival displays. */
+  const COUNTDOWN_THRESHOLD_MIN = 30;
+
   function answerFindNextArrival(parsed, now) {
     if (!parsed.stop) {
       return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>?";
     }
-    const arrivals = nextArrivals(parsed.stop.id, parsed.route ? parsed.route.id : null, now, 3);
-    if (arrivals.length === 0) {
-      return `NO UPCOMING ARRIVALS FOUND AT ${parsed.stop.name.toUpperCase()} TODAY.`;
+    const stop = dataset.stops[parsed.stop.id];
+
+    if (parsed.route) {
+      const servesStop = stop.routes.some((r) => r.routeId === parsed.route.id);
+      if (!servesStop) {
+        const route = dataset.routes[parsed.route.id];
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+      }
     }
-    const lines = arrivals.map((a) =>
-      `${routeLabel(a)} -- ${a.minutesUntil} MIN (${a.clock}) TOWARD ${a.headsign.toUpperCase() || 'N/A'}`
-    );
-    return `NEXT ARRIVALS AT ${parsed.stop.name.toUpperCase()}:\n${lines.join('\n')}`;
+
+    const relevantRoutes = parsed.route ? stop.routes.filter((r) => r.routeId === parsed.route.id) : stop.routes;
+    const arrivals = nextArrivals(parsed.stop.id, parsed.route ? parsed.route.id : null, now, 3);
+
+    const lines = arrivals.map((a) => {
+      const day = a.isTomorrow ? 'TOMORROW ' : '';
+      const timing = a.minutesUntil > COUNTDOWN_THRESHOLD_MIN
+        ? `${day}AT ${a.clock}`
+        : `${a.minutesUntil} MIN (${day}${a.clock})`;
+      return `${routeLabel(a)} -- ${timing} TOWARD ${a.headsign.toUpperCase() || 'N/A'}`;
+    });
+
+    // A multi-route stop shouldn't just silently drop a route the rider
+    // might be waiting for -- call out routes with zero upcoming
+    // arrivals by name instead of collapsing everything into one
+    // generic stop-level "nothing found" message.
+    const routesWithArrivals = new Set(arrivals.map((a) => a.routeId));
+    for (const r of relevantRoutes) {
+      if (!routesWithArrivals.has(r.routeId)) lines.push(`${routeLabel(r)} -- NO MORE SERVICE TODAY`);
+    }
+
+    if (lines.length === 0) {
+      return `NO SERVICE TODAY AT ${stop.name.toUpperCase()}.`;
+    }
+    return `NEXT ARRIVALS AT ${stop.name.toUpperCase()}:\n${lines.join('\n')}`;
   }
 
   function answerFindStopLocation(parsed) {

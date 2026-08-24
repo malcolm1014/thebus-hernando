@@ -11,6 +11,10 @@ const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satur
  * Output shape:
  * {
  *   generatedAt: ISO string,
+ *   agencyTimezone: IANA tz string (e.g. "America/New_York") -- arrival
+ *     times are agency-local wall-clock time, NOT the querying device's
+ *     own timezone, so the client must compute "now" in this zone rather
+ *     than trusting the device's local clock/date directly.
  *   services: { [service_id]: { monday..sunday: bool, startDate, endDate, addedDates: [], removedDates: [] } },
  *   routes:   { [route_id]: { id, shortName, longName, color, textColor, stopIds: [stop_id in first-seen trip order] } },
  *   stops:    {
@@ -25,7 +29,21 @@ const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satur
  *   }
  * }
  */
-function transform({ routes, trips, stops, stopTimes, calendar, calendarDates }) {
+function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies }) {
+  const agencyTimezone = (agency[0] && agency[0].agency_timezone) || 'America/New_York';
+
+  if (frequencies && frequencies.length > 0) {
+    // Headway-based trips (frequencies.txt) generate arrivals dynamically
+    // instead of listing them in stop_times.txt -- not present in
+    // Hernando County's feed today, but if it (or a future second
+    // agency) ever adds them, those routes would silently produce zero
+    // arrivals below since we only walk stop_times. Fail loudly instead
+    // of shipping a silently-broken dataset.
+    throw new Error(
+      `frequencies.txt has ${frequencies.length} row(s) -- headway-based trips are not supported by this transform yet.`
+    );
+  }
+
   // --- services: which days of the week / date exceptions each service_id runs ---
   const services = {};
   for (const c of calendar) {
@@ -174,6 +192,7 @@ function transform({ routes, trips, stops, stopTimes, calendar, calendarDates })
 
   return {
     generatedAt: new Date().toISOString(),
+    agencyTimezone,
     services,
     routes: routesOut,
     stops: stopsOut,

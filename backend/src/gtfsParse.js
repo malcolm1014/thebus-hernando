@@ -32,12 +32,14 @@ function gtfsTimeToMinutes(hhmmss) {
 /** Parses all the GTFS tables the transform step needs. */
 function parseAllGtfs() {
   return {
+    agency: parseFile('agency.txt'),
     routes: parseFile('routes.txt'),
     trips: parseFile('trips.txt'),
     stops: parseFile('stops.txt'),
     stopTimes: parseFile('stop_times.txt'),
     calendar: parseFile('calendar.txt'),
     calendarDates: parseFile('calendar_dates.txt'), // optional, service exceptions
+    frequencies: parseFile('frequencies.txt'), // optional, headway-based trips
   };
 }
 

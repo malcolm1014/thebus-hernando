@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#000000"/>
+  <text x="512" y="430" font-family="'Courier New', Courier, monospace" font-weight="bold"
+        font-size="360" fill="#33ff00" text-anchor="middle" dominant-baseline="middle">&gt;_</text>
+  <text x="512" y="640" font-family="'Courier New', Courier, monospace" font-weight="bold"
+        font-size="120" fill="#33ff00" text-anchor="middle" dominant-baseline="middle" letter-spacing="8">THEBUS</text>
+</svg>

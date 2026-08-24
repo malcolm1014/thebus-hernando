@@ -2,7 +2,6 @@
   "appId": "com.savvysecurity.thebus",
   "appName": "TheBus Hernando",
   "webDir": "www",
-  "bundledWebRuntime": false,
   "backgroundColor": "#000000",
   "android": {
     "backgroundColor": "#000000"

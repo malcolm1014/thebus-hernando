@@ -42,20 +42,42 @@
       .trim();
   }
 
+  /** Classic edit-distance metric, used only as a last-resort typo-tolerance pass below. */
+  function levenshtein(a, b) {
+    const m = a.length;
+    const n = b.length;
+    if (m === 0) return n;
+    if (n === 0) return m;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const curr = [i];
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      }
+      prev = curr;
+    }
+    return prev[n];
+  }
+
   /**
    * Finds the best-matching entry in `candidates` (each {id, name}) inside
-   * `normalizedText`. Two-pass:
+   * `normalizedText`. Three-pass, most-specific first:
    *   1. Exact full-name substring match (handles multi-word names like
-   *      "Pine Island Park" or "Avalon Publix" cleanly).
+   *      "Pine Island Park" or "Avalon Publix" cleanly) -- checked
+   *      longest-candidate-first so a more specific name always wins a
+   *      substring tie (e.g. "Pine Island Park" over a shorter unrelated
+   *      candidate that happens to also be contained in the text).
    *   2. Word-overlap fallback, for partial mentions ("the Publix stop").
+   *      Ties broken by preferring the longer (more specific) name.
+   *   3. Single-word typo tolerance (Levenshtein distance) for near-miss
+   *      spellings like "Wallmart" -> "Walmart" -- only tried when the
+   *      first two passes found nothing, and only trusts close matches.
    * Returns { id, name, score } or null if nothing clears the threshold.
    */
   function fuzzyMatch(normalizedText, candidates) {
     let best = null;
 
-    // Pass 1: longest exact substring wins (checked longest-first so
-    // "Pine Island Park" beats a shorter candidate like "Park" contained
-    // within it).
     const byLengthDesc = [...candidates].sort((a, b) => b.name.length - a.name.length);
     for (const c of byLengthDesc) {
       const n = normalize(c.name);
@@ -64,17 +86,36 @@
       }
     }
 
-    // Pass 2: word overlap -- e.g. query says "publix" and stop name is
-    // "Avalon Publix"; also catches route nicknames like "the mermaid".
     const queryWords = new Set(normalizedText.split(' ').filter((w) => w.length >= 3));
     for (const c of candidates) {
-      const nameWords = normalize(c.name).split(' ').filter((w) => w.length >= 3);
+      // Deduped so a name repeating a word (e.g. "Spring Hill Dr at
+      // Spring Hill Shoppes") can't inflate its own score just by
+      // saying the same word twice.
+      const nameWords = [...new Set(normalize(c.name).split(' ').filter((w) => w.length >= 3))];
       if (nameWords.length === 0) continue;
       const hits = nameWords.filter((w) => queryWords.has(w)).length;
       if (hits === 0) continue;
       const score = hits / nameWords.length;
-      if (score >= 0.5 && (!best || score > best.score)) {
+      if (score < 0.5) continue;
+      if (!best || score > best.score || (score === best.score && c.name.length > best.name.length)) {
         best = { id: c.id, name: c.name, score };
+      }
+    }
+    if (best) return best;
+
+    let bestDist = Infinity;
+    for (const c of candidates) {
+      const nameWords = normalize(c.name).split(' ').filter((w) => w.length >= 4);
+      for (const nameWord of nameWords) {
+        for (const queryWord of queryWords) {
+          if (Math.abs(nameWord.length - queryWord.length) > 2) continue; // cheap pre-filter, skip clearly-unrelated lengths
+          const dist = levenshtein(nameWord, queryWord);
+          const threshold = nameWord.length <= 5 ? 1 : 2;
+          if (dist <= threshold && dist < bestDist) {
+            bestDist = dist;
+            best = { id: c.id, name: c.name, score: 1 - dist / Math.max(nameWord.length, queryWord.length) };
+          }
+        }
       }
     }
     return best;

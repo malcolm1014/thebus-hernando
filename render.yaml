@@ -1,0 +1,15 @@
+services:
+  - name: thebus-hernando-backend
+    type: web
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GTFS_FEED_URL
+        sync: false
+      - key: REFRESH_SECRET
+        sync: false
+      - key: ETL_CRON
+        sync: false

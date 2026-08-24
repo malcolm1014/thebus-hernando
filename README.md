@@ -10,30 +10,48 @@ file on-device and answers rider questions with a regex-based rule engine
 
 ```
 thebus-hernando/
+  render.yaml                Render Blueprint (points at backend/, secrets marked sync:false)
+
   backend/                  Node/Express ETL server (deploy to Render)
     src/
       config.js              env-driven paths/settings
-      gtfsFetch.js            downloads + unzips the GTFS feed
+      gtfsFetch.js            downloads + unzips the GTFS feed, with retry/backoff
       gtfsParse.js            CSV -> row objects, HH:MM:SS -> minutes
       transform.js            flattens routes/trips/stops/stop_times into
-                               the stop-keyed structure the client wants
-      etl.js                  orchestrates fetch -> parse -> transform -> write
+                               the stop-keyed structure the client wants;
+                               resolves agency timezone, derives a headsign
+                               from each trip's final stop when blank
+      etl.js                  orchestrates fetch -> parse -> transform -> write;
+                               refuses to overwrite a known-good dataset with
+                               a suspiciously-smaller one (broken-feed guard)
       hash.js                 content hash used as the dataset "version"
     server.js                 GET /api/version, GET /api/download,
                                POST /api/refresh (secret-protected)
+    test/                     node --test unit tests (transform, gtfsParse, ETL safety check)
     data/                     generated at runtime (gitignored)
 
   frontend/                  Capacitor + vanilla JS/HTML/CSS
     capacitor.config.json
+    assets/                   icon.png (1024x1024), splash.png (2732x2732),
+                               icon-source.svg -- source images for
+                               @capacitor/assets; swap these for real
+                               branding, then re-run `npm run gen:assets`
     www/
       index.html              terminal shell markup
-      css/terminal.css         green-on-black CRT styling
+      css/terminal.css         green-on-black CRT styling (self-hosted VT323,
+                               phosphor-bloom glow, flicker, all motion gated
+                               behind prefers-reduced-motion)
+      assets/fonts/            VT323-Regular.woff2 (OFL-1.1, self-hosted)
       js/
         storage.js             Capacitor Filesystem/Preferences wrapper
                                 (falls back to localStorage outside the shell)
         sync.js                 version check -> conditional download -> cache
-        intentParser.js         regex intent classifier + entity extraction
-        queryEngine.js           filters the cached dataset against device time
+        intentParser.js         regex intent classifier + fuzzy entity
+                                extraction (exact substring -> word overlap
+                                -> Levenshtein typo tolerance)
+        queryEngine.js           filters the cached dataset against
+                                agency-local time (not device-local),
+                                correct across midnight
         app.js                   terminal UI wiring (input, history, "PROCESSING...")
 ```
 
@@ -43,6 +61,7 @@ thebus-hernando/
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
+npm test                    # 13 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -68,23 +87,43 @@ succeed (this mount doesn't support symlinks, not just hardlinks). Do
 only. Plain single-file writes back to gdrive (like `data/transit_data.json`,
 gitignored, left in place from that validation run) are fine.
 
-Deploying to Render: set `GTFS_FEED_URL` and `REFRESH_SECRET` as
-environment variables in the service dashboard, build command
-`npm install`, start command `npm start`. Render's free tier sleeps when
-idle, so the in-process `ETL_CRON` schedule won't fire reliably -- point
-an external pinger (cron-job.org, UptimeRobot) at
-`POST /api/refresh` with header `x-refresh-secret: <your secret>` instead.
+Deploying to Render: connect this repo and Render will pick up
+`render.yaml` (repo root, `rootDir: backend`) automatically as a
+Blueprint -- it'll prompt for `GTFS_FEED_URL`, `REFRESH_SECRET`, and
+`ETL_CRON` (all marked `sync: false`, so they're entered once in the
+dashboard rather than committed). Free tier sleeps when idle, so the
+in-process `ETL_CRON` schedule won't fire reliably -- point an external
+pinger (cron-job.org, UptimeRobot) at `POST /api/refresh` with header
+`x-refresh-secret: <your secret>` instead.
+
+The ETL also refuses to overwrite a known-good `transit_data.json` if a
+re-pull comes back with >50% fewer stops or routes than last time
+(`isSuspiciouslySmaller()` in `etl.js`) -- that's a broken/truncated feed,
+not a real schedule change, and shipping it would silently break the app
+for every cached client until the next good pull.
 
 ## Frontend: run it
 
 ```bash
 cd frontend
 npm install
-npm run add:android     # first time only -- generates the android/ project
+npm run add:android     # first time only -- generates the android/ project (gitignored)
+npm run gen:assets      # generates all icon/splash resolutions from assets/icon.png + assets/splash.png
 # edit www/js/sync.js -> API_BASE to point at your deployed backend
 npm run sync            # copies www/ into the native shell
 npm run open:android    # opens Android Studio to build/run on device or emulator
 ```
+
+`add:android` and `gen:assets` were both run and verified during
+scaffolding (87 icon/splash files generated cleanly across all
+densities) -- confirmed the pipeline works end-to-end, though the
+`android/` output itself isn't committed (gitignored, regenerable, and
+-- like `node_modules` -- not something you want thousands of small
+files of on a Google Drive FUSE mount if you're building from one). The
+placeholder `assets/icon.png` / `assets/splash.png` are a plain `>_`
+terminal glyph + "THEBUS" on black, matching the app's own aesthetic --
+swap them for real branding whenever you have it, then re-run
+`npm run gen:assets`.
 
 During development you can also just serve `www/` as a static site
 (`npx serve www`) -- `storage.js` detects the absence of the Capacitor
@@ -99,11 +138,22 @@ runtime and falls back to `localStorage` automatically.
    cached dataset (entities are only ever matched against real, current
    data -- never a hardcoded list).
 3. `intentParser` classifies the intent via ordered regex triggers, then
-   fuzzy-matches route/stop entities (exact substring first, word-overlap
-   fallback second).
-4. `queryEngine` filters that stop's/route's pre-flattened arrivals by
-   which `service_id`s are active for the device's actual weekday/date,
-   and by arrival time relative to the device clock -- entirely offline.
+   fuzzy-matches route/stop entities in three passes: exact substring,
+   word-overlap (ties broken toward the more specific/longer name), then
+   Levenshtein-distance typo tolerance ("Wallmart" -> "Walmart") as a
+   last resort.
+4. `queryEngine` computes "now" in the *agency's* timezone via `Intl`
+   (not the device's own timezone -- GTFS times are agency-local
+   wall-clock time, so a phone with its region set wrong would otherwise
+   get wrong answers), correctly handles trips that cross midnight in
+   both directions, and filters by which `service_id`s are actually
+   active on that agency-local date -- entirely offline. Arrivals more
+   than 30 minutes out show a plain clock time instead of a countdown
+   (implied false precision that far ahead); a route with no more
+   service today is called out by name rather than silently omitted
+   from a multi-route stop's answer; asking about a route that doesn't
+   serve the named stop says so directly instead of just showing
+   nothing.
 
 ## Data flow (why the split)
 
