@@ -63,6 +63,20 @@
     inputTextEl.textContent = hiddenInput.value;
   }
 
+  /**
+   * Some Android keyboards (confirmed on-device: Gboard, likely others)
+   * lose track of the real caret position on this hidden input and
+   * reset it to 0 between keystrokes -- each new character then gets
+   * INSERTED AT THE START instead of appended, so typing "when" one
+   * letter at a time produces "w" -> "hw" -> "ehw" -> "nehw". Forcing
+   * the selection back to the end after every change is a direct,
+   * reliable fix regardless of why the keyboard loses the caret.
+   */
+  function pinCursorToEnd() {
+    const len = hiddenInput.value.length;
+    hiddenInput.setSelectionRange(len, len);
+  }
+
   function submitAndClear() {
     const value = hiddenInput.value;
     hiddenInput.value = '';
@@ -82,6 +96,7 @@
       return;
     }
     renderInputText();
+    pinCursorToEnd();
   });
 
   hiddenInput.addEventListener('keydown', (e) => {
@@ -94,6 +109,7 @@
         historyPointer -= 1;
         hiddenInput.value = commandLog[historyPointer];
         renderInputText();
+        pinCursorToEnd();
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -105,6 +121,7 @@
         hiddenInput.value = '';
       }
       renderInputText();
+      pinCursorToEnd();
     }
   });
 
