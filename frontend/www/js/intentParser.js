@@ -249,6 +249,25 @@
   }
 
   /**
+   * A bare road/highway number in a query ("on 19", "route 19") should
+   * count as matching a name-token that's the same number with a
+   * road-type prefix stuck to it ("us19", "sr50", "cr491") -- real
+   * Hernando stop names are built that way ("Walmart US19 Spring Hill"),
+   * but nobody actually SAYS the "US"/"SR"/"CR" prefix out loud. Requires
+   * the character right before the matched digits (if any) to be a
+   * non-digit, so "19" matches "us19" but not the "19" inside "119" or
+   * "1900" -- those are different roads/numbers, not the same one typed
+   * without its prefix.
+   */
+  function numericSuffixMatch(queryWord, nameWord) {
+    if (!/^\d+$/.test(queryWord)) return false;
+    if (queryWord === nameWord) return false; // exact match already handled elsewhere
+    if (!nameWord.endsWith(queryWord)) return false;
+    const before = nameWord[nameWord.length - queryWord.length - 1];
+    return !before || !/\d/.test(before);
+  }
+
+  /**
    * Finds the best-matching entry in `candidates` (each {id, name}) inside
    * `normalizedText`. Three-pass, most-specific first:
    *   1. Exact full-name substring match (handles multi-word names like
@@ -256,8 +275,10 @@
    *      longest-candidate-first so a more specific name always wins a
    *      substring tie. Fully confident; never flags alternatives.
    *   2. Word-overlap fallback, for partial mentions ("the Publix stop").
-   *      Ties broken by preferring the longer (more specific) name,
-   *      UNLESS 2-4 candidates tie -- then all are surfaced as alternatives.
+   *      Counts both exact word matches and bare-number-vs-prefixed-number
+   *      matches ("19" vs "us19", see numericSuffixMatch). Ties broken by
+   *      preferring the longer (more specific) name, UNLESS 2-4 candidates
+   *      tie -- then all are surfaced as alternatives.
    *   3. Jaro-Winkler typo tolerance ("Wallmart" -> "Walmart") -- last
    *      resort, only tried when the first two passes found nothing.
    * Returns { id, name, score, alternatives } or null if nothing clears
@@ -272,7 +293,11 @@
       }
     }
 
-    const queryWords = new Set(normalizedText.split(' ').filter((w) => w.length >= 3));
+    // Numeric tokens ("19", "50") stay meaningful even at 1-2 digits --
+    // unlike short words, a road/highway number is highly distinctive --
+    // so they're kept at any length while non-numeric words still need
+    // >=3 chars to count as signal.
+    const queryWords = new Set(normalizedText.split(' ').filter((w) => w.length >= 3 || /^\d+$/.test(w)));
     const wordOverlapCandidates = [];
     for (const c of candidates) {
       // Deduped so a name repeating a word (e.g. "Spring Hill Dr at
@@ -280,13 +305,32 @@
       // saying the same word twice.
       const nameWords = [...new Set(normalize(c.name).split(' ').filter((w) => w.length >= 3))];
       if (nameWords.length === 0) continue;
-      const hits = nameWords.filter((w) => queryWords.has(w)).length;
+      let exactHits = 0;
+      let numericHits = 0;
+      for (const w of nameWords) {
+        if (queryWords.has(w)) { exactHits++; continue; }
+        if ([...queryWords].some((qw) => numericSuffixMatch(qw, w))) numericHits++;
+      }
+      const hits = exactHits + numericHits;
       if (hits === 0) continue;
       const score = hits / nameWords.length;
       if (score < 0.5) continue;
-      wordOverlapCandidates.push({ id: c.id, name: c.name, score });
+      wordOverlapCandidates.push({ id: c.id, name: c.name, score, exactHits });
     }
-    if (wordOverlapCandidates.length > 0) return pickBestOrFlagTie(wordOverlapCandidates);
+    if (wordOverlapCandidates.length > 0) {
+      // A road/highway number is shared by every stop strung along that
+      // road, so on its own it's weak, common evidence -- not enough to
+      // pick out one specific stop. When candidates tie on score, a
+      // candidate that ALSO matched a real distinctive word (a business
+      // or place name) should win outright over ones that only matched
+      // the shared road number, rather than being treated as a genuine
+      // ambiguous tie between equally-good guesses.
+      const hasExactHit = wordOverlapCandidates.some((c) => c.exactHits > 0);
+      const finalCandidates = hasExactHit
+        ? wordOverlapCandidates.filter((c) => c.exactHits > 0)
+        : wordOverlapCandidates;
+      return pickBestOrFlagTie(finalCandidates);
+    }
 
     // Aggregated across ALL matched query words, like pass 2 -- not just
     // the single best word-pair. A candidate that shares one incidental

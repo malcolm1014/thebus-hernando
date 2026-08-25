@@ -201,9 +201,36 @@
   /** Past this many minutes out, show a plain clock time instead of a countdown -- "in 47 min" implies false precision this far ahead; industry-standard cutover for transit-arrival displays. */
   const COUNTDOWN_THRESHOLD_MIN = 30;
 
-  function answerFindNextArrival(parsed, now) {
+  /**
+   * Straight-line-nearest stop to a raw {lat, lon} -- shared by the GPS
+   * fallback path here and in answerFindNearestStop. Distinct from that
+   * function's landmark version: no geocoding, the coordinates are
+   * already known (came straight off the device).
+   */
+  function nearestStopToPoint(lat, lon) {
+    let best = null;
+    for (const stop of Object.values(dataset.stops)) {
+      if (stop.lat == null || stop.lon == null) continue;
+      const dist = haversineMiles(lat, lon, stop.lat, stop.lon);
+      if (!best || dist < best.dist) best = { stop, dist };
+    }
+    return best;
+  }
+
+  async function answerFindNextArrival(parsed, now) {
+    let usedGps = false;
     if (!parsed.stop) {
-      return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>?";
+      // No stop/landmark named at all -- fall back to the device's own
+      // GPS position instead of immediately giving up, same "pull my
+      // location" behavior requested for FIND_NEAREST_STOP.
+      const pos = await TheBusGeolocate.getCurrentPosition();
+      if (!pos) {
+        return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>? OR TURN ON LOCATION AND JUST ASK: WHEN IS THE NEXT BUS?";
+      }
+      const nearest = nearestStopToPoint(pos.lat, pos.lon);
+      if (!nearest) return 'NO STOPS ON FILE.';
+      parsed = { ...parsed, stop: { id: nearest.stop.id, name: nearest.stop.name, score: 1, alternatives: [] } };
+      usedGps = true;
     }
     if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
     if (parsed.route && parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
@@ -246,10 +273,11 @@
         : `${routeLabel(r)} -- NO MORE SERVICE TODAY`);
     }
 
+    const stopLabel = usedGps ? `${stop.name.toUpperCase()} (NEAREST TO YOU)` : stop.name.toUpperCase();
     if (lines.length === 0) {
-      return `NO SERVICE TODAY AT ${stop.name.toUpperCase()}.`;
+      return `NO SERVICE TODAY AT ${stopLabel}.`;
     }
-    return `NEXT ARRIVALS AT ${stop.name.toUpperCase()}:\n${lines.join('\n')}`;
+    return `NEXT ARRIVALS AT ${stopLabel}:\n${lines.join('\n')}`;
   }
 
   function answerFindStopLocation(parsed) {
@@ -304,19 +332,50 @@
     return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}`;
   }
 
+  // Recognizes the rider referring to their own position instead of a
+  // named place ("nearest stop to me", "closest stop to here") -- routed
+  // to GPS instead of ever being handed to the geocoder, which has no
+  // way to resolve "me" to anything.
+  const SELF_LOCATION_RE = /^(me|here|my location|my current location|my position)$/i;
+
   /**
-   * Finds the closest stop to any real-world place -- not just ones
-   * already in the GTFS stop list, since that's the whole point (a
-   * rider asking about a business, school, or landmark the transit
-   * data itself has no idea about). Requires network to resolve the
-   * place name to coordinates (TheBusGeocode, backed by our own
-   * geocoding proxy) -- the one part of this query that genuinely can't
-   * work offline, unlike everything else in this file.
+   * Finds the closest stop to any real-world place. Three ways to
+   * resolve `parsed.landmark`, most-confident/cheapest first:
+   *   1. It's already the (informal) name of a known stop itself
+   *      ("walmart on 19" for the stop "Walmart US19 Spring Hill") --
+   *      checked via the SAME fuzzy stop-name matching every other
+   *      intent uses, fully offline, no network round trip, and a
+   *      "definitive" single answer whenever it resolves unambiguously.
+   *   2. It's the rider's own position ("nearest stop to me") -- pulled
+   *      from the device's GPS.
+   *   3. It's a genuine external place (a business, school, landmark)
+   *      not in the transit data at all -- the original behavior,
+   *      resolved via TheBusGeocode, the one part of this query that
+   *      genuinely can't work offline.
    */
   async function answerFindNearestStop(parsed) {
     if (!parsed.landmark) {
-      return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>?";
+      return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>? OR: NEAREST STOP TO ME?";
     }
+
+    const directMatch = TheBusIntentParser.fuzzyMatch(TheBusIntentParser.normalize(parsed.landmark), index.stops);
+    if (directMatch && directMatch.alternatives.length === 0) {
+      const stop = dataset.stops[directMatch.id];
+      const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+      return `"${parsed.landmark.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}`;
+    }
+
+    if (SELF_LOCATION_RE.test(parsed.landmark.trim())) {
+      const pos = await TheBusGeolocate.getCurrentPosition();
+      if (!pos) {
+        return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
+      }
+      const nearest = nearestStopToPoint(pos.lat, pos.lon);
+      if (!nearest) return 'NO STOPS ON FILE.';
+      const routesHere = nearest.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+      return `NEAREST STOP TO YOU:\n${nearest.stop.name.toUpperCase()} (${nearest.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+    }
+
     if (!navigator.onLine) {
       return `LOOKING UP "${parsed.landmark.toUpperCase()}" NEEDS A NETWORK CONNECTION. TRY AGAIN WHEN ONLINE.`;
     }
@@ -332,12 +391,7 @@
       return `COULDN'T FIND "${parsed.landmark.toUpperCase()}" NEAR HERNANDO COUNTY. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.`;
     }
 
-    let best = null;
-    for (const stop of Object.values(dataset.stops)) {
-      if (stop.lat == null || stop.lon == null) continue;
-      const dist = haversineMiles(place.lat, place.lon, stop.lat, stop.lon);
-      if (!best || dist < best.dist) best = { stop, dist };
-    }
+    const best = nearestStopToPoint(place.lat, place.lon);
     if (!best) return 'NO STOPS ON FILE.';
 
     const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';

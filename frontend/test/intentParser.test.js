@@ -71,6 +71,26 @@ test('fuzzyMatch: Jaro-Winkler pass aggregates across ALL matched words, not jus
   assert.equal(result.id, 'TARGET');
 });
 
+test('fuzzyMatch: a bare highway number in the query ("on 19") matches a name that has it prefixed ("US19"), and a real distinctive word wins outright over decoy stops that only share the road number (regression guard for "walmart on 19" losing its definitive answer)', () => {
+  const candidates = [
+    { id: 'TARGET', name: 'Walmart US19 Spring Hill' },
+    { id: 'DECOY1', name: 'US19 Applegate Dr N/E' },
+    { id: 'DECOY2', name: 'US19 Brandy Dr N/W' },
+  ];
+  const result = TheBusIntentParser.fuzzyMatch(TheBusIntentParser.normalize('walmart on 19'), candidates);
+  assert.equal(result.id, 'TARGET');
+  assert.deepEqual(result.alternatives, []);
+});
+
+test('fuzzyMatch: a bare highway number with NO other distinguishing word is still genuinely ambiguous and gets flagged, not silently guessed', () => {
+  const candidates = [
+    { id: 'DECOY1', name: 'US19 Applegate Dr N/E' },
+    { id: 'DECOY2', name: 'US19 Brandy Dr N/W' },
+  ];
+  const result = TheBusIntentParser.fuzzyMatch(TheBusIntentParser.normalize('stop on 19'), candidates);
+  assert.equal(result.alternatives.length, 1);
+});
+
 test('parseQuery: extracts a free-text landmark for FIND_NEAREST_STOP without matching it against known stop names', () => {
   const parsed = TheBusIntentParser.parseQuery('nearest stop to Springstead High School', index);
   assert.equal(parsed.intent, 'FIND_NEAREST_STOP');

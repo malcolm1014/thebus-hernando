@@ -277,6 +277,20 @@ highlights:
   in any transit chatbot surveyed (a genuine, confirmed gap in the
   ecosystem), but it was cheap to build correctly from data the app
   already has.
+- **Bare highway numbers now match their prefixed form in stop names**
+  ("on 19" matches "US19"). Found via a real report that "closest bus to
+  walmart on 19" had stopped giving a definitive answer: the stop is
+  named "Walmart US19 Spring Hill" in the feed, but nobody types "US19"
+  out loud, and short tokens ("19", 2 chars) were being filtered out of
+  matching entirely regardless. Fixed with a narrow, boundary-checked
+  rule (a numeric query token matches a name token it's a suffix of, so
+  "19" matches "us19" but not the unrelated "19" inside "119") rather
+  than just lowering thresholds broadly, since a highway number alone is
+  common to every stop strung along that road -- weak evidence on its
+  own. When candidates tie on score, one that ALSO matched a real
+  distinctive word (a business name) wins outright over ones that only
+  share the road number, instead of the two being treated as a genuine
+  ambiguous tie. Regression-guarded in `test/intentParser.test.js`.
 - **Deliberately NOT built**, per the research: full "from A to B" trip
   planning ([OpenTripPlanner](https://www.opentripplanner.org/)-style
   routing is confirmed overkill for an 8-route single-county system --
@@ -294,13 +308,31 @@ highlights:
 ## Nearest stop to anywhere
 
 `nearest stop to Springstead High School` (or "closest bus stop near
-X") resolves `X` to real coordinates via a geocoder, then finds the
-actual closest stop by great-circle distance -- for literally any real
-place, not just ones already in the GTFS stop list. This is deliberately
-NOT a hand-maintained landmarks database: any such list would already be
-incomplete the moment someone asks about a business not on it, and it'd
-need constant upkeep as businesses open/close/rename. A geocoder solves
-the general problem once instead.
+X") resolves `X` in one of three ways, most-confident/cheapest first:
+
+1. **`X` is already the (informal) name of a known stop.** "walmart on
+   19" for the real stop "Walmart US19 Spring Hill" -- checked entirely
+   offline against the same fuzzy stop-name matching every other query
+   type uses, before any network call is even considered. This is what
+   gives well-known places (which is exactly what a lot of stop names
+   already ARE -- shopping centers, schools, plazas) a fast, fully
+   confident, single-answer response instead of always paying for a
+   geocode round trip that can fail or come back ambiguous for a place
+   the app already knows about directly. Only fires when the match is
+   unambiguous (see the "did you mean" tie logic above) -- a genuinely
+   ambiguous phrase still falls through instead of guessing.
+2. **`X` is the rider's own position** ("nearest stop to me" / "...to
+   here") -- pulled from the device's GPS via `@capacitor/geolocation`
+   (see below) rather than being handed to the geocoder, which has no
+   way to resolve "me" to anything.
+3. **`X` is a genuine external place** not in the transit data at all (a
+   business, school, landmark) -- resolved to real coordinates via a
+   geocoder, then matched to the actual closest stop by great-circle
+   distance. This is deliberately NOT a hand-maintained landmarks
+   database: any such list would already be incomplete the moment
+   someone asks about a business not on it, and it'd need constant
+   upkeep as businesses open/close/rename. A geocoder solves the general
+   problem once instead.
 
 Place names are resolved via **OpenStreetMap's Nominatim** (a free,
 public geocoder) through `backend/src/geocode.js` -- proxied through our

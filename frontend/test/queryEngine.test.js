@@ -105,6 +105,69 @@ test('FIND_NEAREST_STOP: a place the geocoder can\'t find gets an honest "couldn
   }
 });
 
+test('FIND_NEAREST_STOP: an informal landmark phrase that matches a known stop name resolves directly, offline, without ever calling the geocoder (regression guard for "walmart on 19" losing its definitive answer)', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    stops: {
+      W1: { id: 'W1', name: 'Walmart US19 Spring Hill', lat: 28.55, lon: -82.63, routes: [] },
+      W2: { id: 'W2', name: 'US19 Applegate Dr N/E', lat: 28.56, lon: -82.64, routes: [] },
+    },
+  }));
+  // global.TheBusGeocode is deliberately left undefined here -- if the
+  // code fell through to the geocoder instead of matching internally
+  // first, this would throw a ReferenceError instead of answering.
+  const answer = await TheBusQueryEngine.answerQuery('closest bus to walmart on 19', TUESDAY_9AM_ET);
+  assert.match(answer, /IS A KNOWN STOP/);
+  assert.match(answer, /WALMART US19 SPRING HILL/);
+});
+
+test('FIND_NEAREST_STOP: "nearest stop to me" pulls the device\'s GPS position instead of trying to geocode the word "me"', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = {
+    // Essentially on top of S1 (28.50,-82.60), same as the geocoded-place test above.
+    getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }),
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest stop to me', TUESDAY_9AM_ET);
+    assert.match(answer, /NEAREST STOP TO YOU/);
+    assert.match(answer, /AVALON PUBLIX/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_STOP: "me" with GPS unavailable gets an honest message, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest stop to me', TUESDAY_9AM_ET);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEXT_ARRIVAL: no stop named at all falls back to GPS and answers for the nearest stop', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }) };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('when is the next bus', TUESDAY_9AM_ET);
+    assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(NEAREST TO YOU\)/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEXT_ARRIVAL: no stop named and GPS unavailable asks for a stop name instead of crashing', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('when is the next bus', TUESDAY_9AM_ET);
+    assert.match(answer, /DIDN'T CATCH A STOP NAME/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
 test('answerQuery: an unrecognized query gets the help text, not a crash', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   const answer = await TheBusQueryEngine.answerQuery('asdf qwer zxcv', TUESDAY_9AM_ET);
