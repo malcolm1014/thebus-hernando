@@ -19,14 +19,17 @@
 
       <div id="input-line">
         <span class="prompt">&gt;</span>
-        <span id="input-text"></span><span id="cursor">_</span>
+        <!-- The real, visible input -- styled to look like terminal text
+             (transparent background, matching font/color) rather than
+             mirrored into a separate fake element. A prior version tried
+             an invisible proxy input with keystrokes mirrored into a
+             fake span, which broke Android keyboards' own cursor/
+             composition tracking (confirmed on-device: reversed text
+             entry, broken backspace). Letting the OS keyboard manage a
+             real, visible input directly avoids fighting it. -->
+        <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" inputmode="text" />
       </div>
-
-      <!-- Real (invisible) input captures keystrokes/mobile keyboard; the
-           spans above render the retro look. Kept off-screen, not
-           display:none, so mobile soft keyboards still open on focus. -->
-      <input id="hidden-input" type="text" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false" />
     </div>
   </div>
 

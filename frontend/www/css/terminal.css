@@ -127,7 +127,7 @@ body {
 #input-line {
   flex: 0 0 auto;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   border-top: 1px solid var(--fg-dim);
   padding-top: 8px;
   font-size: 30px;
@@ -135,37 +135,26 @@ body {
 
 .prompt { color: var(--fg-bright); margin-right: 8px; }
 
-#cursor {
-  margin-left: 2px;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  #cursor { animation: blink 1s steps(1) infinite; }
-}
-
-@keyframes blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-
-/* Real input overlays the visible input line but is fully transparent --
-   invisible to the eye, but still positioned within the actual viewport.
-   A previous version parked this 1000px off-screen at 1x1px, which on
-   at least some Android keyboards (confirmed: Gboard) broke the IME's
-   own caret tracking -- new characters got inserted at position 0
-   instead of the end, so typed text came out reversed. Keeping the
-   element within real viewport bounds (just invisible) avoids that. */
-#hidden-input {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 56px;
-  opacity: 0;
+/* The real input IS the visible terminal line now -- not a hidden proxy
+   mirrored into a fake span. Two earlier attempts at an invisible
+   proxy input (one parked 1000px off-screen, one made transparent but
+   kept in-viewport) both broke Android keyboards' own cursor/
+   composition tracking on-device: reversed text entry, then broken
+   backspace. Letting the OS keyboard own a real, visible input directly
+   avoids fighting it -- native caret, backspace, and composition all
+   just work. Styled to disappear into the terminal look: no border/
+   background of its own, text colored and sized to match everything
+   else, native blinking caret tinted to fit the palette. */
+#command-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
   border: none;
   outline: none;
-  background: transparent;
-  color: transparent;
-  caret-color: transparent;
-  font-size: 16px; /* >=16px avoids iOS Safari's auto-zoom-on-focus; invisible either way */
+  padding: 0;
+  margin: 0;
+  color: var(--fg-bright);
+  font-family: inherit;
+  font-size: inherit;
+  caret-color: var(--fg-bright);
 }
