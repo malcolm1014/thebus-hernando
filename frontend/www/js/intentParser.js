@@ -16,11 +16,15 @@
  */
 (function (global) {
 
-  // Checked in this order: arrival questions are the dominant use case and
-  // often ALSO contain the word "route" (e.g. "when's the next bus on
-  // route 10"), so FIND_NEXT_ARRIVAL must be tested before the more
-  // generic LIST_ROUTE_STOPS trigger on "route"/"stops" would fire.
+  // Checked in this order: FIND_NEAREST_STOP goes first since "nearest
+  // STOP to X" would otherwise get grabbed by LIST_ROUTE_STOPS's generic
+  // "stop" trigger, and often also contains "where" (FIND_STOP_LOCATION).
+  // Arrival questions are the dominant use case after that and often
+  // ALSO contain the word "route" (e.g. "when's the next bus on route
+  // 10"), so FIND_NEXT_ARRIVAL must be tested before the more generic
+  // LIST_ROUTE_STOPS trigger on "route"/"stops" would fire.
   const INTENT_RULES = [
+    { intent: 'FIND_NEAREST_STOP', pattern: /\b(nearest|closest)\b/i },
     { intent: 'FIND_NEXT_ARRIVAL', pattern: /\b(when|next|how (long|soon)|eta|arriv\w*|time(?!table))\b/i },
     { intent: 'FIND_STOP_LOCATION', pattern: /\b(where|map|locat\w*|address)\b/i },
     { intent: 'LIST_ROUTE_STOPS', pattern: /\b(stops?|schedule|route)\b/i },
@@ -152,6 +156,30 @@
   }
 
   /**
+   * Pulls the free-text place name out of a FIND_NEAREST_STOP query --
+   * this is deliberately NOT matched against known stop/route names
+   * (extractStop/extractRoute), since the whole point is answering about
+   * places that aren't in the transit dataset at all (a business, a
+   * school, a landmark). Runs against the ORIGINAL text, not the
+   * lowercased/punctuation-stripped normalized form, so the extracted
+   * name keeps its real capitalization and apostrophes (geocoding
+   * quality is unaffected either way, but the echoed-back name in the
+   * answer reads better, and geocoders handle "Murphy's" fine either way).
+   * Two patterns, most-specific first: an explicit connector word
+   * ("nearest stop TO X" / "closest bus stop NEAR X"), then a bare
+   * "nearest stop X" with no connector at all.
+   */
+  function extractLandmark(rawText) {
+    let m = rawText.match(/\b(?:nearest|closest)\b.*?\b(?:to|near|by|from)\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    m = rawText.match(/\b(?:nearest|closest)\s+(?:bus\s+)?stop\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    return null;
+  }
+
+  /**
    * @param {string} text - raw user input
    * @param {{routes: Array<{id,shortName,longName}>, stops: Array<{id,name}>}} index
    *   Built by queryEngine.buildIndex() from the loaded transit_data.json
@@ -162,7 +190,8 @@
     const intent = classifyIntent(text);
     const route = extractRoute(normalizedText, index.routes);
     const stop = extractStop(normalizedText, index.stops);
-    return { intent, route, stop, raw: text };
+    const landmark = intent === 'FIND_NEAREST_STOP' ? extractLandmark(text) : null;
+    return { intent, route, stop, landmark, raw: text };
   }
 
   global.TheBusIntentParser = { parseQuery, classifyIntent, normalize, fuzzyMatch };

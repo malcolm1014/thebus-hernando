@@ -35,13 +35,13 @@
     bootStatus.textContent = msg;
   }
 
-  /** Simulates old-terminal processing latency before printing the answer, per spec. */
+  /** Simulates old-terminal processing latency before printing the answer, per spec. `fn` may be async (e.g. a NEAREST STOP query that needs a network geocode lookup). */
   function withProcessingDelay(fn) {
     const processingEl = appendEntry('processing', 'PROCESSING...');
     const delay = 350 + Math.random() * 450; // 350-800ms, feels like a retro system "thinking"
-    setTimeout(() => {
+    setTimeout(async () => {
       processingEl.remove();
-      fn();
+      await fn();
     }, delay);
   }
 
@@ -53,10 +53,10 @@
     commandLog.push(text);
     historyPointer = commandLog.length;
 
-    withProcessingDelay(() => {
+    withProcessingDelay(async () => {
       let answer;
       try {
-        answer = TheBusQueryEngine.answerQuery(text, new Date());
+        answer = await TheBusQueryEngine.answerQuery(text, new Date());
       } catch (err) {
         console.error(err);
         answer = 'SYSTEM ERROR -- QUERY COULD NOT BE PROCESSED.';

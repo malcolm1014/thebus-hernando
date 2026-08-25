@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
+const { geocode } = require('./src/geocode');
 
 const app = express();
 app.use(cors());
@@ -86,6 +87,29 @@ app.get('/api/live-buses', async (req, res) => {
   } catch (err) {
     console.error('[server] live-buses fetch failed:', err);
     res.status(502).json({ error: 'live bus data unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/geocode?q=<place name>
+ * Resolves a free-text place name (a business, school, landmark -- not
+ * necessarily a known transit stop) to coordinates via Nominatim, so the
+ * client can compute "nearest stop to X" for literally any real place
+ * instead of only ones already in the GTFS stop list. See src/geocode.js
+ * for why this is proxied (User-Agent + rate-limit policy compliance,
+ * shared caching) rather than called directly from the app.
+ */
+app.get('/api/geocode', async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  if (!q) {
+    return res.status(400).json({ error: 'missing required query parameter: q' });
+  }
+  try {
+    const result = await geocode(q);
+    res.json({ result });
+  } catch (err) {
+    console.error('[server] geocode failed:', err);
+    res.status(502).json({ error: 'geocoding unavailable', message: err.message });
   }
 });
 

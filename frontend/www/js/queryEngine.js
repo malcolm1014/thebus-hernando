@@ -88,6 +88,16 @@
     return /^route\b/i.test(name) ? name.toUpperCase() : `ROUTE ${name.toUpperCase()}`;
   }
 
+  /** Great-circle distance in miles -- accurate enough at county scale, no external library needed. */
+  function haversineMiles(lat1, lon1, lat2, lon2) {
+    const R = 3958.8; // Earth's radius in miles
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   function formatClock(minutesPastMidnight) {
     const m = ((Math.round(minutesPastMidnight) % 1440) + 1440) % 1440;
     let h = Math.floor(m / 60);
@@ -188,7 +198,15 @@
     // generic stop-level "nothing found" message.
     const routesWithArrivals = new Set(arrivals.map((a) => a.routeId));
     for (const r of relevantRoutes) {
-      if (!routesWithArrivals.has(r.routeId)) lines.push(`${routeLabel(r)} -- NO MORE SERVICE TODAY`);
+      if (routesWithArrivals.has(r.routeId)) continue;
+      // r.arrivals is the route's FULL, unfiltered arrival list (before
+      // today's date/time filtering) -- if it's empty even before any
+      // filtering, this route genuinely has no published times for this
+      // stop at all (a non-"timepoint" stop in the feed), which is a
+      // different situation from "ran today, already finished."
+      lines.push(r.arrivals.length === 0
+        ? `${routeLabel(r)} -- SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR IT`
+        : `${routeLabel(r)} -- NO MORE SERVICE TODAY`);
     }
 
     if (lines.length === 0) {
@@ -221,19 +239,60 @@
   }
 
   /**
+   * Finds the closest stop to any real-world place -- not just ones
+   * already in the GTFS stop list, since that's the whole point (a
+   * rider asking about a business, school, or landmark the transit
+   * data itself has no idea about). Requires network to resolve the
+   * place name to coordinates (TheBusGeocode, backed by our own
+   * geocoding proxy) -- the one part of this query that genuinely can't
+   * work offline, unlike everything else in this file.
+   */
+  async function answerFindNearestStop(parsed) {
+    if (!parsed.landmark) {
+      return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>?";
+    }
+    if (!navigator.onLine) {
+      return `LOOKING UP "${parsed.landmark.toUpperCase()}" NEEDS A NETWORK CONNECTION. TRY AGAIN WHEN ONLINE.`;
+    }
+
+    let place;
+    try {
+      place = await TheBusGeocode.lookup(parsed.landmark);
+    } catch (err) {
+      console.error(err);
+      return `COULDN'T LOOK UP "${parsed.landmark.toUpperCase()}" RIGHT NOW. TRY AGAIN IN A MOMENT.`;
+    }
+    if (!place) {
+      return `COULDN'T FIND "${parsed.landmark.toUpperCase()}" NEAR HERNANDO COUNTY. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.`;
+    }
+
+    let best = null;
+    for (const stop of Object.values(dataset.stops)) {
+      if (stop.lat == null || stop.lon == null) continue;
+      const dist = haversineMiles(place.lat, place.lon, stop.lat, stop.lon);
+      if (!best || dist < best.dist) best = { stop, dist };
+    }
+    if (!best) return 'NO STOPS ON FILE.';
+
+    const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    return `NEAREST STOP TO ${parsed.landmark.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+  }
+
+  /**
    * @param {string} text - raw rider input
    * @param {Date} now - device clock (caller-supplied so this stays pure/testable)
    */
-  function answerQuery(text, now) {
+  async function answerQuery(text, now) {
     if (!dataset) return 'DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.';
     const parsed = TheBusIntentParser.parseQuery(text, index);
 
     switch (parsed.intent) {
+      case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed);
       case 'FIND_NEXT_ARRIVAL': return answerFindNextArrival(parsed, now);
       case 'FIND_STOP_LOCATION': return answerFindStopLocation(parsed);
       case 'LIST_ROUTE_STOPS': return answerListRouteStops(parsed);
       default:
-        return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>";
+        return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?";
     }
   }
 

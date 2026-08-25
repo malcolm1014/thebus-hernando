@@ -30,8 +30,12 @@ thebus-hernando/
       passio.js                proxies Passio GO's real-time bus-position
                                feed (see "Live map" below) -- unofficial,
                                undocumented, reverse-engineered
+      geocode.js                proxies OpenStreetMap Nominatim to resolve
+                               a place name ("Springstead High School") to
+                               coordinates for "nearest stop to X" queries
     server.js                 GET /api/version, GET /api/download,
-                               GET /api/live-buses, POST /api/refresh (secret-protected)
+                               GET /api/live-buses, GET /api/geocode,
+                               POST /api/refresh (secret-protected)
     test/                     node --test unit tests (transform, gtfsParse, ETL safety check, passio shaping)
     data/                     generated at runtime (gitignored)
 
@@ -56,7 +60,10 @@ thebus-hernando/
                                 also exports API_BASE, shared with liveMap.js
         intentParser.js         regex intent classifier + fuzzy entity
                                 extraction (exact substring -> word overlap
-                                -> Levenshtein typo tolerance)
+                                -> Levenshtein typo tolerance); also pulls
+                                a free-text place name out of "nearest
+                                stop to X" queries, deliberately NOT
+                                matched against known stop/route names
         queryEngine.js           filters the cached dataset against
                                 agency-local time (not device-local),
                                 correct across midnight
@@ -72,7 +79,7 @@ thebus-hernando/
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
-npm test                    # 18 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping
+npm test                    # 19 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -88,6 +95,22 @@ if you extend the parser: `route_short_name` is blank for every route
 long-name digit fallback in `intentParser.extractRoute()`), and
 `trip_headsign` is blank for every trip (so `transform.js` derives an
 effective destination from each trip's actual final stop instead).
+
+**A third, more consequential one, found while building the "nearest
+stop" feature and worth knowing if you touch `transform.js`**: 81% of
+this feed's `stop_times.txt` rows have both `arrival_time` and
+`departure_time` blank -- standard GTFS practice for non-"timepoint"
+stops (only major stops get exact published times; the rest are meant
+to be interpolated). An earlier version of `transform.js` treated "no
+time" as "not served," which silently dropped 89% of stops from their
+own routes' "served by" lists -- fixed now (the stop-route relationship
+is recorded unconditionally; only a *displayable arrival time* requires
+a valid `minutes` value), but arrival-time **interpolation** for those
+non-timepoint stops isn't implemented -- `queryEngine.js` says so
+explicitly ("SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR
+IT") rather than guessing or claiming no service. Implementing real
+interpolation (using `stop_sequence`/`shape_dist_traveled` between the
+nearest bracketing timepoints) would be a good next improvement.
 
 If you're running this scaffolding from a Google Drive FUSE mount (as it
 was built): `node_modules` -- thousands of small files -- doesn't survive
@@ -165,6 +188,41 @@ runtime and falls back to `localStorage` automatically.
    from a multi-route stop's answer; asking about a route that doesn't
    serve the named stop says so directly instead of just showing
    nothing.
+5. `NEAREST STOP TO <place>` is the one query type that needs network --
+   see "Nearest stop to anywhere" below.
+
+## Nearest stop to anywhere
+
+`nearest stop to Springstead High School` (or "closest bus stop near
+X") resolves `X` to real coordinates via a geocoder, then finds the
+actual closest stop by great-circle distance -- for literally any real
+place, not just ones already in the GTFS stop list. This is deliberately
+NOT a hand-maintained landmarks database: any such list would already be
+incomplete the moment someone asks about a business not on it, and it'd
+need constant upkeep as businesses open/close/rename. A geocoder solves
+the general problem once instead.
+
+Place names are resolved via **OpenStreetMap's Nominatim** (a free,
+public geocoder) through `backend/src/geocode.js` -- proxied through our
+own backend, not called directly from the app, both for Nominatim's
+usage-policy requirements (a real identifying `User-Agent`, roughly
+1 request/second across all callers -- enforced here with a small
+request queue regardless of how many concurrent app users trigger a
+cache-miss lookup) and so repeat lookups of the same place (schools,
+common landmarks) get served from a 24-hour server-side cache instead of
+hitting Nominatim again.
+
+**Real limitation, not a bug**: Nominatim's data (OpenStreetMap) has
+excellent coverage for schools, government buildings, parks, and chains,
+but small independent local businesses are often simply not in it --
+confirmed while building this: "Springstead High School" resolved
+correctly on the first try, a real small Spring Hill deli did not, under
+several phrasings. When that happens the app says so and suggests a
+nearby road or better-known landmark instead of failing silently. If
+broader small-business coverage matters, the natural upgrade path is
+Google's Geocoding/Places API in place of (or alongside) Nominatim in
+`geocode.js` -- but that needs a Google Cloud billing account and API
+key, a decision left to you rather than made here.
 
 ## Live map
 

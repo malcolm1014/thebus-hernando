@@ -22,7 +22,13 @@ const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satur
  *       id, name, lat, lon,
  *       routes: [
  *         { routeId, shortName, longName, color,
- *           arrivals: [ { tripId, serviceId, headsign, minutes } ]  // sorted ascending, minutes may exceed 1440
+ *           arrivals: [ { tripId, serviceId, headsign, minutes } ]  // sorted ascending, minutes may exceed 1440;
+ *                                                                   // CAN BE EMPTY even though this route genuinely
+ *                                                                   // serves the stop -- GTFS allows a stop_time row
+ *                                                                   // with no arrival/departure time at all (a non-
+ *                                                                   // "timepoint" stop meant to be interpolated,
+ *                                                                   // not "not served"); the client should say so
+ *                                                                   // distinctly from "no more service today"
  *         }
  *       ]
  *     }
@@ -170,9 +176,15 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
         route.stopIds.push(st.stop_id);
       }
 
-      const minutes = gtfsTimeToMinutes(st.arrival_time || st.departure_time);
-      if (minutes === null) continue;
-
+      // A stop is served by this route whenever a stop_time row places it
+      // on the route, regardless of whether this particular row has a
+      // usable time -- GTFS deliberately leaves arrival/departure blank
+      // for non-"timepoint" stops (81% of rows in this feed), meaning
+      // "interpolate this, don't skip it," not "this stop isn't served."
+      // Conflating the two used to silently drop 89% of stops from their
+      // own routes' "served by" lists. The stop-route relationship is
+      // recorded unconditionally here; only a *displayable arrival time*
+      // requires a valid `minutes` below.
       if (!stop.routesById[route.id]) {
         stop.routesById[route.id] = {
           routeId: route.id,
@@ -182,6 +194,10 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
           arrivals: [],
         };
       }
+
+      const minutes = gtfsTimeToMinutes(st.arrival_time || st.departure_time);
+      if (minutes === null) continue; // served, but no published time for this specific stop_time row to display
+
       stop.routesById[route.id].arrivals.push({
         tripId,
         serviceId: trip.serviceId,

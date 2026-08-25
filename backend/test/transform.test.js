@@ -90,3 +90,21 @@ test('leaves shapePoints empty when a trip has no shape_id or shapes.txt is abse
   const data = transform(baseTables());
   assert.deepEqual(data.routes.R1.shapePoints, []);
 });
+
+test('registers a stop as served by a route even when its stop_time row has no arrival/departure time', () => {
+  // Real-world GTFS pattern (81% of rows in Hernando County's actual
+  // feed): non-"timepoint" stops are meant to be interpolated, not
+  // treated as unserved. A stop_time row with both times blank must
+  // still create the stop<->route relationship -- just with no
+  // displayable arrival for that specific occurrence.
+  const data = transform(baseTables({
+    stopTimes: [
+      { trip_id: 'T1', stop_id: 'S1', stop_sequence: '1', arrival_time: '08:00:00', departure_time: '08:00:00' },
+      { trip_id: 'T1', stop_id: 'S2', stop_sequence: '2', arrival_time: '', departure_time: '' },
+    ],
+  }));
+  assert.equal(data.stops.S2.routes.length, 1, 'S2 should still be listed as served by R1');
+  assert.equal(data.stops.S2.routes[0].routeId, 'R1');
+  assert.deepEqual(data.stops.S2.routes[0].arrivals, [], 'no displayable time, but still served');
+  assert.deepEqual(data.routes.R1.stopIds, ['S1', 'S2']);
+});
