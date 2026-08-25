@@ -171,11 +171,14 @@ runtime and falls back to `localStorage` automatically.
    passing along an index of every route/stop name currently in the
    cached dataset (entities are only ever matched against real, current
    data -- never a hardcoded list).
-3. `intentParser` classifies the intent via ordered regex triggers, then
-   fuzzy-matches route/stop entities in three passes: exact substring,
-   word-overlap (ties broken toward the more specific/longer name), then
-   Levenshtein-distance typo tolerance ("Wallmart" -> "Walmart") as a
-   last resort.
+3. `intentParser` classifies the intent via **weighted scoring across
+   every intent at once**, not ordered first-match regex -- see "Making
+   the search foolproof" below for why this changed and where the
+   design came from. It then fuzzy-matches route/stop entities in three
+   passes: exact substring, word-overlap, then Jaro-Winkler typo
+   tolerance ("Wallmart" -> "Walmart") as a last resort. Both the query
+   and every candidate name pass through abbreviation normalization
+   first (Blvd/Boulevard, Dr/Drive, N/Northeast, etc. all compare equal).
 4. `queryEngine` computes "now" in the *agency's* timezone via `Intl`
    (not the device's own timezone -- GTFS times are agency-local
    wall-clock time, so a phone with its region set wrong would otherwise
@@ -187,9 +190,93 @@ runtime and falls back to `localStorage` automatically.
    service today is called out by name rather than silently omitted
    from a multi-route stop's answer; asking about a route that doesn't
    serve the named stop says so directly instead of just showing
-   nothing.
-5. `NEAREST STOP TO <place>` is the one query type that needs network --
-   see "Nearest stop to anywhere" below.
+   nothing; if fuzzy matching finds 2+ equally-good candidates instead
+   of one clear winner, the rider gets asked to be more specific instead
+   of the app silently guessing.
+5. `NEAREST STOP TO <place>` and `FIRST/LAST BUS AT <stop>` are also
+   supported intents -- the former is the one query type that needs
+   network (see "Nearest stop to anywhere" below), the latter answers
+   from the stop's *entire* day's schedule rather than just what's
+   still upcoming.
+
+## Making the search foolproof
+
+Every design decision in `intentParser.js` below is backed by research
+into real transit chatbots, mature fuzzy-search libraries, address-
+normalization standards, and disambiguation UX from established CLI
+tools -- not guesswork. Six parallel research passes fed this; the
+highlights:
+
+- **Weighted intent scoring, not first-match-wins.** The old design
+  checked intents in a fixed order and stopped at the first regex match
+  -- a query containing both "when" and "where" was permanently locked
+  to whichever intent happened to be checked first. Every intent now
+  accumulates a score from its own trigger cues (strong cues worth more
+  than weak ones) and the highest total wins, so "where's the closest
+  stop with the next bus" resolves on actual signal strength. This
+  exact strong-cue/weak-cue additive-scoring shape is a real, working
+  pattern found in [`potatoes0089/transitai-utm-demo`](https://github.com/potatoes0089/transitai-utm-demo)
+  (`js/intent.js`), not invented here.
+- **Trigger phrase coverage** comes from two real production transit
+  voice assistants, not brainstorming: [OneBusAway's Alexa skill](https://github.com/OneBusAway/onebusaway-alexa)
+  (`interaction model/utterances.txt` -- ~50 real phrasings Amazon's
+  certification process required, including the whole depart/leave/
+  coming/approaching verb family and "how far away" framing the
+  original trigger list missed) and [a university shuttle skill](https://github.com/pem5rm/BusTracker)
+  (informal "gonna arrive"/"going to be at" phrasing).
+- **Jaro-Winkler replaced plain Levenshtein** for the last-resort typo
+  pass -- it specifically rewards a shared prefix, which fits how
+  people actually mistype short place names (the error is usually
+  mid-word, not at the start). Hand-implemented from the [standard
+  algorithm](https://en.wikipedia.org/wiki/Jaro%E2%80%93Winkler_distance)
+  to stay dependency-free. Its scoring aggregates across every matched
+  query word (not just the single best word-pair) -- an earlier version
+  of this pass scored on one best-matching word only, which let a
+  typo'd query match the WRONG stop just because one incidental word
+  scored well against it ("Plaz" matching "Plaza" inside an unrelated
+  stop name); caught via real testing against actual stop data before
+  shipping, not by inspection.
+- **Abbreviation normalization** uses real entries from [libpostal's
+  own dictionaries](https://github.com/openvenues/libpostal/tree/master/resources/dictionaries/en)
+  (`street_types.txt`, `directionals.txt` -- libpostal's docs describe
+  these as sourced from USPS Publication 28, the official U.S. postal
+  abbreviation standard), not a guessed list. Restricted to safe,
+  unambiguous forms -- deliberately skips single-letter road-type
+  abbreviations (too likely to collide with ordinary short words) but
+  keeps single-letter cardinal directions (n/s/e/w), which are
+  unambiguous and heavily used in this feed's actual stop names.
+- **Disambiguation instead of silent guessing** when fuzzy matching
+  finds 2-4 equally-good candidates, following the *combined* precedent
+  of two real, independently-converging sources: [git's actual "did you
+  mean" source](https://github.com/git/git/blob/master/help.c) lists
+  *every* command tied at the best score rather than picking one, and
+  [OneBusAway's production stop-search code](https://github.com/OneBusAway/onebusaway-application-modules)
+  explicitly comments that a fuzzy name match is "just a suggestion,"
+  never auto-committed as a confident answer the way an exact ID match
+  is. Only exact substring matches stay fully confident here; word-
+  overlap and Jaro-Winkler matches get this tie-check. Deliberately
+  did NOT add stateful "reply 1 or 2" numbered-menu disambiguation --
+  research into text-only chat UX patterns recommended against it for
+  an app this size (real scope increase for no real gain over listing
+  alternatives and asking the rider to be more specific).
+- **First/last bus** answers from the stop's whole-day schedule instead
+  of just upcoming arrivals -- no real prior art exists for this intent
+  in any transit chatbot surveyed (a genuine, confirmed gap in the
+  ecosystem), but it was cheap to build correctly from data the app
+  already has.
+- **Deliberately NOT built**, per the research: full "from A to B" trip
+  planning ([OpenTripPlanner](https://www.opentripplanner.org/)-style
+  routing is confirmed overkill for an 8-route single-county system --
+  small real transit voice apps surveyed don't attempt it either) and
+  phonetic matching like Metaphone (not worth the implementation cost
+  over Jaro-Winkler at a ~370-entry dataset size). Two real, scoped
+  ideas surfaced but not built this round, for a future pass: "next bus
+  toward X" / "when should I leave to get to X by TIME" (real intent
+  patterns from [`BWHackathons/BusSkill`](https://github.com/BWHackathons/BusSkill),
+  implementable by reusing the existing geocode + nearest-stop
+  pipeline) and route-to-landmark proximity ("does bus X go near Y",
+  feasible via point-to-polyline distance against the route
+  `shapePoints` the map view already has).
 
 ## Nearest stop to anywhere
 

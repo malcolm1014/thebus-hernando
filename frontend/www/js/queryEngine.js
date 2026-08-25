@@ -163,6 +163,41 @@
     return limit ? results.slice(0, limit) : results;
   }
 
+  /**
+   * All of TODAY's active-service arrivals for a stop (optionally
+   * filtered to one route), unsorted by "is this in the future" --
+   * unlike nextArrivals(), which only returns what's still upcoming.
+   * Used for FIND_FIRST_LAST_BUS, where "first bus" needs the day's
+   * earliest scheduled time even if that time already passed hours ago.
+   * Simplification, documented: doesn't attempt the yesterday-spillover
+   * handling nextArrivals() does for trips scheduled past midnight --
+   * acceptable for this feed (no observed overnight service), would need
+   * revisiting if a future feed/agency actually runs past midnight.
+   */
+  function dayArrivals(stopId, routeId, now) {
+    const stop = dataset.stops[stopId];
+    if (!stop) return [];
+    const tz = agencyTz();
+    const today = getAgencyClock(now, tz);
+    const results = [];
+    for (const routeEntry of stop.routes) {
+      if (routeId && routeEntry.routeId !== routeId) continue;
+      for (const arr of routeEntry.arrivals) {
+        if (!isServiceActiveForClock(arr.serviceId, today.dow, today.dateStr)) continue;
+        const wallMinutes = arr.minutes % 1440;
+        results.push(toArrivalRecord(routeEntry, arr, wallMinutes - today.minutes, wallMinutes));
+      }
+    }
+    results.sort((a, b) => a.minutesUntil - b.minutesUntil);
+    return results;
+  }
+
+  /** "did you mean X, Y, or Z?" when fuzzy matching found 2-4 equally-good candidates instead of one clear winner -- see intentParser.js's pickBestOrFlagTie for why this can happen (git's "did you mean" precedent: list every tied candidate, don't silently guess). */
+  function disambiguationMessage(entity, kind) {
+    const names = [entity.name, ...entity.alternatives.map((a) => a.name)];
+    return `MULTIPLE ${kind} MATCH THAT: ${names.map((n) => n.toUpperCase()).join(' / ')}. TRY BEING MORE SPECIFIC.`;
+  }
+
   /** Past this many minutes out, show a plain clock time instead of a countdown -- "in 47 min" implies false precision this far ahead; industry-standard cutover for transit-arrival displays. */
   const COUNTDOWN_THRESHOLD_MIN = 30;
 
@@ -170,6 +205,8 @@
     if (!parsed.stop) {
       return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>?";
     }
+    if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
+    if (parsed.route && parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
     const stop = dataset.stops[parsed.stop.id];
 
     if (parsed.route) {
@@ -219,6 +256,7 @@
     if (!parsed.stop) {
       return "I DIDN'T CATCH A STOP NAME. TRY: WHERE IS <STOP NAME>?";
     }
+    if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
     const stop = dataset.stops[parsed.stop.id];
     const routeList = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
     const coords = (stop.lat != null && stop.lon != null)
@@ -231,11 +269,39 @@
     if (!parsed.route) {
       return "I DIDN'T CATCH A ROUTE. TRY: LIST STOPS ON ROUTE 10.";
     }
+    if (parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
     const route = dataset.routes[parsed.route.id];
     const names = route.stopIds.map((id) => dataset.stops[id]?.name).filter(Boolean);
     const label = routeLabel(route);
     if (names.length === 0) return `NO STOPS ON FILE FOR ${label}.`;
     return `${label} STOPS:\n${names.map((n, i) => `${i + 1}. ${n.toUpperCase()}`).join('\n')}`;
+  }
+
+  /** "FIRST BUS" / "LAST BUS" -- distinct from "next bus": needs the whole day's schedule (dayArrivals), not just what's still upcoming, so it still answers correctly even late at night after service has ended for the day. */
+  function answerFindFirstLastBus(parsed, now) {
+    if (!parsed.stop) {
+      return "I DIDN'T CATCH A STOP NAME. TRY: FIRST BUS AT <STOP NAME>? OR LAST BUS AT <STOP NAME>?";
+    }
+    if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
+    if (parsed.route && parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
+    const stop = dataset.stops[parsed.stop.id];
+
+    if (parsed.route) {
+      const servesStop = stop.routes.some((r) => r.routeId === parsed.route.id);
+      if (!servesStop) {
+        const route = dataset.routes[parsed.route.id];
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+      }
+    }
+
+    const all = dayArrivals(parsed.stop.id, parsed.route ? parsed.route.id : null, now);
+    if (all.length === 0) {
+      return `NO SERVICE TODAY AT ${stop.name.toUpperCase()}.`;
+    }
+    const picked = parsed.firstOrLast === 'last' ? all[all.length - 1] : all[0];
+    const label = parsed.firstOrLast === 'last' ? 'LAST BUS' : 'FIRST BUS';
+    return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}`;
   }
 
   /**
@@ -288,11 +354,12 @@
 
     switch (parsed.intent) {
       case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed);
+      case 'FIND_FIRST_LAST_BUS': return answerFindFirstLastBus(parsed, now);
       case 'FIND_NEXT_ARRIVAL': return answerFindNextArrival(parsed, now);
       case 'FIND_STOP_LOCATION': return answerFindStopLocation(parsed);
       case 'LIST_ROUTE_STOPS': return answerListRouteStops(parsed);
       default:
-        return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?";
+        return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?";
     }
   }
 
