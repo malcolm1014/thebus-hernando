@@ -31,8 +31,17 @@
     }
 
     try {
-      report('CHECKING FOR DATASET UPDATES...');
-      const versionRes = await fetchWithTimeout(`${API_BASE}/api/version`, 5000);
+      // The backend runs on Render's free tier, which spins the service
+      // down after ~15 min idle -- waking it back up can take 50+
+      // seconds. A short timeout here would fail almost every "first
+      // launch after the backend's been idle" sync, which is exactly
+      // the case with no cached fallback data to save it (a brand new
+      // install, or -- as happened once -- a debug-build reinstall that
+      // Android treated as a fresh app because the signing key had
+      // changed between CI builds). 60s comfortably covers a cold start
+      // while barely affecting the common warm-instance case.
+      report('CHECKING FOR DATASET UPDATES... (MAY TAKE UP TO A MINUTE IF THE SERVER WAS ASLEEP)');
+      const versionRes = await fetchWithTimeout(`${API_BASE}/api/version`, 60000);
       if (!versionRes.ok) throw new Error(`version check HTTP ${versionRes.status}`);
       const { version: remoteVersion } = await versionRes.json();
       const localVersion = await TheBusStorage.getLocalVersion();
@@ -44,7 +53,7 @@
       }
 
       report('DOWNLOADING UPDATED SCHEDULE DATA...');
-      const downloadRes = await fetchWithTimeout(`${API_BASE}/api/download`, 15000);
+      const downloadRes = await fetchWithTimeout(`${API_BASE}/api/download`, 60000);
       if (!downloadRes.ok) throw new Error(`download HTTP ${downloadRes.status}`);
       const text = await downloadRes.text();
       const parsed = JSON.parse(text);

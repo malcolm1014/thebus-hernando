@@ -29,6 +29,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Install a fixed debug keystore
+        # Without this, the Android Gradle Plugin auto-generates a NEW
+        # random debug.keystore whenever ~/.android/debug.keystore is
+        # missing -- true on every fresh GitHub Actions runner. Each
+        # build would then be signed with a different key, which Android
+        # treats as an unrelated app: installing a new build over an old
+        # one either gets refused outright or silently wipes all app
+        # storage (exactly what happened before this fix -- every fresh
+        # APK install looked like a first-ever launch, no cached data,
+        # live map empty). Reusing the same committed keystore
+        # (frontend/keystore/debug.keystore, debug-only, never used for
+        # real distribution -- not a secret) makes every future build a
+        # real update that preserves the user's synced data.
+        run: |
+          mkdir -p ~/.android
+          cp keystore/debug.keystore ~/.android/debug.keystore
+
       - name: Generate native Android project
         run: npx cap add android
 
