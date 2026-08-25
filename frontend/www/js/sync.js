@@ -60,5 +60,5 @@
     }
   }
 
-  global.TheBusSync = { syncData };
+  global.TheBusSync = { syncData, API_BASE };
 })(window);

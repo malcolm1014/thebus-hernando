@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>TheBus // Hernando County Transit</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="css/terminal.css" />
 </head>
 <body>
@@ -15,28 +16,42 @@
         <span id="boot-status">INITIALIZING OFFLINE DATASET...</span>
       </div>
 
-      <div id="history" aria-live="polite"></div>
+      <div id="view-tabs" role="tablist">
+        <button type="button" id="tab-terminal" class="view-tab active" role="tab" aria-selected="true">[ TERMINAL ]</button>
+        <button type="button" id="tab-map" class="view-tab" role="tab" aria-selected="false">[ LIVE MAP ]</button>
+      </div>
 
-      <div id="input-line">
-        <span class="prompt">&gt;</span>
-        <!-- The real, visible input -- styled to look like terminal text
-             (transparent background, matching font/color) rather than
-             mirrored into a separate fake element. A prior version tried
-             an invisible proxy input with keystrokes mirrored into a
-             fake span, which broke Android keyboards' own cursor/
-             composition tracking (confirmed on-device: reversed text
-             entry, broken backspace). Letting the OS keyboard manage a
-             real, visible input directly avoids fighting it. -->
-        <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
-               autocorrect="off" spellcheck="false" inputmode="text" />
+      <div id="terminal-view">
+        <div id="history" aria-live="polite"></div>
+
+        <div id="input-line">
+          <span class="prompt">&gt;</span>
+          <!-- The real, visible input -- styled to look like terminal text
+               (transparent background, matching font/color) rather than
+               mirrored into a separate fake element. A prior version tried
+               an invisible proxy input with keystrokes mirrored into a
+               fake span, which broke Android keyboards' own cursor/
+               composition tracking (confirmed on-device: reversed text
+               entry, broken backspace). Letting the OS keyboard manage a
+               real, visible input directly avoids fighting it. -->
+          <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" inputmode="text" />
+        </div>
+      </div>
+
+      <div id="map-view" hidden>
+        <div id="map"></div>
+        <div id="map-status">CONNECTING TO LIVE TRACKER...</div>
       </div>
     </div>
   </div>
 
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/intentParser.js"></script>
   <script src="js/queryEngine.js"></script>
+  <script src="js/liveMap.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

@@ -105,8 +105,67 @@
     }
   });
 
-  // Tapping anywhere on the screen refocuses the input.
-  document.getElementById('screen').addEventListener('click', () => commandInput.focus());
+  // Tapping anywhere on the terminal view refocuses the input. Scoped to
+  // #terminal-view specifically (not the whole #screen) so tapping the
+  // live map doesn't steal focus back to the command line and pop the
+  // keyboard open over the map.
+  document.getElementById('terminal-view').addEventListener('click', () => commandInput.focus());
+
+  // ---- View tabs: terminal <-> live map ----
+  const tabTerminal = document.getElementById('tab-terminal');
+  const tabMap = document.getElementById('tab-map');
+  const terminalView = document.getElementById('terminal-view');
+  const mapView = document.getElementById('map-view');
+  const mapStatus = document.getElementById('map-status');
+  let mapInitialized = false;
+  let lastDataset = null;
+
+  function showTerminal() {
+    tabTerminal.classList.add('active');
+    tabTerminal.setAttribute('aria-selected', 'true');
+    tabMap.classList.remove('active');
+    tabMap.setAttribute('aria-selected', 'false');
+    terminalView.hidden = false;
+    mapView.hidden = true;
+    TheBusLiveMap.stopPolling();
+    commandInput.focus();
+  }
+
+  function showMap() {
+    tabMap.classList.add('active');
+    tabMap.setAttribute('aria-selected', 'true');
+    tabTerminal.classList.remove('active');
+    tabTerminal.setAttribute('aria-selected', 'false');
+    terminalView.hidden = true;
+    mapView.hidden = false;
+
+    if (!mapInitialized) {
+      TheBusLiveMap.initMap('map');
+      mapInitialized = true;
+    }
+    // Leaflet can't detect its container becoming visible on its own --
+    // it was 0x0 (display:none) until just now.
+    TheBusLiveMap.invalidateSize();
+    if (lastDataset) TheBusLiveMap.drawStaticData(lastDataset);
+
+    if (!navigator.onLine) {
+      mapStatus.textContent = 'OFFLINE -- LIVE BUS POSITIONS UNAVAILABLE';
+    } else {
+      mapStatus.textContent = 'CONNECTING TO LIVE TRACKER...';
+      TheBusLiveMap.startPolling(10000, (result) => {
+        if (!result.ok) {
+          mapStatus.textContent = 'LIVE TRACKER UNAVAILABLE -- ROUTES/STOPS STILL SHOWN';
+        } else if (result.count === 0) {
+          mapStatus.textContent = 'NO BUSES CURRENTLY RUNNING';
+        } else {
+          mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE`;
+        }
+      });
+    }
+  }
+
+  tabTerminal.addEventListener('click', showTerminal);
+  tabMap.addEventListener('click', showMap);
 
   // iOS Safari shrinks the *visual* viewport (not the layout viewport)
   // when the on-screen keyboard opens, which `height: 100%` doesn't
@@ -133,6 +192,11 @@
     }
 
     TheBusQueryEngine.setDataset(data);
+    lastDataset = data;
+    // Covers the case where the user switched to the map tab before the
+    // initial sync finished -- the map would've drawn with no routes/
+    // stops yet since lastDataset was still null at that point.
+    if (mapInitialized && !mapView.hidden) TheBusLiveMap.drawStaticData(lastDataset);
     bootStatus.classList.add('ready');
     setStatus(status === 'synced' ? 'DATASET SYNCED -- READY' : 'READY (OFFLINE CACHE)');
 

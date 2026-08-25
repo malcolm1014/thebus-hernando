@@ -16,7 +16,7 @@ const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satur
  *     own timezone, so the client must compute "now" in this zone rather
  *     than trusting the device's local clock/date directly.
  *   services: { [service_id]: { monday..sunday: bool, startDate, endDate, addedDates: [], removedDates: [] } },
- *   routes:   { [route_id]: { id, shortName, longName, color, textColor, stopIds: [stop_id in first-seen trip order] } },
+ *   routes:   { [route_id]: { id, shortName, longName, color, textColor, stopIds: [stop_id in first-seen trip order], shapePoints: [[lat,lon], ...] for drawing the route on the map view } },
  *   stops:    {
  *     [stop_id]: {
  *       id, name, lat, lon,
@@ -29,7 +29,7 @@ const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satur
  *   }
  * }
  */
-function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies }) {
+function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies, shapes }) {
   const agencyTimezone = (agency[0] && agency[0].agency_timezone) || 'America/New_York';
 
   if (frequencies && frequencies.length > 0) {
@@ -74,6 +74,17 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     else if (cd.exception_type === '2') services[cd.service_id].removedDates.push(cd.date);
   }
 
+  // --- shapes: shape_id -> [[lat, lon], ...] polyline, for drawing routes on the map view ---
+  const shapePointsById = new Map();
+  for (const pt of shapes) {
+    if (!shapePointsById.has(pt.shape_id)) shapePointsById.set(pt.shape_id, []);
+    shapePointsById.get(pt.shape_id).push({
+      seq: Number(pt.shape_pt_sequence),
+      point: [Number(pt.shape_pt_lat), Number(pt.shape_pt_lon)],
+    });
+  }
+  for (const pts of shapePointsById.values()) pts.sort((a, b) => a.seq - b.seq);
+
   // --- routes lookup ---
   const routeById = {};
   for (const r of routes) {
@@ -84,16 +95,18 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
       color: r.route_color ? `#${r.route_color}` : null,
       textColor: r.route_text_color ? `#${r.route_text_color}` : null,
       stopIds: [], // filled below, first-seen trip order (a reasonable proxy for stop sequence)
+      shapePoints: [], // filled below from the first trip's shape_id seen for this route
     };
   }
 
-  // --- trip_id -> {route_id, service_id, headsign} ---
+  // --- trip_id -> {route_id, service_id, headsign, shapeId} ---
   const tripInfo = {};
   for (const t of trips) {
     tripInfo[t.trip_id] = {
       routeId: t.route_id,
       serviceId: t.service_id,
       headsign: t.trip_headsign || '', // resolved below once stop_times are walked, if still blank
+      shapeId: t.shape_id || null,
     };
   }
 
@@ -136,6 +149,13 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     if (!trip.headsign) {
       const lastStopId = rows[rows.length - 1].stop_id;
       trip.headsign = stopById[lastStopId] ? stopById[lastStopId].name : '';
+    }
+
+    // First trip's shape wins -- a route can have multiple shape_ids (one
+    // per direction/branch); a single representative polyline is enough
+    // for a simple "where do the buses run" map view.
+    if (route.shapePoints.length === 0 && trip.shapeId && shapePointsById.has(trip.shapeId)) {
+      route.shapePoints = shapePointsById.get(trip.shapeId).map((p) => p.point);
     }
 
     if (!seenRouteStops.has(route.id)) seenRouteStops.set(route.id, new Set());

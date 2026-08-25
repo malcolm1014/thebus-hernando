@@ -40,6 +40,7 @@ function parseAllGtfs() {
     calendar: parseFile('calendar.txt'),
     calendarDates: parseFile('calendar_dates.txt'), // optional, service exceptions
     frequencies: parseFile('frequencies.txt'), // optional, headway-based trips
+    shapes: parseFile('shapes.txt'), // optional, route polylines for the map view
   };
 }
 

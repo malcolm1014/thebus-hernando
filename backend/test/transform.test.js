@@ -23,6 +23,7 @@ function baseTables(overrides = {}) {
     ],
     calendarDates: [],
     frequencies: [],
+    shapes: [],
     ...overrides,
   };
 }
@@ -72,4 +73,20 @@ test('throws rather than silently dropping arrivals when frequencies.txt is pres
 test('falls back to America/New_York when agency.txt is missing agency_timezone', () => {
   const data = transform(baseTables({ agency: [] }));
   assert.equal(data.agencyTimezone, 'America/New_York');
+});
+
+test('attaches a route\'s shape polyline (sorted by sequence) from shapes.txt via the trip\'s shape_id', () => {
+  const data = transform(baseTables({
+    trips: [{ route_id: 'R1', service_id: 'WEEKDAY', trip_id: 'T1', trip_headsign: '', shape_id: 'SH1' }],
+    shapes: [
+      { shape_id: 'SH1', shape_pt_lat: '28.51', shape_pt_lon: '-82.61', shape_pt_sequence: '2' },
+      { shape_id: 'SH1', shape_pt_lat: '28.50', shape_pt_lon: '-82.60', shape_pt_sequence: '1' },
+    ],
+  }));
+  assert.deepEqual(data.routes.R1.shapePoints, [[28.50, -82.60], [28.51, -82.61]]);
+});
+
+test('leaves shapePoints empty when a trip has no shape_id or shapes.txt is absent', () => {
+  const data = transform(baseTables());
+  assert.deepEqual(data.routes.R1.shapePoints, []);
 });

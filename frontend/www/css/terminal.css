@@ -108,6 +108,34 @@ body {
 
 #boot-status.ready { color: var(--fg-bright); }
 
+#view-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 22px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.view-tab.active { color: var(--fg-bright); }
+
+#terminal-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#terminal-view[hidden], #map-view[hidden] { display: none; }
+
 #history {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -157,4 +185,77 @@ body {
   font-family: inherit;
   font-size: inherit;
   caret-color: var(--fg-bright);
+}
+
+/* ---- Live map view ---- */
+
+#map-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  /* Undo #screen's terminal glow/shadow for this subtree -- it's a real
+     map now, not text, and the blur just looks like a rendering glitch
+     over map tiles and Leaflet's own UI chrome. */
+  text-shadow: none;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+  background: var(--bg); /* shows through before tiles load, and in any gaps if they fail to load offline */
+}
+
+#map-status {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--fg-bright);
+  font-size: 18px;
+  padding: 4px 8px;
+  border: 1px solid var(--fg-dim);
+  pointer-events: none;
+}
+
+/* Leaflet's own UI (popups, zoom control, attribution) restyled to fit
+   the terminal palette instead of its light-theme default. */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: #000000;
+  color: var(--fg-bright);
+  border: 1px solid var(--fg-dim);
+  box-shadow: none;
+}
+.leaflet-popup-content { font-family: 'VT323', 'Courier New', monospace; font-size: 20px; }
+.leaflet-container a.leaflet-popup-close-button { color: var(--fg-dim); }
+.leaflet-control-zoom a {
+  background: #000000;
+  color: var(--fg-bright);
+  border-color: var(--fg-dim) !important;
+}
+.leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.6) !important;
+  color: var(--fg-dim) !important;
+}
+.leaflet-control-attribution a { color: var(--fg) !important; }
+
+/* Bus marker: a colored dot with a small directional wedge (CSS
+   triangle) so heading is visible at a glance without a bitmap icon. */
+.bus-marker-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #000000;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  position: relative;
+}
+.bus-marker-dot::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 6px solid #000000;
 }

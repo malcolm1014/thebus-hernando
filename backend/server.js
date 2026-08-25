@@ -4,6 +4,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const config = require('./src/config');
 const { runEtl } = require('./src/etl');
+const { fetchLiveBuses } = require('./src/passio');
 
 const app = express();
 app.use(cors());
@@ -67,6 +68,24 @@ app.post('/api/refresh', express.json(), async (req, res) => {
     res.status(500).json({ error: 'etl failed', message: err.message });
   } finally {
     etlRunning = false;
+  }
+});
+
+/**
+ * GET /api/live-buses
+ * Proxies Passio GO's real-time vehicle-position feed (see src/passio.js
+ * for why this goes through our backend rather than being called
+ * directly from the app). Requires network -- unlike the schedule data,
+ * this is never cached client-side, since a stale bus position is
+ * actively misleading rather than just outdated.
+ */
+app.get('/api/live-buses', async (req, res) => {
+  try {
+    const result = await fetchLiveBuses();
+    res.json(result);
+  } catch (err) {
+    console.error('[server] live-buses fetch failed:', err);
+    res.status(502).json({ error: 'live bus data unavailable', message: err.message });
   }
 });
 

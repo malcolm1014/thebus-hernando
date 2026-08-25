@@ -4,7 +4,9 @@ Offline-first mobile transit assistant with a retro MS-DOS/CRT command-line
 interface. A lightweight Node.js ETL server converts Hernando County's GTFS
 feed into one flat JSON file; a Capacitor-wrapped vanilla JS app caches that
 file on-device and answers rider questions with a regex-based rule engine
-(no LLM, no network needed after first sync).
+(no LLM, no network needed after first sync). A second tab adds a live map:
+routes and stops draw from the same offline dataset, with real-time bus
+positions overlaid when the device has a connection.
 
 ## Layout
 
@@ -25,9 +27,12 @@ thebus-hernando/
                                refuses to overwrite a known-good dataset with
                                a suspiciously-smaller one (broken-feed guard)
       hash.js                 content hash used as the dataset "version"
+      passio.js                proxies Passio GO's real-time bus-position
+                               feed (see "Live map" below) -- unofficial,
+                               undocumented, reverse-engineered
     server.js                 GET /api/version, GET /api/download,
-                               POST /api/refresh (secret-protected)
-    test/                     node --test unit tests (transform, gtfsParse, ETL safety check)
+                               GET /api/live-buses, POST /api/refresh (secret-protected)
+    test/                     node --test unit tests (transform, gtfsParse, ETL safety check, passio shaping)
     data/                     generated at runtime (gitignored)
 
   frontend/                  Capacitor + vanilla JS/HTML/CSS
@@ -36,23 +41,29 @@ thebus-hernando/
                                icon-source.svg -- source images for
                                @capacitor/assets; swap these for real
                                branding, then re-run `npm run gen:assets`
+    vendor/leaflet/            Leaflet 1.9.4 JS/CSS, self-hosted (BSD-2-Clause)
     www/
-      index.html              terminal shell markup
+      index.html              terminal shell + live-map tab markup
       css/terminal.css         green-on-black CRT styling (self-hosted VT323,
                                phosphor-bloom glow, flicker, all motion gated
-                               behind prefers-reduced-motion)
+                               behind prefers-reduced-motion) + Leaflet
+                               popup/control restyling to match
       assets/fonts/            VT323-Regular.woff2 (OFL-1.1, self-hosted)
       js/
         storage.js             Capacitor Filesystem/Preferences wrapper
                                 (falls back to localStorage outside the shell)
-        sync.js                 version check -> conditional download -> cache
+        sync.js                 version check -> conditional download -> cache;
+                                also exports API_BASE, shared with liveMap.js
         intentParser.js         regex intent classifier + fuzzy entity
                                 extraction (exact substring -> word overlap
                                 -> Levenshtein typo tolerance)
         queryEngine.js           filters the cached dataset against
                                 agency-local time (not device-local),
                                 correct across midnight
-        app.js                   terminal UI wiring (input, history, "PROCESSING...")
+        liveMap.js               draws routes/stops from the offline dataset,
+                                polls /api/live-buses for real-time positions
+        app.js                   terminal UI wiring + tab switching between
+                                the terminal and map views
 ```
 
 ## Backend: run it
@@ -61,7 +72,7 @@ thebus-hernando/
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
-npm test                    # 13 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard
+npm test                    # 18 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -154,6 +165,43 @@ runtime and falls back to `localStorage` automatically.
    from a multi-route stop's answer; asking about a route that doesn't
    serve the named stop says so directly instead of just showing
    nothing.
+
+## Live map
+
+The "LIVE MAP" tab draws every route (as a colored polyline, from GTFS
+`shapes.txt`) and every stop from the *same offline dataset* the terminal
+search uses -- so routes/stops still render with zero connectivity. Live
+bus positions are the one part of this app that genuinely can't work
+offline (a cached bus position is actively misleading, not just stale),
+so those are only overlaid when the device has a connection.
+
+Real-time positions come from **Passio GO**
+(`https://passiogo.com/?agency=5732`), the same tracker Hernando County
+itself embeds on its own transit page. There's no official public API
+for it -- `backend/src/passio.js` replicates the exact request shape
+their own web widget uses, found by inspecting its network traffic
+(`POST /mapGetData.php?getBuses=2` with `{s0: "5732", sA: 1}`). This is
+the same approach the open-source
+[`athuler/PassioGo`](https://github.com/athuler/PassioGo) project takes
+for dozens of other agencies using the same vendor. Because it's
+unauthenticated and undocumented, **Passio could change or remove this
+without notice** -- that's an accepted risk of using it, since GTFS
+static data has no real-time positions at all. It's proxied through our
+own backend (`GET /api/live-buses`, 8-second in-memory cache) rather
+than called directly from the app, both to avoid the app needing
+cross-origin requests to a third party and so a future Passio change
+only needs a backend update, not an app-store release.
+
+`bus.routeId` from Passio is matched against our own GTFS `route_id` on
+a best-effort basis -- their route `groupId` appeared to match our
+`route_id` in Passio's static route list at build time, but this
+couldn't be confirmed against a *live* bus payload (no vehicles were
+running at the hour this was built/tested). If a bus's `routeId` doesn't
+match anything in the dataset, the client falls back to Passio's own
+`routeName` for the popup label and a neutral gray marker color instead
+of the route's real color -- verify this once you've seen it during
+actual service hours, and adjust `liveMap.js`/`passio.js` if the IDs
+turn out not to align after all.
 
 ## Data flow (why the split)
 
