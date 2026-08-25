@@ -29,23 +29,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Install a fixed debug keystore
-        # Without this, the Android Gradle Plugin auto-generates a NEW
-        # random debug.keystore whenever ~/.android/debug.keystore is
-        # missing -- true on every fresh GitHub Actions runner. Each
-        # build would then be signed with a different key, which Android
-        # treats as an unrelated app: installing a new build over an old
-        # one either gets refused outright or silently wipes all app
-        # storage (exactly what happened before this fix -- every fresh
-        # APK install looked like a first-ever launch, no cached data,
-        # live map empty). Reusing the same committed keystore
-        # (frontend/keystore/debug.keystore, debug-only, never used for
-        # real distribution -- not a secret) makes every future build a
-        # real update that preserves the user's synced data.
-        run: |
-          mkdir -p ~/.android
-          cp keystore/debug.keystore ~/.android/debug.keystore
-
       - name: Generate native Android project
         run: npx cap add android
 
@@ -54,6 +37,42 @@ jobs:
 
       - name: Sync web assets into the native project
         run: npx cap sync android
+
+      - name: Pin debug signing to a fixed keystore
+        # Without this, the Android Gradle Plugin's IMPLICIT debug
+        # signing config generates a NEW random keystore whenever it
+        # doesn't already have one -- true on every fresh GitHub Actions
+        # runner, so every build got signed with a different key. Android
+        # treats a differently-signed APK as an unrelated app: installing
+        # a new build over an old one gets refused or silently wipes app
+        # storage (this is what caused "requires online sync" + an empty
+        # map on every single fresh install/update). Pre-seeding
+        # ~/.android/debug.keystore did NOT fix it -- verified by
+        # comparing two real CI builds' cert fingerprints, which still
+        # differed -- so this explicitly wires signingConfigs into the
+        # generated build.gradle instead of relying on the implicit
+        # convention resolving the way expected. Gradle allows multiple
+        # `android {}` blocks in one file; this one merges in on top of
+        # whatever `cap add android` already generated.
+        run: |
+          cat >> android/app/build.gradle <<'EOF'
+
+          android {
+              signingConfigs {
+                  debug {
+                      storeFile file("${rootDir}/../keystore/debug.keystore")
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          EOF
 
       - name: Build debug APK
         working-directory: frontend/android
