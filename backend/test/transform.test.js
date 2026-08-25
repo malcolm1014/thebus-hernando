@@ -86,6 +86,30 @@ test('attaches a route\'s shape polyline (sorted by sequence) from shapes.txt vi
   assert.deepEqual(data.routes.R1.shapePoints, [[28.50, -82.60], [28.51, -82.61]]);
 });
 
+test('simplifies a shape polyline: drops a mid-point that lies exactly on the line between its neighbors', () => {
+  const data = transform(baseTables({
+    trips: [{ route_id: 'R1', service_id: 'WEEKDAY', trip_id: 'T1', trip_headsign: '', shape_id: 'SH1' }],
+    shapes: [
+      { shape_id: 'SH1', shape_pt_lat: '28.50', shape_pt_lon: '-82.60', shape_pt_sequence: '1' },
+      { shape_id: 'SH1', shape_pt_lat: '28.505', shape_pt_lon: '-82.60', shape_pt_sequence: '2' }, // exactly on the line, zero deviation
+      { shape_id: 'SH1', shape_pt_lat: '28.51', shape_pt_lon: '-82.60', shape_pt_sequence: '3' },
+    ],
+  }));
+  assert.deepEqual(data.routes.R1.shapePoints, [[28.50, -82.60], [28.51, -82.60]]);
+});
+
+test('simplifies a shape polyline: KEEPS a mid-point that deviates well beyond the simplification tolerance', () => {
+  const data = transform(baseTables({
+    trips: [{ route_id: 'R1', service_id: 'WEEKDAY', trip_id: 'T1', trip_headsign: '', shape_id: 'SH1' }],
+    shapes: [
+      { shape_id: 'SH1', shape_pt_lat: '28.50', shape_pt_lon: '-82.60', shape_pt_sequence: '1' },
+      { shape_id: 'SH1', shape_pt_lat: '28.505', shape_pt_lon: '-82.5980', shape_pt_sequence: '2' }, // ~0.002deg lon off the line, ~190m -- well above the 8m tolerance
+      { shape_id: 'SH1', shape_pt_lat: '28.51', shape_pt_lon: '-82.60', shape_pt_sequence: '3' },
+    ],
+  }));
+  assert.equal(data.routes.R1.shapePoints.length, 3);
+});
+
 test('leaves shapePoints empty when a trip has no shape_id or shapes.txt is absent', () => {
   const data = transform(baseTables());
   assert.deepEqual(data.routes.R1.shapePoints, []);

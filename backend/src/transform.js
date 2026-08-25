@@ -2,6 +2,60 @@ const { gtfsTimeToMinutes } = require('./gtfsParse');
 
 const DOW_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
+// Route polylines were the single biggest chunk of the dataset (75KB,
+// 23% of the whole payload for this feed) -- raw GTFS shapes.txt data
+// at full resolution (up to ~870 points for one route) is far more
+// precise than a phone-screen map needs. Douglas-Peucker simplification
+// (same technique used for this project's regions.js on a sibling
+// project) drops points that don't meaningfully change the visual line
+// within a real-world tolerance, with no perceptible difference at
+// rider-facing zoom levels.
+const SHAPE_SIMPLIFY_TOLERANCE_METERS = 8;
+
+/** Perpendicular distance from point `p` to the line through `a` and `b`, all as {x, y} in the same linear unit (meters here, via the equirectangular-ish projection below). */
+function perpendicularDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy);
+  const clampedT = Math.max(0, Math.min(1, t));
+  const closestX = a.x + clampedT * dx;
+  const closestY = a.y + clampedT * dy;
+  return Math.hypot(p.x - closestX, p.y - closestY);
+}
+
+/** Classic recursive Douglas-Peucker line simplification. `pts` are {lat, lon, x, y} objects; returns the subset worth keeping. */
+function douglasPeucker(pts, epsilonMeters) {
+  if (pts.length < 3) return pts;
+  let maxDist = 0;
+  let index = 0;
+  const end = pts.length - 1;
+  for (let i = 1; i < end; i++) {
+    const dist = perpendicularDistance(pts[i], pts[0], pts[end]);
+    if (dist > maxDist) {
+      maxDist = dist;
+      index = i;
+    }
+  }
+  if (maxDist > epsilonMeters) {
+    const left = douglasPeucker(pts.slice(0, index + 1), epsilonMeters);
+    const right = douglasPeucker(pts.slice(index), epsilonMeters);
+    return left.slice(0, -1).concat(right);
+  }
+  return [pts[0], pts[end]];
+}
+
+/** Simplifies a [[lat, lon], ...] polyline. Projects to an approximate local meters-based plane first (accurate enough at single-county scale) so the tolerance is a real, meaningful distance rather than an arbitrary degree fraction. */
+function simplifyShapePoints(latLonPoints, toleranceMeters) {
+  if (latLonPoints.length < 3) return latLonPoints;
+  const avgLat = latLonPoints.reduce((sum, p) => sum + p[0], 0) / latLonPoints.length;
+  const metersPerDegLat = 111320;
+  const metersPerDegLon = 111320 * Math.cos((avgLat * Math.PI) / 180);
+  const pts = latLonPoints.map(([lat, lon]) => ({ lat, lon, x: lon * metersPerDegLon, y: lat * metersPerDegLat }));
+  const kept = douglasPeucker(pts, toleranceMeters);
+  return kept.map((p) => [p.lat, p.lon]);
+}
+
 /**
  * Flattens relational GTFS tables into the shape the mobile client wants:
  * fast lookup by stop, with arrival times pre-converted to minutes-past-
@@ -80,16 +134,20 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     else if (cd.exception_type === '2') services[cd.service_id].removedDates.push(cd.date);
   }
 
-  // --- shapes: shape_id -> [[lat, lon], ...] polyline, for drawing routes on the map view ---
-  const shapePointsById = new Map();
+  // --- shapes: shape_id -> [[lat, lon], ...] polyline (simplified), for drawing routes on the map view ---
+  const rawShapePointsById = new Map();
   for (const pt of shapes) {
-    if (!shapePointsById.has(pt.shape_id)) shapePointsById.set(pt.shape_id, []);
-    shapePointsById.get(pt.shape_id).push({
+    if (!rawShapePointsById.has(pt.shape_id)) rawShapePointsById.set(pt.shape_id, []);
+    rawShapePointsById.get(pt.shape_id).push({
       seq: Number(pt.shape_pt_sequence),
       point: [Number(pt.shape_pt_lat), Number(pt.shape_pt_lon)],
     });
   }
-  for (const pts of shapePointsById.values()) pts.sort((a, b) => a.seq - b.seq);
+  const shapePointsById = new Map();
+  for (const [shapeId, pts] of rawShapePointsById) {
+    pts.sort((a, b) => a.seq - b.seq);
+    shapePointsById.set(shapeId, simplifyShapePoints(pts.map((p) => p.point), SHAPE_SIMPLIFY_TOLERANCE_METERS));
+  }
 
   // --- routes lookup ---
   const routeById = {};
@@ -161,7 +219,7 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     // per direction/branch); a single representative polyline is enough
     // for a simple "where do the buses run" map view.
     if (route.shapePoints.length === 0 && trip.shapeId && shapePointsById.has(trip.shapeId)) {
-      route.shapePoints = shapePointsById.get(trip.shapeId).map((p) => p.point);
+      route.shapePoints = shapePointsById.get(trip.shapeId);
     }
 
     if (!seenRouteStops.has(route.id)) seenRouteStops.set(route.id, new Set());

@@ -36,16 +36,26 @@ thebus-hernando/
     server.js                 GET /api/version, GET /api/download,
                                GET /api/live-buses, GET /api/geocode,
                                POST /api/refresh (secret-protected)
-    test/                     node --test unit tests (transform, gtfsParse, ETL safety check, passio shaping)
+    test/                     node --test unit tests (transform, gtfsParse, ETL safety check,
+                               passio shaping, shape-polyline simplification) -- also run in CI
+                               (.github/workflows/backend-tests.yml) on every push, though it
+                               doesn't yet gate Render's own auto-deploy
     data/                     generated at runtime (gitignored)
 
   frontend/                  Capacitor + vanilla JS/HTML/CSS
     capacitor.config.json
+    keystore/debug.keystore    fixed debug signing key (see "CI signing" below) -- not sensitive, debug-only
     assets/                   icon.png (1024x1024), splash.png (2732x2732),
                                icon-source.svg -- source images for
                                @capacitor/assets; swap these for real
                                branding, then re-run `npm run gen:assets`
-    vendor/leaflet/            Leaflet 1.9.4 JS/CSS, self-hosted (BSD-2-Clause)
+    vendor/leaflet/            Leaflet 1.9.4 JS/CSS, self-hosted (BSD-2-Clause) --
+                               default marker/layers-control images stripped, unused
+                               (custom icons only), trims ~7.5KB of dead weight
+    test/                     node --test unit tests for intentParser.js/queryEngine.js
+                               (real IIFE modules loaded into Node's global scope, see
+                               test/helpers.js) -- every behavior described below is
+                               regression-tested, not just verified once during development
     www/
       index.html              terminal shell + live-map tab markup
       css/terminal.css         green-on-black CRT styling (self-hosted VT323,
@@ -58,12 +68,14 @@ thebus-hernando/
                                 (falls back to localStorage outside the shell)
         sync.js                 version check -> conditional download -> cache;
                                 also exports API_BASE, shared with liveMap.js
-        intentParser.js         regex intent classifier + fuzzy entity
+        intentParser.js         weighted-scoring intent classifier + fuzzy entity
                                 extraction (exact substring -> word overlap
-                                -> Levenshtein typo tolerance); also pulls
-                                a free-text place name out of "nearest
-                                stop to X" queries, deliberately NOT
-                                matched against known stop/route names
+                                -> Jaro-Winkler typo tolerance), abbreviation
+                                normalization, disambiguation on tied matches;
+                                also pulls a free-text place name out of "nearest
+                                stop to X" queries, deliberately NOT matched
+                                against known stop/route names (see "Making the
+                                search foolproof" below for the full story)
         queryEngine.js           filters the cached dataset against
                                 agency-local time (not device-local),
                                 correct across midnight
@@ -79,7 +91,7 @@ thebus-hernando/
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
-npm test                    # 19 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping
+npm test                    # 21 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping, shape-polyline simplification
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -141,6 +153,7 @@ for every cached client until the next good pull.
 ```bash
 cd frontend
 npm install
+npm test                # 25 unit tests: intentParser.js + queryEngine.js against a mock dataset
 npm run add:android     # first time only -- generates the android/ project (gitignored)
 npm run gen:assets      # generates all icon/splash resolutions from assets/icon.png + assets/splash.png
 # edit www/js/sync.js -> API_BASE to point at your deployed backend
@@ -347,6 +360,40 @@ match anything in the dataset, the client falls back to Passio's own
 of the route's real color -- verify this once you've seen it during
 actual service hours, and adjust `liveMap.js`/`passio.js` if the IDs
 turn out not to align after all.
+
+## Keeping the payload lean
+
+The full offline dataset (`transit_data.json`, downloaded on first sync
+and every schedule change after that) is 263KB for this feed, down from
+327KB before a deliberate pass to trim it -- meaningful on a phone that
+might be syncing over a weak connection:
+
+- **Route polylines were 23% of the whole payload** (75KB) -- raw GTFS
+  `shapes.txt` data at full resolution, up to ~870 points for a single
+  route, far more precision than a phone-screen map needs. Douglas-
+  Peucker line simplification (`transform.js`, same technique already
+  used on this project's `regions.js` for the Florida Cyber Map)
+  dropped points that don't meaningfully change the visual line within
+  an 8-meter real-world tolerance -- 6,784 raw points became 478
+  (93% fewer) for a 64KB drop in total payload size, with no
+  perceptible difference at rider-facing zoom levels (every route still
+  keeps 20-115 points, plenty to look like a real road-following line,
+  not a crude straight-line sketch).
+- **~7.5KB of genuinely dead weight** in the bundled Leaflet library --
+  the default marker and layers-control icon images were never
+  reachable, since `liveMap.js` only ever creates markers with an
+  explicit custom icon and never instantiates a layers-switcher
+  control. Removed rather than left bundled for no reason.
+
+Not attempted this round, a smaller remaining opportunity if it's ever
+worth the added code complexity: each stop's `routes[]` entries
+currently duplicate `routeId`/`shortName`/`longName`/`color` for every
+stop that route touches (~25KB, 8% of the payload, across only 8
+distinct routes) -- normalizing this to a route-ID reference plus a
+client-side lookup against the top-level `routes{}` object would save
+most of that, at the cost of touching every place `queryEngine.js`
+currently reads a route's display name directly off a stop's arrival
+record.
 
 ## Data flow (why the split)
 

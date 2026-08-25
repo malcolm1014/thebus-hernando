@@ -1,0 +1,32 @@
+name: Backend Tests
+
+# Render deploys straight from a push to main, independent of this
+# workflow -- it doesn't gate the deploy. This exists for visibility: a
+# backend regression should be caught and flagged even if it can't yet
+# block the deploy that already happened.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-tests.yml'
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        run: npm install
+
+      - name: Run backend test suite
+        run: npm test
