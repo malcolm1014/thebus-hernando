@@ -150,6 +150,27 @@ test('FIND_NEAREST_STOP: a geocoded-place answer also includes next-arrival time
   }
 });
 
+test('FIND_NEAREST_STOP: a pre-seeded alias (from backend enrichment) resolves a stop directly, even though the official GTFS name shares no words with it -- and works fine on a stop that predates the aliases field entirely', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    stops: {
+      W1: {
+        id: 'W1', name: 'US19 & Applegate Dr', lat: 28.55, lon: -82.63,
+        aliases: ['wally world'],
+        routes: [],
+      },
+      W2: {
+        // No aliases field at all -- must not crash on a dataset synced
+        // before backend/src/enrich.js existed.
+        id: 'W2', name: 'US19 Brandy Dr', lat: 28.56, lon: -82.64, routes: [],
+      },
+    },
+  }));
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('nearest stop to wally world', TUESDAY_9AM_ET);
+  assert.match(answer, /IS A KNOWN STOP/);
+  assert.match(answer, /US19 & APPLEGATE DR/);
+});
+
 test('FIND_NEAREST_STOP: a place looked up once is remembered (TIER 3) -- asking the exact same thing again works even if the geocoder would now fail, and never touches it', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   TheBusSearchIndex.resetForTests();

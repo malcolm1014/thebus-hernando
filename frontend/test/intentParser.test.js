@@ -62,6 +62,20 @@ test('fuzzyMatch: two candidates tied at the best word-overlap score are BOTH fl
   assert.deepEqual(allNames, ['Spring Hill Dr North', 'Spring Hill Dr South']);
 });
 
+test('fuzzyMatch: two name variants of the SAME stop (its official name plus a learned alias) tying on score never register as a false ambiguity between "two" candidates', () => {
+  // Both candidates share id S1 -- as index.stops now does for a stop with
+  // aliases (queryEngine.js's setDataset) -- and both score identically
+  // via word overlap (neither name is a literal substring of the query,
+  // so pass 1 can't shortcut past the tie logic pass 2 is meant to test).
+  const candidates = [
+    { id: 'S1', name: 'Walmart Depot' },
+    { id: 'S1', name: 'Depot Plaza' },
+  ];
+  const result = TheBusIntentParser.fuzzyMatch('near the depot', candidates);
+  assert.equal(result.id, 'S1');
+  assert.deepEqual(result.alternatives, []);
+});
+
 test('fuzzyMatch: Jaro-Winkler pass aggregates across ALL matched words, not just the single best word-pair (regression guard for a real bug found during development -- a typo\'d query used to match a wrong candidate via one incidental shared word)', () => {
   const candidates = [
     { id: 'TARGET', name: 'Lakewood Plaza by Publix' },

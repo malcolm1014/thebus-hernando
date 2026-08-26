@@ -11,9 +11,22 @@
 
   function setDataset(data) {
     dataset = data;
+    // Each stop's own name is always a candidate; its `aliases` (informal
+    // shorthand pre-generated server-side at ETL time -- see backend's
+    // enrich.js -- absent on any dataset synced before that feature
+    // existed, hence the fallback) contribute EXTRA candidates pointing
+    // at the same stop id, so a phrase like "walmart on 50" can resolve
+    // directly via fuzzyMatch without ever needing geocoding first.
+    const stopCandidates = [];
+    for (const s of Object.values(data.stops)) {
+      stopCandidates.push({ id: s.id, name: s.name });
+      for (const alias of s.aliases || []) {
+        stopCandidates.push({ id: s.id, name: alias });
+      }
+    }
     index = {
       routes: Object.values(data.routes).map((r) => ({ id: r.id, shortName: r.shortName, longName: r.longName })),
-      stops: Object.values(data.stops).map((s) => ({ id: s.id, name: s.name })),
+      stops: stopCandidates,
     };
   }
 

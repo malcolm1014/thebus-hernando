@@ -284,6 +284,23 @@
    * Returns { id, name, score, alternatives } or null if nothing clears
    * the threshold. `alternatives` is only ever non-empty for passes 2-3.
    */
+  /**
+   * Collapses multiple name variants of the SAME entity (its official
+   * name plus a learned alias, e.g. "Walmart US19 Spring Hill" and
+   * "walmart on 19" both pointing at stop id W1) down to that entity's
+   * single best-scoring match. Without this, two phrasings that happen
+   * to score similarly would wrongly register as an ambiguous tie
+   * between "two" candidates that are actually one and the same stop.
+   */
+  function dedupeBestPerId(scored) {
+    const bestById = new Map();
+    for (const c of scored) {
+      const existing = bestById.get(c.id);
+      if (!existing || c.score > existing.score) bestById.set(c.id, c);
+    }
+    return [...bestById.values()];
+  }
+
   function fuzzyMatch(normalizedText, candidates) {
     const byLengthDesc = [...candidates].sort((a, b) => b.name.length - a.name.length);
     for (const c of byLengthDesc) {
@@ -329,7 +346,7 @@
       const finalCandidates = hasExactHit
         ? wordOverlapCandidates.filter((c) => c.exactHits > 0)
         : wordOverlapCandidates;
-      return pickBestOrFlagTie(finalCandidates);
+      return pickBestOrFlagTie(dedupeBestPerId(finalCandidates));
     }
 
     // Aggregated across ALL matched query words, like pass 2 -- not just
@@ -363,7 +380,7 @@
       const score = (totalSim / matchedWords) * (matchedWords / nameWords.length);
       if (score >= 0.5) jwCandidates.push({ id: c.id, name: c.name, score });
     }
-    if (jwCandidates.length > 0) return pickBestOrFlagTie(jwCandidates);
+    if (jwCandidates.length > 0) return pickBestOrFlagTie(dedupeBestPerId(jwCandidates));
 
     return null;
   }
