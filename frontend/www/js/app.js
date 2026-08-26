@@ -185,7 +185,19 @@
   const onboardHelp = document.getElementById('onboard-help');
 
   async function maybeShowOnboarding() {
-    const seen = await TheBusStorage.getOnboardingSeen();
+    // Fails OPEN, not closed: an error reading the stored "seen" flag
+    // must never mean the onboarding modals silently never appear again.
+    // (Root-caused an on-device report of exactly that -- this call was
+    // previously neither awaited nor wrapped by boot(), so a storage
+    // rejection here vanished as an unhandled promise rejection with no
+    // console output and no popup, while the rest of the app kept working
+    // fine because sync.js's storage calls are all try/caught already.)
+    let seen = false;
+    try {
+      seen = await TheBusStorage.getOnboardingSeen();
+    } catch (err) {
+      console.error('onboarding: failed to read seen state, showing it anyway', err);
+    }
     if (seen) return;
 
     function showHelp() {
@@ -208,7 +220,10 @@
   }
 
   async function boot() {
-    maybeShowOnboarding(); // not awaited -- shouldn't block the terminal loading underneath it
+    // Not awaited -- shouldn't block the terminal loading underneath it --
+    // but still must never fail silently (see maybeShowOnboarding's own
+    // internal try/catch for why this matters).
+    maybeShowOnboarding().catch((err) => console.error('onboarding: unexpected failure', err));
     setStatus('INITIALIZING OFFLINE DATASET...');
 
     const { data, status } = await TheBusSync.syncData(setStatus);
