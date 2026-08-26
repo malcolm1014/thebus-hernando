@@ -8,6 +8,7 @@
 (function (global) {
   const DATA_FILENAME = 'transit_data.json';
   const VERSION_KEY = 'thebus_data_version';
+  const SEARCH_MEMORY_KEY = 'thebus_search_memory';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -63,5 +64,34 @@
     }
   }
 
-  global.TheBusStorage = { getLocalVersion, setLocalVersion, saveDataset, loadDataset };
+  /**
+   * A small persisted JSON blob for the search index's learned tiers
+   * (places geocoded before, phrases resolved before -- see
+   * searchIndex.js). Kept in Preferences, not Filesystem: this stays
+   * capped small (tens of KB) by design, unlike the full transit
+   * dataset, so the lightweight key-value store is the right fit.
+   */
+  async function getSearchMemory() {
+    try {
+      if (Preferences) {
+        const { value } = await Preferences.get({ key: SEARCH_MEMORY_KEY });
+        return value ? JSON.parse(value) : null;
+      }
+      const raw = localStorage.getItem(SEARCH_MEMORY_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null; // corrupt/missing -- caller falls back to an empty index
+    }
+  }
+
+  async function saveSearchMemory(memory) {
+    const json = JSON.stringify(memory);
+    if (Preferences) {
+      await Preferences.set({ key: SEARCH_MEMORY_KEY, value: json });
+    } else {
+      localStorage.setItem(SEARCH_MEMORY_KEY, json);
+    }
+  }
+
+  global.TheBusStorage = { getLocalVersion, setLocalVersion, saveDataset, loadDataset, getSearchMemory, saveSearchMemory };
 })(window);

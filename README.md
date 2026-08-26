@@ -305,34 +305,82 @@ highlights:
   feasible via point-to-polyline distance against the route
   `shapePoints` the map view already has).
 
+## The 3-tier search architecture
+
+The search/chat engine resolves every place-like query against three
+tiers of data, cheapest and most-confident checked first, so answers
+get faster and more reliable the more the app is actually used:
+
+- **TIER 1 -- GTFS** (`queryEngine.js`'s `index.stops`/`index.routes`):
+  authoritative, ships with the app, always present offline. Every
+  stop/route lookup in the app is ultimately checked against this tier.
+- **TIER 2 -- PLACES** (`searchIndex.js`): real-world places (a
+  business, school, landmark) the geocoder has successfully resolved
+  before. The first lookup costs a network round trip like any
+  geocoder call; every lookup after that is a local coordinate match,
+  offline and instant -- the app's knowledge of "real places near here"
+  only ever grows with use, the same way a search engine's index grows.
+  Persisted on-device (via `TheBusStorage`/Capacitor Preferences),
+  capped at 200 entries with LRU eviction so it can't grow unbounded
+  over months of use.
+- **TIER 3 -- LANGUAGE** (`searchIndex.js`): a learned phrase->answer
+  cache. The first time any exact phrase resolves confidently (to a
+  Tier 1 stop or a Tier 2 place), that literal phrase is remembered --
+  the next time anyone asks the exact same thing, it's an instant,
+  guaranteed-consistent hit with zero matching or network work at all.
+  This is the same **search-log caching** idea real search engines use
+  for repeat queries (a well-established IR technique, not a
+  hand-guessed slang dictionary) -- it only ever contains phrasing an
+  actual rider actually typed and got a real answer for, capped at 300
+  entries with the same LRU eviction as Tier 2.
+
+`searchIndex.js` owns Tiers 2 and 3 as one small persisted JSON blob,
+loaded once per app launch and kept warm in memory for the rest of the
+session (mirrors how the Tier 1 dataset itself is loaded once via
+`setDataset()`). 5 dedicated tests in `test/searchIndex.test.js` cover
+the matching, persistence, and eviction logic directly; 2 more
+integration tests in `test/queryEngine.test.js` (plus the existing
+Tier 1 / GPS ones) prove the tiers are actually reached in the right
+order end-to-end.
+
 ## Nearest stop to anywhere
 
 `nearest stop to Springstead High School` (or "closest bus stop near
-X") resolves `X` in one of three ways, most-confident/cheapest first:
+X") resolves `X` by walking the tiers above, in order:
 
-1. **`X` is already the (informal) name of a known stop.** "walmart on
-   19" for the real stop "Walmart US19 Spring Hill" -- checked entirely
-   offline against the same fuzzy stop-name matching every other query
-   type uses, before any network call is even considered. This is what
-   gives well-known places (which is exactly what a lot of stop names
-   already ARE -- shopping centers, schools, plazas) a fast, fully
-   confident, single-answer response instead of always paying for a
-   geocode round trip that can fail or come back ambiguous for a place
-   the app already knows about directly. Only fires when the match is
-   unambiguous (see the "did you mean" tie logic above) -- a genuinely
-   ambiguous phrase still falls through instead of guessing.
-2. **`X` is the rider's own position** ("nearest stop to me" / "...to
-   here") -- pulled from the device's GPS via `@capacitor/geolocation`
-   (see below) rather than being handed to the geocoder, which has no
-   way to resolve "me" to anything.
-3. **`X` is a genuine external place** not in the transit data at all (a
-   business, school, landmark) -- resolved to real coordinates via a
-   geocoder, then matched to the actual closest stop by great-circle
-   distance. This is deliberately NOT a hand-maintained landmarks
-   database: any such list would already be incomplete the moment
-   someone asks about a business not on it, and it'd need constant
-   upkeep as businesses open/close/rename. A geocoder solves the general
-   problem once instead.
+1. **TIER 3 (LANGUAGE)** -- this exact phrase resolved confidently
+   before. Instant, offline, and guaranteed to give the same answer as
+   last time.
+2. **TIER 1 (GTFS)** -- `X` is already the (informal) name of a known
+   stop itself. "walmart on 19" for the real stop "Walmart US19 Spring
+   Hill" -- checked entirely offline against the same fuzzy stop-name
+   matching every other query type uses, before any network call is
+   even considered. This is what gives well-known places (which is
+   exactly what a lot of stop names already ARE -- shopping centers,
+   schools, plazas) a fast, fully confident, single-answer response
+   instead of always paying for a geocode round trip. Only fires when
+   the match is unambiguous (see the "did you mean" tie logic above) --
+   a genuinely ambiguous phrase still falls through instead of guessing.
+3. **GPS** -- `X` is the rider's own position ("nearest stop to me" /
+   "...to here") -- pulled from the device's GPS via
+   `@capacitor/geolocation` (see below) rather than being handed to the
+   geocoder, which has no way to resolve "me" to anything. Deliberately
+   never cached in Tiers 2/3, since "me" means a different point every
+   single time.
+4. **TIER 2 (PLACES)** -- `X` matches a real place this device has
+   geocoded before, even under different wording than what originally
+   found it (fuzzy-matched the same way Tier 1 stop names are).
+   Offline, no network needed a second time.
+5. **NETWORK** -- `X` is a genuine external place never seen before --
+   resolved to real coordinates via a geocoder, then matched to the
+   actual closest stop by great-circle distance. This is deliberately
+   NOT a hand-maintained landmarks database: any such list would
+   already be incomplete the moment someone asks about a business not
+   on it, and it'd need constant upkeep as businesses open/close/rename.
+   A geocoder solves the general problem once instead -- and a
+   successful lookup here is folded straight into Tiers 2 and 3, so the
+   NEXT rider who asks about the same place (or the same rider asking
+   again) never pays the network cost again.
 
 Place names are resolved via **OpenStreetMap's Nominatim** (a free,
 public geocoder) through `backend/src/geocode.js` -- proxied through our

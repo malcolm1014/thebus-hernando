@@ -22,6 +22,17 @@ const JS_DIR = path.join(__dirname, '..', 'www', 'js');
 
 global.window = global;
 if (!global.navigator) global.navigator = { onLine: true };
+// searchIndex.js persists through TheBusStorage -- an in-memory stand-in
+// here (no real Preferences/localStorage in Node) so tests never hit
+// disk. Individual tests can override this per-test the same way they
+// already do for TheBusGeocode/TheBusGeolocate.
+if (!global.TheBusStorage) {
+  let fakeDisk = null;
+  global.TheBusStorage = {
+    getSearchMemory: async () => fakeDisk,
+    saveSearchMemory: async (memory) => { fakeDisk = memory; },
+  };
+}
 
 /** Loads one or more modules (by filename in www/js/) by evaluating them against the real Node global object. */
 function loadModules(...filenames) {

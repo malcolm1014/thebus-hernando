@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadModules, buildMockDataset } = require('./helpers');
 
-loadModules('intentParser.js', 'queryEngine.js');
+loadModules('intentParser.js', 'searchIndex.js', 'queryEngine.js');
 
 // 9am Eastern on a Tuesday -- deliberately a UTC instant, not a local
 // Date(), so this test suite's outcome doesn't depend on the machine's
@@ -80,6 +80,7 @@ test('FIND_FIRST_LAST_BUS: first and last bus answer from the whole day\'s sched
 
 test('FIND_NEAREST_STOP: resolves a geocoded place to the actual closest stop by distance', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
   global.TheBusGeocode = {
     // Essentially on top of S1 (28.50,-82.60) -- unambiguously closer to
     // it than to any other mock stop (S2/S3/S4 are all much farther).
@@ -96,6 +97,7 @@ test('FIND_NEAREST_STOP: resolves a geocoded place to the actual closest stop by
 
 test('FIND_NEAREST_STOP: a place the geocoder can\'t find gets an honest "couldn\'t find" answer, not a crash', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
   global.TheBusGeocode = { lookup: async () => null };
   try {
     const answer = await TheBusQueryEngine.answerQuery('nearest stop to some obscure business', TUESDAY_9AM_ET);
@@ -112,6 +114,7 @@ test('FIND_NEAREST_STOP: an informal landmark phrase that matches a known stop n
       W2: { id: 'W2', name: 'US19 Applegate Dr N/E', lat: 28.56, lon: -82.64, routes: [] },
     },
   }));
+  TheBusSearchIndex.resetForTests();
   // global.TheBusGeocode is deliberately left undefined here -- if the
   // code fell through to the geocoder instead of matching internally
   // first, this would throw a ReferenceError instead of answering.
@@ -120,8 +123,46 @@ test('FIND_NEAREST_STOP: an informal landmark phrase that matches a known stop n
   assert.match(answer, /WALMART US19 SPRING HILL/);
 });
 
+test('FIND_NEAREST_STOP: a place looked up once is remembered (TIER 3) -- asking the exact same thing again works even if the geocoder would now fail, and never touches it', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeocode = { lookup: async () => ({ lat: 28.5001, lon: -82.6001, displayName: 'Murphys Deli' }) };
+  try {
+    const first = await TheBusQueryEngine.answerQuery('nearest stop to murphys deli', TUESDAY_9AM_ET);
+    assert.match(first, /AVALON PUBLIX/);
+
+    // If the app fell through to the geocoder again instead of using the
+    // learned alias, this would throw and the test would fail.
+    global.TheBusGeocode = { lookup: async () => { throw new Error('should not be called again'); } };
+    const second = await TheBusQueryEngine.answerQuery('nearest stop to murphys deli', TUESDAY_9AM_ET);
+    assert.match(second, /AVALON PUBLIX/);
+  } finally {
+    delete global.TheBusGeocode;
+  }
+});
+
+test('FIND_NEAREST_STOP: a DIFFERENT phrasing for a place looked up before still resolves offline via the local places cache (TIER 2), not just an exact-phrase alias hit (TIER 3)', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeocode = { lookup: async () => ({ lat: 28.5001, lon: -82.6001, displayName: 'Test Landmark Plaza' }) };
+  try {
+    await TheBusQueryEngine.answerQuery('nearest stop to Test Landmark Plaza', TUESDAY_9AM_ET);
+
+    // Different enough wording that it won't hit the exact-phrase TIER 3
+    // alias for "test landmark plaza" -- must fall through to fuzzy
+    // matching against the TIER 2 place cache instead. Geocoder removed
+    // entirely to prove this path never needs the network.
+    delete global.TheBusGeocode;
+    const answer = await TheBusQueryEngine.answerQuery('closest stop near test landmark', TUESDAY_9AM_ET);
+    assert.match(answer, /AVALON PUBLIX/);
+  } finally {
+    delete global.TheBusGeocode;
+  }
+});
+
 test('FIND_NEAREST_STOP: "nearest stop to me" pulls the device\'s GPS position instead of trying to geocode the word "me"', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
   global.TheBusGeolocate = {
     // Essentially on top of S1 (28.50,-82.60), same as the geocoded-place test above.
     getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }),
@@ -137,6 +178,7 @@ test('FIND_NEAREST_STOP: "nearest stop to me" pulls the device\'s GPS position i
 
 test('FIND_NEAREST_STOP: "me" with GPS unavailable gets an honest message, not a crash', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
   global.TheBusGeolocate = { getCurrentPosition: async () => null };
   try {
     const answer = await TheBusQueryEngine.answerQuery('nearest stop to me', TUESDAY_9AM_ET);

@@ -338,42 +338,80 @@
   // way to resolve "me" to anything.
   const SELF_LOCATION_RE = /^(me|here|my location|my current location|my position)$/i;
 
+  function knownStopAnswer(landmarkLabel, stop) {
+    const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}`;
+  }
+
+  function nearestToPointAnswer(landmarkLabel, lat, lon) {
+    const best = nearestStopToPoint(lat, lon);
+    if (!best) return 'NO STOPS ON FILE.';
+    const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+  }
+
   /**
-   * Finds the closest stop to any real-world place. Three ways to
-   * resolve `parsed.landmark`, most-confident/cheapest first:
-   *   1. It's already the (informal) name of a known stop itself
-   *      ("walmart on 19" for the stop "Walmart US19 Spring Hill") --
-   *      checked via the SAME fuzzy stop-name matching every other
-   *      intent uses, fully offline, no network round trip, and a
-   *      "definitive" single answer whenever it resolves unambiguously.
-   *   2. It's the rider's own position ("nearest stop to me") -- pulled
-   *      from the device's GPS.
-   *   3. It's a genuine external place (a business, school, landmark)
-   *      not in the transit data at all -- the original behavior,
-   *      resolved via TheBusGeocode, the one part of this query that
-   *      genuinely can't work offline.
+   * Finds the closest stop to any real-world place, checked in order
+   * across all 3 search tiers, cheapest/most-confident first:
+   *   TIER 3 (LANGUAGE) -- this exact phrase resolved confidently
+   *      before ("walmart on 19" was already looked up once) -- an
+   *      instant, offline, guaranteed-consistent repeat answer, no
+   *      matching or network work at all.
+   *   TIER 1 (GTFS) -- the phrase is already the (informal) name of a
+   *      known stop itself ("walmart on 19" for the stop "Walmart US19
+   *      Spring Hill") -- checked via the SAME fuzzy stop-name matching
+   *      every other intent uses, fully offline.
+   *   (GPS) -- the rider's own position ("nearest stop to me") -- not
+   *      cached, since "me" resolves to a different point every time.
+   *   TIER 2 (PLACES) -- a real-world place (business, school,
+   *      landmark) this device has successfully geocoded before --
+   *      offline and instant, since it's just a local coordinate lookup
+   *      now, no network round trip needed a second time.
+   *   NETWORK -- a genuine place never seen before -- resolved via
+   *      TheBusGeocode, the one part of this query that truly can't
+   *      work offline. Successful lookups get folded into tiers 2 and 3
+   *      for next time, so the app's local knowledge only ever grows.
    */
   async function answerFindNearestStop(parsed) {
     if (!parsed.landmark) {
       return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>? OR: NEAREST STOP TO ME?";
     }
 
-    const directMatch = TheBusIntentParser.fuzzyMatch(TheBusIntentParser.normalize(parsed.landmark), index.stops);
-    if (directMatch && directMatch.alternatives.length === 0) {
-      const stop = dataset.stops[directMatch.id];
-      const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-      return `"${parsed.landmark.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}`;
+    await TheBusSearchIndex.ensureLoaded();
+    const normalizedLandmark = TheBusIntentParser.normalize(parsed.landmark);
+    const isSelf = SELF_LOCATION_RE.test(parsed.landmark.trim());
+
+    if (!isSelf) {
+      const alias = TheBusSearchIndex.lookupAlias('landmark', normalizedLandmark);
+      if (alias) {
+        if (alias.kind === 'stop') return knownStopAnswer(parsed.landmark, dataset.stops[alias.id]);
+        if (alias.kind === 'place') {
+          const place = TheBusSearchIndex.getPlaceById(alias.id);
+          if (place) return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
+        }
+      }
     }
 
-    if (SELF_LOCATION_RE.test(parsed.landmark.trim())) {
+    const directMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, index.stops);
+    if (directMatch && directMatch.alternatives.length === 0) {
+      const stop = dataset.stops[directMatch.id];
+      TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'stop', id: directMatch.id, name: stop.name });
+      return knownStopAnswer(parsed.landmark, stop);
+    }
+
+    if (isSelf) {
       const pos = await TheBusGeolocate.getCurrentPosition();
       if (!pos) {
         return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
       }
-      const nearest = nearestStopToPoint(pos.lat, pos.lon);
-      if (!nearest) return 'NO STOPS ON FILE.';
-      const routesHere = nearest.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-      return `NEAREST STOP TO YOU:\n${nearest.stop.name.toUpperCase()} (${nearest.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+      return nearestToPointAnswer('you', pos.lat, pos.lon);
+    }
+
+    const placeMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, TheBusSearchIndex.getPlaceCandidates());
+    if (placeMatch && placeMatch.alternatives.length === 0) {
+      const place = TheBusSearchIndex.getPlaceById(placeMatch.id);
+      TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: place.id, name: place.name });
+      return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
     }
 
     if (!navigator.onLine) {
@@ -391,11 +429,9 @@
       return `COULDN'T FIND "${parsed.landmark.toUpperCase()}" NEAR HERNANDO COUNTY. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.`;
     }
 
-    const best = nearestStopToPoint(place.lat, place.lon);
-    if (!best) return 'NO STOPS ON FILE.';
-
-    const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-    return `NEAREST STOP TO ${parsed.landmark.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+    const placeId = TheBusSearchIndex.recordPlace({ name: parsed.landmark, lat: place.lat, lon: place.lon });
+    TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: placeId, name: parsed.landmark });
+    return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
   }
 
   /**

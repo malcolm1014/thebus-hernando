@@ -192,6 +192,7 @@
     }
 
     TheBusQueryEngine.setDataset(data);
+    TheBusSearchIndex.ensureLoaded();
     lastDataset = data;
     // Covers the case where the user switched to the map tab before the
     // initial sync finished -- the map would've drawn with no routes/
