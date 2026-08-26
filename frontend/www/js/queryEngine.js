@@ -192,6 +192,36 @@
     return results;
   }
 
+  /**
+   * One line per route serving a stop, each showing THAT route's own
+   * next arrival -- unlike FIND_NEXT_ARRIVAL's top-3-soonest-overall list,
+   * this guarantees a less-frequent route never gets crowded out of a
+   * multi-route stop's answer just because another route runs more often.
+   * Used by the NEAREST STOP answers, where "served by routes: Blue,
+   * Purple" alone left riders with no way to tell which was actually
+   * coming next without a separate query.
+   */
+  function nextArrivalLines(stop, now) {
+    return stop.routes.map((routeEntry) => {
+      const [next] = nextArrivals(stop.id, routeEntry.routeId, now, 1);
+      if (!next) {
+        return routeEntry.arrivals.length === 0
+          ? `${routeLabel(routeEntry)} -- SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR IT`
+          : `${routeLabel(routeEntry)} -- NO MORE SERVICE TODAY`;
+      }
+      const day = next.isTomorrow ? 'TOMORROW ' : '';
+      const timing = next.minutesUntil > COUNTDOWN_THRESHOLD_MIN
+        ? `${day}AT ${next.clock}`
+        : `${next.minutesUntil} MIN (${day}${next.clock})`;
+      return `${routeLabel(next)} -- ${timing} TOWARD ${next.headsign.toUpperCase() || 'N/A'}`;
+    });
+  }
+
+  function withNextArrivals(stop, now) {
+    const lines = nextArrivalLines(stop, now);
+    return lines.length ? `\nNEXT ARRIVALS:\n${lines.join('\n')}` : '';
+  }
+
   /** "did you mean X, Y, or Z?" when fuzzy matching found 2-4 equally-good candidates instead of one clear winner -- see intentParser.js's pickBestOrFlagTie for why this can happen (git's "did you mean" precedent: list every tied candidate, don't silently guess). */
   function disambiguationMessage(entity, kind) {
     const names = [entity.name, ...entity.alternatives.map((a) => a.name)];
@@ -338,16 +368,16 @@
   // way to resolve "me" to anything.
   const SELF_LOCATION_RE = /^(me|here|my location|my current location|my position)$/i;
 
-  function knownStopAnswer(landmarkLabel, stop) {
+  function knownStopAnswer(landmarkLabel, stop, now) {
     const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-    return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}`;
+    return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(stop, now)}`;
   }
 
-  function nearestToPointAnswer(landmarkLabel, lat, lon) {
+  function nearestToPointAnswer(landmarkLabel, lat, lon, now) {
     const best = nearestStopToPoint(lat, lon);
     if (!best) return 'NO STOPS ON FILE.';
     const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-    return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}`;
+    return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(best.stop, now)}`;
   }
 
   /**
@@ -372,7 +402,7 @@
    *      work offline. Successful lookups get folded into tiers 2 and 3
    *      for next time, so the app's local knowledge only ever grows.
    */
-  async function answerFindNearestStop(parsed) {
+  async function answerFindNearestStop(parsed, now) {
     if (!parsed.landmark) {
       return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>? OR: NEAREST STOP TO ME?";
     }
@@ -384,10 +414,10 @@
     if (!isSelf) {
       const alias = TheBusSearchIndex.lookupAlias('landmark', normalizedLandmark);
       if (alias) {
-        if (alias.kind === 'stop') return knownStopAnswer(parsed.landmark, dataset.stops[alias.id]);
+        if (alias.kind === 'stop') return knownStopAnswer(parsed.landmark, dataset.stops[alias.id], now);
         if (alias.kind === 'place') {
           const place = TheBusSearchIndex.getPlaceById(alias.id);
-          if (place) return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
+          if (place) return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
         }
       }
     }
@@ -396,7 +426,7 @@
     if (directMatch && directMatch.alternatives.length === 0) {
       const stop = dataset.stops[directMatch.id];
       TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'stop', id: directMatch.id, name: stop.name });
-      return knownStopAnswer(parsed.landmark, stop);
+      return knownStopAnswer(parsed.landmark, stop, now);
     }
 
     if (isSelf) {
@@ -404,14 +434,14 @@
       if (!pos) {
         return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
       }
-      return nearestToPointAnswer('you', pos.lat, pos.lon);
+      return nearestToPointAnswer('you', pos.lat, pos.lon, now);
     }
 
     const placeMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, TheBusSearchIndex.getPlaceCandidates());
     if (placeMatch && placeMatch.alternatives.length === 0) {
       const place = TheBusSearchIndex.getPlaceById(placeMatch.id);
       TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: place.id, name: place.name });
-      return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
+      return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
     }
 
     if (!navigator.onLine) {
@@ -431,7 +461,7 @@
 
     const placeId = TheBusSearchIndex.recordPlace({ name: parsed.landmark, lat: place.lat, lon: place.lon });
     TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: placeId, name: parsed.landmark });
-    return nearestToPointAnswer(parsed.landmark, place.lat, place.lon);
+    return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
   }
 
   /**
@@ -443,7 +473,7 @@
     const parsed = TheBusIntentParser.parseQuery(text, index);
 
     switch (parsed.intent) {
-      case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed);
+      case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed, now);
       case 'FIND_FIRST_LAST_BUS': return answerFindFirstLastBus(parsed, now);
       case 'FIND_NEXT_ARRIVAL': return answerFindNextArrival(parsed, now);
       case 'FIND_STOP_LOCATION': return answerFindStopLocation(parsed);

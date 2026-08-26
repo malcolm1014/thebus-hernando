@@ -123,6 +123,33 @@ test('FIND_NEAREST_STOP: an informal landmark phrase that matches a known stop n
   assert.match(answer, /WALMART US19 SPRING HILL/);
 });
 
+test('FIND_NEAREST_STOP: a known-stop answer includes each served route\'s own next arrival, not just the route names (riders need arrival times to actually catch a bus, not just a route list)', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('nearest stop to Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /IS A KNOWN STOP/);
+  assert.match(answer, /NEXT ARRIVALS:/);
+  assert.match(answer, /ROUTE 1 RED/);
+  // R2 (Blue) has zero published arrivals for this stop in the mock data --
+  // must say so distinctly rather than silently omitting the route.
+  assert.match(answer, /BLUE.*SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE/);
+});
+
+test('FIND_NEAREST_STOP: a geocoded-place answer also includes next-arrival times for the nearest stop, not just when the landmark IS the stop', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeocode = {
+    lookup: async () => ({ lat: 28.5001, lon: -82.6001, displayName: 'Test Landmark' }),
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest stop to the test landmark', TUESDAY_9AM_ET);
+    assert.match(answer, /NEXT ARRIVALS:/);
+    assert.match(answer, /ROUTE 1 RED/);
+  } finally {
+    delete global.TheBusGeocode;
+  }
+});
+
 test('FIND_NEAREST_STOP: a place looked up once is remembered (TIER 3) -- asking the exact same thing again works even if the geocoder would now fail, and never touches it', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   TheBusSearchIndex.resetForTests();
