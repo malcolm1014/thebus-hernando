@@ -3,6 +3,7 @@ const config = require('./config');
 const { fetchGtfs } = require('./gtfsFetch');
 const { parseAllGtfs } = require('./gtfsParse');
 const { transform } = require('./transform');
+const { enrichAliases } = require('./enrich');
 const { hashContent } = require('./hash');
 
 /**
@@ -56,6 +57,10 @@ async function runEtl() {
       `refusing to overwrite transit_data.json: new pull has ${nextRoutes} routes/${nextStops} stops vs previous ${prevRoutes} routes/${prevStops} stops (>50% drop) -- looks like a broken feed, not a real schedule change`
     );
   }
+
+  // Runs only after the feed's passed the sanity check above -- no sense
+  // spending LLM calls enriching a pull we're about to reject anyway.
+  await enrichAliases(data);
 
   const json = JSON.stringify(data);
   const version = hashContent(Buffer.from(json));
