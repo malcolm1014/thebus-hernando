@@ -180,7 +180,35 @@
     syncViewportHeight();
   }
 
+  // ---- First-launch onboarding: location consent, then a brief how-to ----
+  const onboardLocation = document.getElementById('onboard-location');
+  const onboardHelp = document.getElementById('onboard-help');
+
+  async function maybeShowOnboarding() {
+    const seen = await TheBusStorage.getOnboardingSeen();
+    if (seen) return;
+
+    function showHelp() {
+      onboardLocation.hidden = true;
+      onboardHelp.hidden = false;
+    }
+
+    document.getElementById('onboard-location-yes').addEventListener('click', async () => {
+      await TheBusGeolocate.getCurrentPosition(); // triggers the OS permission prompt; result unused here
+      showHelp();
+    });
+    document.getElementById('onboard-location-no').addEventListener('click', showHelp);
+    document.getElementById('onboard-help-close').addEventListener('click', () => {
+      onboardHelp.hidden = true;
+      TheBusStorage.setOnboardingSeen();
+      commandInput.focus();
+    });
+
+    onboardLocation.hidden = false;
+  }
+
   async function boot() {
+    maybeShowOnboarding(); // not awaited -- shouldn't block the terminal loading underneath it
     setStatus('INITIALIZING OFFLINE DATASET...');
 
     const { data, status } = await TheBusSync.syncData(setStatus);
@@ -202,7 +230,9 @@
     setStatus(status === 'synced' ? 'DATASET SYNCED -- READY' : 'READY (OFFLINE CACHE)');
 
     appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
-    commandInput.focus();
+    // Don't pop the keyboard open behind an onboarding modal that's
+    // still up -- data sync can finish before the rider has answered it.
+    if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
   }
 
   boot();

@@ -404,6 +404,34 @@ Google's Geocoding/Places API in place of (or alongside) Nominatim in
 `geocode.js` -- but that needs a Google Cloud billing account and API
 key, a decision left to you rather than made here.
 
+## First-launch onboarding
+
+Two modals appear once, on the very first launch, then never again
+(tracked via `TheBusStorage.getOnboardingSeen()`/`setOnboardingSeen()`,
+a Preferences-backed flag):
+
+1. **A location-consent prompt** ("SHARE YOUR LOCATION?") with two
+   buttons -- sharing triggers the actual OS permission dialog right
+   then (via `TheBusGeolocate.getCurrentPosition()`), so the ask is
+   tied to a real, explained, in-context user action rather than firing
+   silently on boot. Declining just skips it -- nothing is requested.
+2. **A brief how-to-use card**, closed with an X in the top-right
+   corner, listing the handful of question shapes the app understands.
+
+Both are plain overlay `<div>`s styled to match the terminal aesthetic
+(`.modal-overlay`/`.modal-box` in `terminal.css`), not a native
+Capacitor dialog plugin -- consistent with the rest of the UI being
+hand-built HTML/CSS rather than native chrome. `app.js` shows the
+location modal immediately on boot (not gated on the data sync
+finishing, so a slow Render cold-start doesn't delay it) and guards the
+existing auto-focus-the-input calls so the on-screen keyboard can't pop
+up behind an open modal. Verified in a real browser via `claude-in-chrome`
+against a local `python3 -m http.server` (both button paths, the X
+close, and that the flag persists across a reload) before shipping --
+this is UI/DOM wiring in `app.js`, which isn't covered by the
+`node --test` suite (that suite covers the pure logic modules:
+`intentParser.js`/`queryEngine.js`/`searchIndex.js`).
+
 ## Live map
 
 The "LIVE MAP" tab draws every route (as a colored polyline, from GTFS

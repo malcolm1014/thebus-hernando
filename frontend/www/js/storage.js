@@ -9,6 +9,7 @@
   const DATA_FILENAME = 'transit_data.json';
   const VERSION_KEY = 'thebus_data_version';
   const SEARCH_MEMORY_KEY = 'thebus_search_memory';
+  const ONBOARDING_KEY = 'thebus_onboarding_seen';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -93,5 +94,26 @@
     }
   }
 
-  global.TheBusStorage = { getLocalVersion, setLocalVersion, saveDataset, loadDataset, getSearchMemory, saveSearchMemory };
+  /** Whether the first-launch onboarding (location prompt + how-to-use) has already been shown and dismissed -- so it only ever appears once, not on every app launch. */
+  async function getOnboardingSeen() {
+    if (Preferences) {
+      const { value } = await Preferences.get({ key: ONBOARDING_KEY });
+      return value === 'true';
+    }
+    return localStorage.getItem(ONBOARDING_KEY) === 'true';
+  }
+
+  async function setOnboardingSeen() {
+    if (Preferences) {
+      await Preferences.set({ key: ONBOARDING_KEY, value: 'true' });
+    } else {
+      localStorage.setItem(ONBOARDING_KEY, 'true');
+    }
+  }
+
+  global.TheBusStorage = {
+    getLocalVersion, setLocalVersion, saveDataset, loadDataset,
+    getSearchMemory, saveSearchMemory,
+    getOnboardingSeen, setOnboardingSeen,
+  };
 })(window);

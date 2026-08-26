@@ -239,6 +239,85 @@ body {
 }
 .leaflet-control-attribution a { color: var(--fg) !important; }
 
+/* ---- First-launch onboarding modals ---- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.modal-overlay[hidden] { display: none; }
+
+.modal-box {
+  position: relative;
+  max-width: 480px;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--fg-dim);
+  box-shadow: 0 0 16px rgba(51, 255, 0, 0.25);
+  padding: 20px;
+  text-shadow: 0 0 1px var(--fg), 0 0 2px var(--fg), 0 0 6px var(--fg-dim);
+}
+
+.modal-title {
+  color: var(--fg-bright);
+  font-size: 26px;
+  border-bottom: 1px solid var(--fg-dim);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  padding-right: 32px; /* keeps the title clear of .modal-close */
+}
+
+.modal-body {
+  color: var(--fg);
+  font-size: 22px;
+  line-height: 1.35;
+  margin: 0 0 16px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.modal-btn {
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  color: var(--fg-bright);
+  font-family: inherit;
+  font-size: 22px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.modal-btn:active { background: rgba(51, 255, 0, 0.15); }
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  color: var(--fg-bright);
+  font-family: inherit;
+  font-size: 22px;
+  line-height: 1;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+
+.modal-close:active { background: rgba(51, 255, 0, 0.15); }
+
 /* Bus marker: a colored dot with a small directional wedge (CSS
    triangle) so heading is visible at a glance without a bitmap icon. */
 .bus-marker-dot {

@@ -46,6 +46,42 @@
     </div>
   </div>
 
+  <!-- First-launch onboarding: location consent, then a brief how-to.
+       Hidden by default -- app.js shows whichever's needed after boot,
+       and only ever once (TheBusStorage.getOnboardingSeen()). -->
+  <div id="onboard-location" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-location-title">
+    <div class="modal-box">
+      <div id="onboard-location-title" class="modal-title">SHARE YOUR LOCATION?</div>
+      <p class="modal-body">
+        THEBUS CAN FIND THE NEAREST STOP OR THE NEXT BUS NEAR YOU
+        AUTOMATICALLY IF YOU SHARE YOUR LOCATION. YOU CAN ALWAYS SKIP
+        THIS AND JUST TYPE A STOP OR PLACE NAME INSTEAD.
+      </p>
+      <div class="modal-actions">
+        <button type="button" id="onboard-location-yes" class="modal-btn">[ YES, SHARE LOCATION ]</button>
+        <button type="button" id="onboard-location-no" class="modal-btn">[ NOT NOW ]</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="onboard-help" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-help-title">
+    <div class="modal-box">
+      <button type="button" id="onboard-help-close" class="modal-close" aria-label="Close">X</button>
+      <div id="onboard-help-title" class="modal-title">HOW TO USE THEBUS</div>
+      <p class="modal-body">
+        TYPE A QUESTION AND PRESS ENTER. TRY THINGS LIKE:<br/>
+        <br/>
+        &gt; WHEN IS THE NEXT BUS AT &lt;STOP&gt;?<br/>
+        &gt; NEAREST STOP TO &lt;PLACE&gt;? (OR "...TO ME?")<br/>
+        &gt; FIRST/LAST BUS AT &lt;STOP&gt;?<br/>
+        &gt; LIST STOPS ON ROUTE &lt;N&gt;<br/>
+        <br/>
+        TAP [ LIVE MAP ] ABOVE TO SEE ROUTES AND BUSES IN REAL TIME.
+        ONCE SYNCED, EVERYTHING BUT LIVE BUS POSITIONS WORKS OFFLINE.
+      </p>
+    </div>
+  </div>
+
   <script src="vendor/leaflet/leaflet.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/sync.js"></script>
