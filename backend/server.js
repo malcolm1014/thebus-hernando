@@ -116,7 +116,23 @@ app.get('/api/geocode', async (req, res) => {
 app.get('/healthz', (req, res) => res.send('ok'));
 
 async function main() {
-  await ensureInitialData();
+  // Listens immediately, before the initial ETL -- a fresh deploy with an
+  // empty data dir used to await the whole first ETL run (including
+  // alias enrichment: one deliberately rate-limited LLM call per stop)
+  // before ever opening the port. Confirmed in production: a ~370-stop
+  // feed's enrichment pass alone took long enough that Render's deploy
+  // health check saw nothing listening and timed the deploy out entirely.
+  // /api/version and /api/download already answer a clean 503 "dataset
+  // not generated yet" in the meantime, so there's no correctness cost to
+  // not blocking startup on this.
+  app.listen(config.port, () => {
+    console.log(`[server] listening on :${config.port}`);
+  });
+
+  etlRunning = true;
+  ensureInitialData()
+    .catch((err) => console.error('[server] initial ETL failed:', err))
+    .finally(() => { etlRunning = false; });
 
   if (config.etlCron) {
     cron.schedule(config.etlCron, async () => {
@@ -132,10 +148,6 @@ async function main() {
     });
     console.log(`[server] scheduled ETL cron: "${config.etlCron}"`);
   }
-
-  app.listen(config.port, () => {
-    console.log(`[server] listening on :${config.port}`);
-  });
 }
 
 main().catch((err) => {
