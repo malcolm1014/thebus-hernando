@@ -117,8 +117,45 @@
   const terminalView = document.getElementById('terminal-view');
   const mapView = document.getElementById('map-view');
   const mapStatus = document.getElementById('map-status');
+  const busListPanel = document.getElementById('bus-list-panel');
   let mapInitialized = false;
   let lastDataset = null;
+  let busListOpen = false;
+
+  /** Renders the "N BUSES ACTIVE" dropdown: one line per active bus, the stop it's nearest to right now, and that route's next scheduled arrival there. Uses real DOM nodes (not innerHTML) so stop/route names never need HTML-escaping. */
+  function renderBusList() {
+    busListPanel.textContent = '';
+    const summaries = TheBusLiveMap.activeBusSummaries(new Date());
+    if (summaries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'bus-list-empty';
+      empty.textContent = 'NO BUSES CURRENTLY ACTIVE.';
+      busListPanel.appendChild(empty);
+      return;
+    }
+    for (const s of summaries) {
+      const row = document.createElement('div');
+      row.className = 'bus-list-row';
+      const strong = document.createElement('strong');
+      strong.textContent = s.label.toUpperCase();
+      row.appendChild(strong);
+      row.appendChild(document.createTextNode(` -- ${s.text}`));
+      busListPanel.appendChild(row);
+    }
+  }
+
+  function closeBusList() {
+    busListOpen = false;
+    busListPanel.hidden = true;
+    mapStatus.setAttribute('aria-expanded', 'false');
+  }
+
+  mapStatus.addEventListener('click', () => {
+    busListOpen = !busListOpen;
+    busListPanel.hidden = !busListOpen;
+    mapStatus.setAttribute('aria-expanded', String(busListOpen));
+    if (busListOpen) renderBusList();
+  });
 
   function showTerminal() {
     tabTerminal.classList.add('active');
@@ -128,6 +165,7 @@
     terminalView.hidden = false;
     mapView.hidden = true;
     TheBusLiveMap.stopPolling();
+    closeBusList(); // don't reopen showing stale positions from before polling stopped
     commandInput.focus();
   }
 
@@ -160,6 +198,7 @@
         } else {
           mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE`;
         }
+        if (busListOpen) renderBusList(); // keep it live while open, same cadence as the map markers
       });
     }
   }

@@ -97,7 +97,33 @@
     });
   }
 
+  /**
+   * Passio's live routeId does NOT match our GTFS route_id -- confirmed
+   * against a real live feed capture (bus.routeId values like "61931",
+   * "66631" vs GTFS route ids like "7398", "8424"; passio.js's own doc
+   * comment already flagged this as unconfirmed when it was written).
+   * Passio's human-readable routeName ("Route 5") usually carries just a
+   * route NUMBER that also appears in our GTFS route's longName
+   * ("Route 5 Yellow") -- checked first via a real GTFS id match in case
+   * a future feed/agency ever DOES line up, since that'd be strictly
+   * more reliable than parsing a display string. Not every Passio route
+   * number has a matching GTFS entry in this feed (color-only-named
+   * routes, and a few plain numbers with no obvious counterpart) --
+   * those return null rather than guessing wrong.
+   */
+  function matchRouteId(bus) {
+    if (bus.routeId && currentDataset.routes[bus.routeId]) return bus.routeId;
+    const m = /route\s*#?\s*(\d+)/i.exec(bus.routeName || '');
+    if (!m) return null;
+    const num = m[1];
+    const found = Object.values(currentDataset.routes).find(
+      (r) => r.shortName === num || new RegExp(`\\broute\\s*${num}\\b`, 'i').test(r.longName || '')
+    );
+    return found ? found.id : null;
+  }
+
   let onBusesUpdated = null;
+  let lastBuses = [];
 
   async function refreshBuses() {
     if (!map || !currentDataset) return;
@@ -105,11 +131,13 @@
       const res = await fetch(`${TheBusSync.API_BASE}/api/live-buses`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { buses } = await res.json();
+      lastBuses = buses;
 
       const seenIds = new Set();
       for (const bus of buses) {
         seenIds.add(bus.busId);
-        const route = bus.routeId ? currentDataset.routes[bus.routeId] : null;
+        const matchedRouteId = matchRouteId(bus);
+        const route = matchedRouteId ? currentDataset.routes[matchedRouteId] : null;
         const color = route ? (route.color || '#33ff00') : '#e0e0e0';
         const label = route ? (route.shortName || route.longName) : (bus.routeName || 'BUS');
 
@@ -136,6 +164,7 @@
       if (onBusesUpdated) onBusesUpdated({ ok: true, count: buses.length });
     } catch (err) {
       console.error('[liveMap] failed to refresh live bus positions', err);
+      lastBuses = [];
       if (onBusesUpdated) onBusesUpdated({ ok: false, count: busMarkersById.size });
     }
   }
@@ -158,6 +187,7 @@
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    lastBuses = [];
   }
 
   /** Leaflet needs to be told explicitly when its container's size changes (e.g. switching tabs) -- it can't detect that on its own. */
@@ -165,5 +195,61 @@
     if (map) map.invalidateSize();
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize };
+  /** Great-circle distance in miles -- same formula queryEngine.js uses for nearest-stop, duplicated locally rather than exported/shared since it's a tiny, dependency-free bit of math and this module otherwise never touches queryEngine.js. */
+  function haversineMiles(lat1, lon1, lat2, lon2) {
+    const R = 3958.8;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /** Nearest stop ON a given route to a raw {lat, lon} -- restricted to that route's own stops (not every stop in the county) so an active bus is described by a stop it could actually be approaching, not just whatever's geographically closest. */
+  function nearestStopOnRoute(routeId, lat, lon) {
+    const route = currentDataset.routes[routeId];
+    if (!route) return null;
+    let best = null;
+    for (const stopId of route.stopIds) {
+      const stop = currentDataset.stops[stopId];
+      if (!stop || stop.lat == null || stop.lon == null) continue;
+      const dist = haversineMiles(lat, lon, stop.lat, stop.lon);
+      if (!best || dist < best.dist) best = { stop, dist };
+    }
+    return best;
+  }
+
+  const SUMMARY_COUNTDOWN_THRESHOLD_MIN = 30;
+
+  /**
+   * One entry per currently-active bus: which route, the stop it's
+   * nearest to right now, and that route's next SCHEDULED arrival there
+   * (from the same GTFS-derived timetable the terminal search uses --
+   * Passio's live feed has no per-trip link back to the schedule of its
+   * own, so this is the closest honest answer to "when's it getting
+   * here" without inventing a speed/distance ETA estimate).
+   */
+  function activeBusSummaries(now) {
+    if (!currentDataset) return [];
+    return lastBuses.map((bus) => {
+      const matchedRouteId = matchRouteId(bus);
+      const route = matchedRouteId ? currentDataset.routes[matchedRouteId] : null;
+      const label = route ? (route.shortName || route.longName) : (bus.routeName || 'BUS');
+      if (!route) return { label, text: 'ROUTE NOT IN SCHEDULE DATA' };
+
+      const nearest = nearestStopOnRoute(matchedRouteId, bus.lat, bus.lon);
+      if (!nearest) return { label, text: 'NO STOPS ON FILE FOR THIS ROUTE' };
+
+      const [next] = TheBusQueryEngine.nextArrivals(nearest.stop.id, matchedRouteId, now, 1);
+      const arrivalText = next
+        ? (next.isTomorrow ? 'TOMORROW ' : '') + (next.minutesUntil <= SUMMARY_COUNTDOWN_THRESHOLD_MIN
+          ? `${next.minutesUntil} MIN`
+          : `AT ${next.clock}`)
+        : 'NO MORE SCHEDULED ARRIVALS TODAY';
+
+      return { label, text: `NEAR ${nearest.stop.name.toUpperCase()} (${nearest.dist.toFixed(2)} MI) -- NEXT: ${arrivalText}` };
+    });
+  }
+
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries };
 })(window);

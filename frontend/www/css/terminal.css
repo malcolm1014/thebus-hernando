@@ -220,11 +220,37 @@ body {
   z-index: 1000;
   background: rgba(0, 0, 0, 0.75);
   color: var(--fg-bright);
+  font-family: inherit;
   font-size: 18px;
   padding: 4px 8px;
   border: 1px solid var(--fg-dim);
-  pointer-events: none;
+  cursor: pointer;
 }
+#map-status:active { background: rgba(51, 255, 0, 0.15); }
+
+/* Tapping the bus count opens this -- one line per currently-active
+   bus: the stop it's nearest to right now and that route's next
+   scheduled arrival there. Positioned to sit just above the button
+   that opens it. */
+#bus-list-panel {
+  position: absolute;
+  bottom: 44px;
+  left: 8px;
+  z-index: 1000;
+  width: min(360px, calc(100% - 16px));
+  max-height: 260px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid var(--fg-dim);
+  padding: 8px 10px;
+  font-size: 16px;
+  color: var(--fg);
+}
+#bus-list-panel[hidden] { display: none; }
+.bus-list-row { padding: 5px 0; border-bottom: 1px solid rgba(31, 153, 0, 0.4); }
+.bus-list-row:last-child { border-bottom: none; }
+.bus-list-row strong { color: var(--fg-bright); }
+.bus-list-empty { padding: 4px 0; color: var(--fg-dim); }
 
 /* Leaflet's own UI (popups, zoom control, attribution) restyled to fit
    the terminal palette instead of its light-theme default. */
