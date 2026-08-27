@@ -17,20 +17,24 @@ function buildStop(overrides = {}) {
   };
 }
 
+function groqResponse(aliasesJsonText) {
+  return { ok: true, json: async () => ({ choices: [{ message: { content: aliasesJsonText } }] }) };
+}
+
 function withTempCache(fn) {
   const tmpPath = path.join(os.tmpdir(), `alias-cache-test-${Date.now()}-${Math.random()}.json`);
-  const originalKey = config.geminiApiKey;
+  const originalKey = config.groqApiKey;
   const originalCachePath = config.aliasCachePath;
   config.aliasCachePath = tmpPath;
   return fn().finally(() => {
-    config.geminiApiKey = originalKey;
+    config.groqApiKey = originalKey;
     config.aliasCachePath = originalCachePath;
     fs.rmSync(tmpPath, { force: true });
   });
 }
 
 test('enrichAliases: with no API key configured, every stop gets aliases: [] and no network call is made', () => withTempCache(async () => {
-  config.geminiApiKey = undefined;
+  config.groqApiKey = undefined;
   const originalFetch = global.fetch;
   global.fetch = async () => { throw new Error('fetch should never be called with no API key'); };
 
@@ -43,15 +47,10 @@ test('enrichAliases: with no API key configured, every stop gets aliases: [] and
   }
 }));
 
-test('enrichAliases: a successful Gemini response populates aliases, lowercased and trimmed', () => withTempCache(async () => {
-  config.geminiApiKey = 'test-key';
+test('enrichAliases: a successful Groq response populates aliases, lowercased and trimmed', () => withTempCache(async () => {
+  config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
-  global.fetch = async () => ({
-    ok: true,
-    json: async () => ({
-      candidates: [{ content: { parts: [{ text: '["Walmart on 19 ", "walmart spring hill"]' }] } }],
-    }),
-  });
+  global.fetch = async () => groqResponse('{"aliases": ["Walmart on 19 ", "walmart spring hill"]}');
 
   try {
     const data = { stops: { S1: buildStop() } };
@@ -62,13 +61,27 @@ test('enrichAliases: a successful Gemini response populates aliases, lowercased 
   }
 }));
 
+test('enrichAliases: a bare JSON array response (not wrapped in {"aliases": [...]}) is still accepted', () => withTempCache(async () => {
+  config.groqApiKey = 'test-key';
+  const originalFetch = global.fetch;
+  global.fetch = async () => groqResponse('["walmart on 19"]');
+
+  try {
+    const data = { stops: { S1: buildStop() } };
+    await enrichAliases(data);
+    assert.deepEqual(data.stops.S1.aliases, ['walmart on 19']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}));
+
 test('enrichAliases: a cached entry is reused without calling the API again, even across a fresh call', () => withTempCache(async () => {
-  config.geminiApiKey = 'test-key';
+  config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
   let callCount = 0;
   global.fetch = async () => {
     callCount += 1;
-    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '["walmart on 19"]' }] } }] }) };
+    return groqResponse('{"aliases": ["walmart on 19"]}');
   };
 
   try {
@@ -87,12 +100,12 @@ test('enrichAliases: a cached entry is reused without calling the API again, eve
 }));
 
 test('enrichAliases: a route change invalidates the cache for that stop (real schedule changes must never ship stale aliases)', () => withTempCache(async () => {
-  config.geminiApiKey = 'test-key';
+  config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
   let callCount = 0;
   global.fetch = async () => {
     callCount += 1;
-    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '["walmart on 19"]' }] } }] }) };
+    return groqResponse('{"aliases": ["walmart on 19"]}');
   };
 
   try {
@@ -108,7 +121,7 @@ test('enrichAliases: a route change invalidates the cache for that stop (real sc
 }));
 
 test('enrichAliases: an HTTP failure for one stop leaves it with aliases: [] instead of throwing and blocking the whole ETL run', () => withTempCache(async () => {
-  config.geminiApiKey = 'test-key';
+  config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 429 });
 
@@ -122,12 +135,9 @@ test('enrichAliases: an HTTP failure for one stop leaves it with aliases: [] ins
 }));
 
 test('enrichAliases: a malformed (non-JSON) response leaves the stop with aliases: [] instead of throwing', () => withTempCache(async () => {
-  config.geminiApiKey = 'test-key';
+  config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
-  global.fetch = async () => ({
-    ok: true,
-    json: async () => ({ candidates: [{ content: { parts: [{ text: 'not valid json' }] } }] }),
-  });
+  global.fetch = async () => groqResponse('not valid json');
 
   try {
     const data = { stops: { S1: buildStop() } };

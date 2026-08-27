@@ -15,14 +15,15 @@ const config = require('./config');
  * resolve them offline on the very first try, instead of only learning
  * them reactively after a rider's phrasing happens to succeed once.
  *
- * Uses Gemini's free tier directly via its REST API (plain fetch, same
- * dependency-free style as passio.js -- no SDK). Entirely optional: with
- * no GEMINI_API_KEY configured, every stop just gets aliases: [] and the
- * dataset ships exactly as it did before this feature existed.
+ * Uses Groq's free tier directly via its REST API (plain fetch, same
+ * dependency-free style as passio.js -- no SDK), an OpenAI-compatible
+ * chat completions endpoint serving genuinely open-weight models
+ * (Llama, not a closed model just offered for free). Entirely optional:
+ * with no GROQ_API_KEY configured, every stop just gets aliases: [] and
+ * the dataset ships exactly as it did before this feature existed.
  */
 
-const GEMINI_URL = (model, key) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // Free-tier rate limits are per-minute, not per-day -- a small pause
 // between calls keeps a several-dozen-stop county feed comfortably under
@@ -65,29 +66,38 @@ Generate 3-6 short alternate phrasings a local rider might actually type into a 
 
 Stay strictly grounded in the words already present in the official name. Do NOT invent a business, landmark, or fact that isn't already implied by the name itself. If the name gives you nothing reasonable to shorten or rephrase, return fewer results, or an empty list, rather than guessing.
 
-Respond with ONLY a JSON array of lowercase strings, no other text. Example: ["walmart on 19", "walmart spring hill"]`;
+Respond with ONLY a JSON object of the form {"aliases": [...]}, containing lowercase strings, no other text. Example: {"aliases": ["walmart on 19", "walmart spring hill"]}`;
 }
 
-async function callGemini(stop) {
-  const res = await fetch(GEMINI_URL(config.geminiModel, config.geminiApiKey), {
+async function callGroq(stop) {
+  const res = await fetch(GROQ_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.groqApiKey}`,
+    },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: buildPrompt(stop) }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.4 },
+      model: config.groqModel,
+      messages: [{ role: 'user', content: buildPrompt(stop) }],
+      response_format: { type: 'json_object' },
+      temperature: 0.4,
     }),
   });
   if (!res.ok) {
-    throw new Error(`Gemini request failed: HTTP ${res.status}`);
+    throw new Error(`Groq request failed: HTTP ${res.status}`);
   }
   const json = await res.json();
-  const text = json.candidates && json.candidates[0] && json.candidates[0].content
-    && json.candidates[0].content.parts && json.candidates[0].content.parts[0]
-    && json.candidates[0].content.parts[0].text;
+  const text = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
   if (!text) return [];
+  // response_format:json_object guarantees a JSON OBJECT, not an array --
+  // the prompt asks for a bare array, but a chat model asked for JSON
+  // sometimes wraps it in a key regardless (e.g. {"aliases": [...]})
+  // rather than returning the array as the whole document. Accept either
+  // shape instead of failing on the wrapped one.
   const parsed = JSON.parse(text); // an unparseable response is a real failure -- let it throw and be logged, not silently swallowed as "no aliases"
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim().toLowerCase());
+  const list = Array.isArray(parsed) ? parsed : Object.values(parsed).find((v) => Array.isArray(v));
+  if (!Array.isArray(list)) return [];
+  return list.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim().toLowerCase());
 }
 
 function sleep(ms) {
@@ -104,8 +114,8 @@ function sleep(ms) {
 async function enrichAliases(data) {
   const stops = Object.values(data.stops);
 
-  if (!config.geminiApiKey) {
-    console.log('[enrich] GEMINI_API_KEY not set -- skipping alias enrichment, shipping aliases: [] for every stop');
+  if (!config.groqApiKey) {
+    console.log('[enrich] GROQ_API_KEY not set -- skipping alias enrichment, shipping aliases: [] for every stop');
     for (const stop of stops) stop.aliases = [];
     return data;
   }
@@ -124,7 +134,7 @@ async function enrichAliases(data) {
     try {
       if (calls > 0) await sleep(REQUEST_SPACING_MS);
       calls += 1;
-      const aliases = await callGemini(stop);
+      const aliases = await callGroq(stop);
       stop.aliases = aliases;
       cache[key] = aliases;
     } catch (err) {
