@@ -30,9 +30,17 @@
     map = L.map(containerId, { zoomControl: true, attributionControl: true })
       .setView([28.55, -82.6], 11); // rough Hernando County center; refined by fitBounds once stop data draws
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: 'abcd',
+    // Plain OpenStreetMap tiles -- CARTO's basemaps (used here previously)
+    // started requiring a free API key partway through this project and
+    // watermarked every tile without one. OSM's own tile servers need no
+    // key or account and never will (that's their whole model), so this
+    // can't silently break again the same way. It's a light basemap by
+    // default; the terminal-green "dark mode" look comes from a CSS
+    // filter on .leaflet-tile-pane (see terminal.css) rather than a
+    // purpose-built dark tileset -- real street names/labels are OSM's
+    // own standard style, just recolored, not a separate lookup.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
     }).addTo(map);
 

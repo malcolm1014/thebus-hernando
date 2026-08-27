@@ -205,6 +205,14 @@ body {
   background: var(--bg); /* shows through before tiles load, and in any gaps if they fail to load offline */
 }
 
+/* Recolors OpenStreetMap's standard (light) raster tiles into a dark,
+   green-tinted basemap matching the terminal palette -- scoped to just
+   the tile pane so it never touches our own route lines/stop markers
+   (a separate Leaflet pane), which already draw in the correct colors. */
+.leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
+
 #map-status {
   position: absolute;
   bottom: 8px;
