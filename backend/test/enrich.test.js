@@ -123,7 +123,7 @@ test('enrichAliases: a route change invalidates the cache for that stop (real sc
 test('enrichAliases: a non-rate-limit HTTP failure for one stop leaves it with aliases: [] instead of throwing and blocking the whole ETL run', () => withTempCache(async () => {
   config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: false, status: 500, headers: { get: () => null } });
+  global.fetch = async () => ({ ok: false, status: 500, headers: { get: () => null }, text: async () => 'internal server error' });
 
   try {
     const data = { stops: { S1: buildStop() } };
@@ -154,13 +154,38 @@ test('enrichAliases: a 429 followed by a success on retry still resolves the sto
   }
 }));
 
+test('enrichAliases: a 400 (JSON Object Mode occasionally fails to produce valid JSON, per Groq\'s own docs) followed by a success on retry still resolves the stop\'s aliases', () => withTempCache(async () => {
+  config.groqApiKey = 'test-key';
+  const originalFetch = global.fetch;
+  let callCount = 0;
+  global.fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) return { ok: false, status: 400, headers: { get: () => null }, text: async () => 'model failed to produce valid JSON' };
+    return groqResponse('{"aliases": ["walmart on 19"]}');
+  };
+
+  try {
+    const data = { stops: { S1: buildStop() } };
+    await enrichAliases(data);
+    assert.deepEqual(data.stops.S1.aliases, ['walmart on 19']);
+    assert.equal(callCount, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}));
+
 test('enrichAliases: exhausting all 429 retries gives up cleanly with aliases: [] rather than hanging or throwing unhandled', () => withTempCache(async () => {
   config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
   let callCount = 0;
   global.fetch = async () => {
     callCount += 1;
-    return { ok: false, status: 429, headers: { get: (name) => (name === 'retry-after' ? '1' : null) } };
+    return {
+      ok: false,
+      status: 429,
+      headers: { get: (name) => (name === 'retry-after' ? '1' : null) },
+      text: async () => 'rate limited',
+    };
   };
 
   try {

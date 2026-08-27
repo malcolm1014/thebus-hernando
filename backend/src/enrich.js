@@ -38,13 +38,20 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // in the background costs nothing.
 const REQUEST_SPACING_MS = 4000;
 
-// A 429 is a transient, expected condition here (rate limits are
-// approximate/rolling, not a hard per-call guarantee) -- retried a
-// couple of times with Groq's own suggested delay before giving up on a
-// stop for this run, rather than permanently caching an empty alias list
-// for what was really just bad timing.
-const MAX_RATE_LIMIT_RETRIES = 3;
+// Both retried a few times before giving up on a stop for this run,
+// rather than permanently caching an empty alias list for what was
+// really just bad luck on one attempt:
+//  - 429 (rate limited): approximate/rolling limits, not a hard
+//    per-call guarantee -- retried using Groq's own suggested delay.
+//  - 400 (bad request) under JSON Object Mode specifically: Groq's own
+//    docs describe this mode as occasionally erroring "if the model
+//    cannot produce valid JSON syntax" -- confirmed in production this
+//    really does happen intermittently on an otherwise-valid request,
+//    not just on a malformed one -- so a fresh attempt (temperature=0.4
+//    means it's not deterministic) can simply succeed.
+const MAX_RETRIES = 3;
 const DEFAULT_RETRY_MS = 5000;
+const BAD_REQUEST_RETRY_MS = 1000;
 
 function loadCache() {
   try {
@@ -100,13 +107,18 @@ async function callGroq(stop) {
         temperature: 0.4,
       }),
     });
-    if (res.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) break;
-    const retryAfterHeader = Number(res.headers.get('retry-after'));
-    const delay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : DEFAULT_RETRY_MS;
-    await sleep(delay);
+    if ((res.status !== 429 && res.status !== 400) || attempt >= MAX_RETRIES) break;
+    if (res.status === 429) {
+      const retryAfterHeader = Number(res.headers.get('retry-after'));
+      const delay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : DEFAULT_RETRY_MS;
+      await sleep(delay);
+    } else {
+      await sleep(BAD_REQUEST_RETRY_MS);
+    }
   }
   if (!res.ok) {
-    throw new Error(`Groq request failed: HTTP ${res.status}`);
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`Groq request failed: HTTP ${res.status}${bodyText ? ` -- ${bodyText.slice(0, 300)}` : ''}`);
   }
   const json = await res.json();
   const text = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
