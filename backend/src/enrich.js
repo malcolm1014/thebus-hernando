@@ -27,11 +27,24 @@ const config = require('./config');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Free-tier rate limits are per-minute, not per-day -- a small pause
-// between calls keeps a several-dozen-stop county feed comfortably under
-// them without needing real backoff/retry logic for what's at most a
-// once-a-day batch job (see ETL_CRON).
-const REQUEST_SPACING_MS = 2000;
+// Groq's Free-plan limit for openai/gpt-oss-20b is 30 RPM / 8K TPM
+// (https://console.groq.com/docs/rate-limits) -- confirmed in production
+// that 2000ms spacing (a naive "one every 2s" reading of 30 RPM) still
+// got 429'd, since a rolling window plus per-minute TOKEN throughput
+// leaves less real headroom than the raw RPM number suggests. 4000ms
+// (~15 RPM) leaves real margin under both caps. This can afford to run
+// slow: since the initial ETL no longer blocks the server from starting
+// (see server.js), a several-dozen-stop run taking a few extra minutes
+// in the background costs nothing.
+const REQUEST_SPACING_MS = 4000;
+
+// A 429 is a transient, expected condition here (rate limits are
+// approximate/rolling, not a hard per-call guarantee) -- retried a
+// couple of times with Groq's own suggested delay before giving up on a
+// stop for this run, rather than permanently caching an empty alias list
+// for what was really just bad timing.
+const MAX_RATE_LIMIT_RETRIES = 3;
+const DEFAULT_RETRY_MS = 5000;
 
 function loadCache() {
   try {
@@ -72,19 +85,26 @@ Respond with ONLY a JSON object of the form {"aliases": [...]}, containing lower
 }
 
 async function callGroq(stop) {
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.groqApiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.groqModel,
-      messages: [{ role: 'user', content: buildPrompt(stop) }],
-      response_format: { type: 'json_object' },
-      temperature: 0.4,
-    }),
-  });
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.groqModel,
+        messages: [{ role: 'user', content: buildPrompt(stop) }],
+        response_format: { type: 'json_object' },
+        temperature: 0.4,
+      }),
+    });
+    if (res.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) break;
+    const retryAfterHeader = Number(res.headers.get('retry-after'));
+    const delay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : DEFAULT_RETRY_MS;
+    await sleep(delay);
+  }
   if (!res.ok) {
     throw new Error(`Groq request failed: HTTP ${res.status}`);
   }

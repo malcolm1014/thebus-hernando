@@ -120,15 +120,54 @@ test('enrichAliases: a route change invalidates the cache for that stop (real sc
   }
 }));
 
-test('enrichAliases: an HTTP failure for one stop leaves it with aliases: [] instead of throwing and blocking the whole ETL run', () => withTempCache(async () => {
+test('enrichAliases: a non-rate-limit HTTP failure for one stop leaves it with aliases: [] instead of throwing and blocking the whole ETL run', () => withTempCache(async () => {
   config.groqApiKey = 'test-key';
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: false, status: 429 });
+  global.fetch = async () => ({ ok: false, status: 500, headers: { get: () => null } });
 
   try {
     const data = { stops: { S1: buildStop() } };
     await enrichAliases(data);
     assert.deepEqual(data.stops.S1.aliases, []);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}));
+
+test('enrichAliases: a 429 followed by a success on retry still resolves the stop\'s aliases (rate limits here are an expected, retryable condition, not a permanent failure)', () => withTempCache(async () => {
+  config.groqApiKey = 'test-key';
+  const originalFetch = global.fetch;
+  let callCount = 0;
+  global.fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) return { ok: false, status: 429, headers: { get: (name) => (name === 'retry-after' ? '1' : null) } };
+    return groqResponse('{"aliases": ["walmart on 19"]}');
+  };
+
+  try {
+    const data = { stops: { S1: buildStop() } };
+    await enrichAliases(data);
+    assert.deepEqual(data.stops.S1.aliases, ['walmart on 19']);
+    assert.equal(callCount, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}));
+
+test('enrichAliases: exhausting all 429 retries gives up cleanly with aliases: [] rather than hanging or throwing unhandled', () => withTempCache(async () => {
+  config.groqApiKey = 'test-key';
+  const originalFetch = global.fetch;
+  let callCount = 0;
+  global.fetch = async () => {
+    callCount += 1;
+    return { ok: false, status: 429, headers: { get: (name) => (name === 'retry-after' ? '1' : null) } };
+  };
+
+  try {
+    const data = { stops: { S1: buildStop() } };
+    await enrichAliases(data);
+    assert.deepEqual(data.stops.S1.aliases, []);
+    assert.equal(callCount, 4); // initial attempt + MAX_RATE_LIMIT_RETRIES (3)
   } finally {
     global.fetch = originalFetch;
   }
