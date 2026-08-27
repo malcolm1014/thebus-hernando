@@ -1,7 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <rect width="1024" height="1024" fill="#000000"/>
-  <text x="512" y="430" font-family="'Courier New', Courier, monospace" font-weight="bold"
-        font-size="360" fill="#33ff00" text-anchor="middle" dominant-baseline="middle">&gt;_</text>
-  <text x="512" y="640" font-family="'Courier New', Courier, monospace" font-weight="bold"
-        font-size="120" fill="#33ff00" text-anchor="middle" dominant-baseline="middle" letter-spacing="8">THEBUS</text>
+
+  <!-- Roof marker light bar -->
+  <rect x="212" y="340" width="600" height="16" rx="8" fill="#7dff5c"/>
+
+  <!-- Bus body -->
+  <rect x="212" y="360" width="600" height="240" rx="34" fill="#33ff00"/>
+
+  <!-- Windows -->
+  <rect x="262" y="392" width="110" height="90" rx="12" fill="#000000"/>
+  <rect x="392" y="392" width="110" height="90" rx="12" fill="#000000"/>
+  <rect x="522" y="392" width="110" height="90" rx="12" fill="#000000"/>
+  <rect x="652" y="392" width="110" height="90" rx="12" fill="#000000"/>
+
+  <!-- Undercarriage strip -->
+  <rect x="212" y="580" width="600" height="20" fill="#1f9900"/>
+
+  <!-- Wheels -->
+  <circle cx="322" cy="620" r="55" fill="#33ff00"/>
+  <circle cx="322" cy="620" r="24" fill="#000000"/>
+  <circle cx="702" cy="620" r="55" fill="#33ff00"/>
+  <circle cx="702" cy="620" r="24" fill="#000000"/>
 </svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#000000"/>
+
+  <!-- Roof marker light bar -->
+  <rect x="332" y="400" width="360" height="10" rx="5" fill="#7dff5c"/>
+
+  <!-- Bus body -->
+  <rect x="332" y="412" width="360" height="144" rx="20" fill="#33ff00"/>
+
+  <!-- Windows -->
+  <rect x="362" y="431" width="66" height="54" rx="7" fill="#000000"/>
+  <rect x="440" y="431" width="66" height="54" rx="7" fill="#000000"/>
+  <rect x="518" y="431" width="66" height="54" rx="7" fill="#000000"/>
+  <rect x="596" y="431" width="66" height="54" rx="7" fill="#000000"/>
+
+  <!-- Undercarriage strip -->
+  <rect x="332" y="544" width="360" height="12" fill="#1f9900"/>
+
+  <!-- Wheels -->
+  <circle cx="398" cy="568" r="33" fill="#33ff00"/>
+  <circle cx="398" cy="568" r="14" fill="#000000"/>
+  <circle cx="626" cy="568" r="33" fill="#33ff00"/>
+  <circle cx="626" cy="568" r="14" fill="#000000"/>
+
+  <!-- Wordmark -->
+  <text x="512" y="660" font-family="'Courier New', Courier, monospace" font-weight="bold"
+        font-size="72" fill="#33ff00" text-anchor="middle" dominant-baseline="middle" letter-spacing="6">THEBUS</text>
+</svg>
