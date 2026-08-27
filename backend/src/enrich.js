@@ -17,10 +17,12 @@ const config = require('./config');
  *
  * Uses Groq's free tier directly via its REST API (plain fetch, same
  * dependency-free style as passio.js -- no SDK), an OpenAI-compatible
- * chat completions endpoint serving genuinely open-weight models
- * (Llama, not a closed model just offered for free). Entirely optional:
- * with no GROQ_API_KEY configured, every stop just gets aliases: [] and
- * the dataset ships exactly as it did before this feature existed.
+ * chat completions endpoint serving genuinely open-weight models (the
+ * default, openai/gpt-oss-20b, is OpenAI's own Apache-2.0-licensed
+ * open-weight release -- not a closed model just offered for free).
+ * Entirely optional: with no GROQ_API_KEY configured, every stop just
+ * gets aliases: [] and the dataset ships exactly as it did before this
+ * feature existed.
  */
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
