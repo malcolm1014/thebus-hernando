@@ -105,6 +105,17 @@ async function callGroq(stop) {
         messages: [{ role: 'user', content: buildPrompt(stop) }],
         response_format: { type: 'json_object' },
         temperature: 0.4,
+        // openai/gpt-oss-20b is a REASONING model -- confirmed in
+        // production that the real bottleneck isn't request rate (30
+        // RPM), it's TOKENS per minute (8K TPM): a single call was
+        // burning up to ~2000 tokens on internal chain-of-thought before
+        // ever emitting the actual 3-6-item alias list, capping real
+        // sustainable throughput at ~4 calls/min even at "wide" request
+        // spacing. Minimal reasoning is entirely appropriate for this
+        // simple a task, and the completion cap is a hard backstop
+        // against a runaway reasoning trace even at low effort.
+        reasoning_effort: 'low',
+        max_completion_tokens: 400,
       }),
     });
     if ((res.status !== 429 && res.status !== 400) || attempt >= MAX_RETRIES) break;

@@ -32,11 +32,32 @@ function readPreviousData() {
   }
 }
 
+function writeDataset(data) {
+  const json = JSON.stringify(data);
+  const version = hashContent(Buffer.from(json));
+  const payload = JSON.stringify({ version, ...data });
+  fs.writeFileSync(config.outputPath, payload);
+  return version;
+}
+
 /**
  * Full ETL run: download the GTFS zip, parse its CSVs, flatten into the
  * client-optimized shape, and write transit_data.json + a version file.
  * This is the ONLY place that touches the upstream feed -- everything
  * downstream (the /api routes, the mobile client) just reads the output.
+ *
+ * Writes TWICE, deliberately: once immediately after the (fast) GTFS
+ * transform, and again after the (slow, one-rate-limited-LLM-call-per-
+ * stop) alias enrichment pass. Confirmed in production: gating the
+ * FIRST write behind the full enrichment pass meant a fresh or
+ * idle-woken backend served NOTHING -- not even a plain no-aliases
+ * dataset -- for the run's entire duration, well past Render's
+ * free-tier spin-down window, so every cold start was a full outage
+ * for riders. /api/version and /api/download read straight off disk on
+ * every request, independent of whether this function has returned yet,
+ * so the early write makes real schedule data servable right away;
+ * enrichment then finishes in the background and the second write bumps
+ * the version so clients pick up the richer aliases on their next sync.
  */
 async function runEtl() {
   const startedAt = Date.now();
@@ -58,22 +79,19 @@ async function runEtl() {
     );
   }
 
-  // Runs only after the feed's passed the sanity check above -- no sense
-  // spending LLM calls enriching a pull we're about to reject anyway.
-  await enrichAliases(data);
-
-  const json = JSON.stringify(data);
-  const version = hashContent(Buffer.from(json));
-
-  const payload = JSON.stringify({ version, ...data });
-  fs.writeFileSync(config.outputPath, payload);
+  for (const stop of Object.values(data.stops)) stop.aliases = stop.aliases || [];
+  const initialVersion = writeDataset(data);
 
   const stopCount = Object.keys(data.stops).length;
   const routeCount = Object.keys(data.routes).length;
   const ms = Date.now() - startedAt;
-  console.log(`[etl] wrote ${config.outputPath} (${routeCount} routes, ${stopCount} stops, version ${version}) in ${ms}ms`);
+  console.log(`[etl] wrote ${config.outputPath} (${routeCount} routes, ${stopCount} stops, version ${initialVersion}) in ${ms}ms -- alias enrichment continues in the background`);
 
-  return { version, routeCount, stopCount };
+  await enrichAliases(data);
+  const finalVersion = writeDataset(data);
+  console.log(`[etl] alias enrichment complete, rewrote ${config.outputPath} (version ${finalVersion})`);
+
+  return { version: finalVersion, routeCount, stopCount };
 }
 
 if (require.main === module) {
