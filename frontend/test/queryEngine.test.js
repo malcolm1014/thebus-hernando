@@ -263,3 +263,16 @@ test('answerQuery: an unrecognized query gets the help text, not a crash', async
   const answer = await TheBusQueryEngine.answerQuery('asdf qwer zxcv', TUESDAY_9AM_ET);
   assert.match(answer, /COMMAND NOT RECOGNIZED/);
 });
+
+test('answerQuery: a bare stop name with no command keyword at all still answers with its arrivals (onboarding promises this works, no "when"/"where" required)', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX/);
+  assert.match(answer, /ROUTE 1 RED/);
+});
+
+test('answerQuery: a bare route name with no command keyword at all (not even the word "route") still lists its stops', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('Blue', TUESDAY_9AM_ET);
+  assert.match(answer, /STOPS:/);
+});

@@ -478,6 +478,23 @@
   }
 
   /**
+   * A query with no recognized command keyword at all ("Avalon Publix",
+   * just a stop name with no "when"/"where"/etc.) used to fall straight
+   * to the generic help text, even though extractStop/extractRoute
+   * (which run unconditionally in parseQuery, regardless of intent)
+   * already found the entity with full confidence -- silently
+   * contradicting onboarding's own "you can always skip this and just
+   * type a stop or place name instead." Answers exactly as the
+   * equivalent explicit command would rather than a fresh code path, so
+   * disambiguation/route-filtering/etc. all still apply unchanged.
+   */
+  function answerBareLookup(parsed, now) {
+    if (parsed.stop) return answerFindNextArrival(parsed, now);
+    if (parsed.route) return answerListRouteStops(parsed);
+    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?";
+  }
+
+  /**
    * @param {string} text - raw rider input
    * @param {Date} now - device clock (caller-supplied so this stays pure/testable)
    */
@@ -492,7 +509,7 @@
       case 'FIND_STOP_LOCATION': return answerFindStopLocation(parsed);
       case 'LIST_ROUTE_STOPS': return answerListRouteStops(parsed);
       default:
-        return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?";
+        return answerBareLookup(parsed, now);
     }
   }
 
