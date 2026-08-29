@@ -311,6 +311,45 @@ test('FIND_NEXT_ARRIVAL: no stop named at all falls back to GPS and answers for 
   }
 });
 
+test('FIND_NEAREST_STOP (via GPS): a route with no published times at the nearest stop falls back to the same route\'s real next departure at the nearest OTHER stop that has one, instead of just admitting defeat', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    routes: {
+      R1: { id: 'R1', shortName: '', longName: 'Route 1 Red', color: '#ff0000', textColor: null, stopIds: ['S1', 'S2'], shapePoints: [] },
+    },
+    stops: {
+      S1: {
+        id: 'S1', name: 'No-Data Stop', lat: 28.50, lon: -82.60,
+        routes: [{ routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#ff0000', arrivals: [] }],
+      },
+      S2: {
+        id: 'S2', name: 'Has-Data Stop', lat: 28.501, lon: -82.601,
+        routes: [{
+          routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#ff0000',
+          arrivals: [{ tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Downtown', minutes: 10 * 60 }],
+        }],
+      },
+    },
+  }));
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.50, lon: -82.60 }) }; // on top of S1
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest stop to me', TUESDAY_9AM_ET);
+    assert.match(answer, /NO-DATA STOP/); // GPS still resolves to the actual nearest stop
+    assert.match(answer, /NO PUBLISHED TIME HERE; NEXT DEPARTURE VIA HAS-DATA STOP/);
+    assert.match(answer, /AT 10:00 AM/); // TUESDAY_9AM_ET -> S2's 10am R1 arrival, still today
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_STOP: when NO nearby stop on the route has published times either (a single-stop route, e.g.), the plain fallback message is unchanged -- regression guard for the mock dataset\'s existing Blue-route case', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('nearest stop to Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /BLUE.*SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE/);
+  assert.doesNotMatch(answer, /VIA/);
+});
+
 test('FIND_NEXT_ARRIVAL: no stop named and GPS unavailable asks for a stop name instead of crashing', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   global.TheBusGeolocate = { getCurrentPosition: async () => null };

@@ -235,7 +235,7 @@
       const [next] = nextArrivals(stop.id, routeEntry.routeId, now, 1);
       if (!next) {
         return routeEntry.arrivals.length === 0
-          ? `${routeLabel(routeEntry)} -- SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR IT`
+          ? noPublishedTimeLine(routeEntry, stop.lat, stop.lon, stop.id, now)
           : `${routeLabel(routeEntry)} -- NO MORE SERVICE TODAY`;
       }
       const day = next.isTomorrow ? 'TOMORROW ' : '';
@@ -274,6 +274,59 @@
       if (!best || dist < best.dist) best = { stop, dist };
     }
     return best;
+  }
+
+  /**
+   * When a route serves a stop but the feed has no published times for
+   * it there (the 81%-blank-stop_times gap noted in the README) --
+   * finds the geographically closest OTHER stop on that same route
+   * that DOES have real published times, so a rider gets some real (if
+   * approximate) schedule info instead of nothing. Anchored at the
+   * ORIGINAL stop's own coordinates, not the rider's raw GPS point, so
+   * this works identically whether the query came from GPS or a named
+   * stop/landmark.
+   */
+  function nearestStopWithDataForRoute(routeId, anchorLat, anchorLon, excludeStopId) {
+    const route = dataset.routes[routeId];
+    if (!route || anchorLat == null || anchorLon == null) return null;
+    let best = null;
+    for (const stopId of route.stopIds) {
+      if (stopId === excludeStopId) continue;
+      const candidate = dataset.stops[stopId];
+      if (!candidate || candidate.lat == null || candidate.lon == null) continue;
+      const routeEntry = candidate.routes.find((r) => r.routeId === routeId);
+      if (!routeEntry || routeEntry.arrivals.length === 0) continue;
+      const dist = haversineMiles(anchorLat, anchorLon, candidate.lat, candidate.lon);
+      if (!best || dist < best.dist) best = { stop: candidate, dist };
+    }
+    return best;
+  }
+
+  /**
+   * Formats the "no published times at this stop" fallback line for one
+   * route -- looks up that route's actual next departure at the nearest
+   * OTHER stop that has one (via nearestStopWithDataForRoute, which
+   * already handles the cross-midnight/tomorrow rollover through
+   * nextArrivals), labeled clearly as "VIA <stop>" rather than implying
+   * it's this stop's own time. Falls back to the old plain admission if
+   * no nearby stop on the route has any published data either. Shared
+   * by nextArrivalLines and answerFindNextArrival so "nearest stop to
+   * X" and "when's the next bus at X" give the same fallback for the
+   * same underlying data gap instead of two different behaviors.
+   */
+  function noPublishedTimeLine(routeEntry, anchorLat, anchorLon, excludeStopId, now) {
+    const nearby = nearestStopWithDataForRoute(routeEntry.routeId, anchorLat, anchorLon, excludeStopId);
+    if (nearby) {
+      const [next] = nextArrivals(nearby.stop.id, routeEntry.routeId, now, 1);
+      if (next) {
+        const day = next.isTomorrow ? 'TOMORROW ' : '';
+        const timing = next.minutesUntil > COUNTDOWN_THRESHOLD_MIN
+          ? `${day}AT ${next.clock}`
+          : `${next.minutesUntil} MIN (${day}${next.clock})`;
+        return `${routeLabel(routeEntry)} -- NO PUBLISHED TIME HERE; NEXT DEPARTURE VIA ${nearby.stop.name.toUpperCase()} (${nearby.dist.toFixed(2)} MI AWAY) -- ${timing}`;
+      }
+    }
+    return `${routeLabel(routeEntry)} -- SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR IT`;
   }
 
   async function answerFindNextArrival(parsed, now) {
@@ -328,7 +381,7 @@
       // stop at all (a non-"timepoint" stop in the feed), which is a
       // different situation from "ran today, already finished."
       lines.push(r.arrivals.length === 0
-        ? `${routeLabel(r)} -- SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE FOR IT`
+        ? noPublishedTimeLine(r, stop.lat, stop.lon, stop.id, now)
         : `${routeLabel(r)} -- NO MORE SERVICE TODAY`);
     }
 
