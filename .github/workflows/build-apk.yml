@@ -14,6 +14,13 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    # `if:` conditionals can't reference `secrets` directly (the Actions
+    # API rejects the workflow file outright -- "Unrecognized named-value:
+    # 'secrets'" -- even for a step-level if, and even on an unrelated
+    # trigger like workflow_dispatch), so gate on this job-level env var
+    # instead, which CAN read secrets.
+    env:
+      HAS_RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -121,7 +128,7 @@ jobs:
       #      base64-encoded: `base64 -w0 upload-keystore.jks`),
       #      RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.
       - name: Build signed release bundle (Play Store)
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_RELEASE_KEYSTORE == 'true' }}
         working-directory: frontend
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -156,7 +163,7 @@ jobs:
           rm -f release.keystore
 
       - name: Upload signed release bundle
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_RELEASE_KEYSTORE == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: thebus-hernando-release-aab
