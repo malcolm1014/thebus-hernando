@@ -18,6 +18,65 @@
   const commandLog = [];
   let historyPointer = -1;
 
+  // ---- CRT effects toggle (flicker/scanlines/bloom), independent of
+  // the OS's prefers-reduced-motion -- see storage.js's getEffectsEnabled
+  // for why this exists as its own setting. ----
+  const crtEl = document.getElementById('crt');
+  const fxToggle = document.getElementById('fx-toggle');
+
+  function applyEffectsEnabled(enabled) {
+    crtEl.classList.toggle('effects-off', !enabled);
+    fxToggle.textContent = enabled ? '[ EFFECTS: ON ]' : '[ EFFECTS: OFF ]';
+    fxToggle.setAttribute('aria-pressed', String(enabled));
+  }
+
+  fxToggle.addEventListener('click', async () => {
+    const enabled = !(await TheBusStorage.getEffectsEnabled());
+    await TheBusStorage.setEffectsEnabled(enabled);
+    applyEffectsEnabled(enabled);
+  });
+
+  TheBusStorage.getEffectsEnabled()
+    .then(applyEffectsEnabled)
+    .catch((err) => console.error('effects toggle: failed to read stored preference, leaving effects on', err));
+
+  // ---- Crash reporting -- see backend's /api/crash-report for what
+  // this deliberately does NOT send (query text, location). Best-effort:
+  // never blocks anything, never throws itself, silently gives up if
+  // offline or if the request fails. Deduped by message text and capped
+  // per session so a rapidly-repeating error (e.g. one firing on every
+  // animation frame) can't turn into a flood of outbound requests. ----
+  const reportedMessages = new Set();
+  const MAX_CRASH_REPORTS_PER_SESSION = 20;
+  let crashReportCount = 0;
+
+  function currentScreenLabel() {
+    const tabMapEl = document.getElementById('tab-map');
+    return (tabMapEl && tabMapEl.classList.contains('active')) ? 'map' : 'terminal';
+  }
+
+  function reportCrash(message, stack) {
+    if (!message || reportedMessages.has(message) || crashReportCount >= MAX_CRASH_REPORTS_PER_SESSION) return;
+    if (!navigator.onLine) return;
+    reportedMessages.add(message);
+    crashReportCount += 1;
+    const platform = (window.Capacitor && window.Capacitor.getPlatform) ? window.Capacitor.getPlatform() : 'web';
+    fetch(`${TheBusSync.API_BASE}/api/crash-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: String(message), stack: stack ? String(stack) : undefined, screen: currentScreenLabel(), platform }),
+    }).catch(() => {}); // nothing to do if this fails -- it's diagnostic, not functional
+  }
+
+  window.addEventListener('error', (event) => {
+    reportCrash(event.message, event.error && event.error.stack);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const message = (reason && reason.message) ? reason.message : String(reason);
+    reportCrash(message, reason && reason.stack);
+  });
+
   function scrollToBottom() {
     historyEl.scrollTop = historyEl.scrollHeight;
   }
@@ -33,6 +92,31 @@
 
   function setStatus(msg) {
     bootStatus.textContent = msg;
+  }
+
+  /**
+   * A small rendered map image for the location a location-bearing
+   * answer was just about (see queryEngine.js's getLastLocation()) --
+   * purely additive visual context on top of an already-complete text
+   * answer, never required to understand it. Requires network (the
+   * image itself is proxied server-side, see backend's /api/staticmap);
+   * skipped entirely when offline, and silently removed if the request
+   * fails for any other reason (feature not configured server-side,
+   * upstream hiccup) -- a broken-image icon would look like the app is
+   * malfunctioning, when really it's just an optional extra that isn't
+   * available right now.
+   */
+  function appendMapImage(lat, lon, label) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'entry map-thumb';
+    const img = document.createElement('img');
+    img.alt = `MAP: ${(label || '').toUpperCase()}`;
+    img.loading = 'lazy';
+    img.addEventListener('error', () => wrapper.remove(), { once: true });
+    img.src = `${TheBusSync.API_BASE}/api/staticmap?lat=${lat}&lon=${lon}`;
+    wrapper.appendChild(img);
+    historyEl.appendChild(wrapper);
+    scrollToBottom();
   }
 
   /** Simulates old-terminal processing latency before printing the answer, per spec. `fn` may be async (e.g. a NEAREST STOP query that needs a network geocode lookup). */
@@ -62,6 +146,10 @@
         answer = 'SYSTEM ERROR -- QUERY COULD NOT BE PROCESSED.';
       }
       appendEntry('sys', answer.toUpperCase());
+      if (navigator.onLine) {
+        const loc = TheBusQueryEngine.getLastLocation();
+        if (loc) appendMapImage(loc.lat, loc.lon, loc.label);
+      }
     });
   }
 
@@ -186,17 +274,31 @@
     TheBusLiveMap.invalidateSize();
     if (lastDataset) TheBusLiveMap.drawStaticData(lastDataset);
 
+    // Routes/stops (colored lines + dots) always draw from the offline
+    // dataset regardless of connectivity -- only the street-map
+    // background underneath them and live bus positions actually need a
+    // network. Said outright rather than left for the rider to notice a
+    // plain dark map on their own: the whole point of "works offline" is
+    // that the app is honest about the one part of this view that
+    // genuinely can't be.
     if (!navigator.onLine) {
-      mapStatus.textContent = 'OFFLINE -- LIVE BUS POSITIONS UNAVAILABLE';
+      mapStatus.textContent = 'OFFLINE -- SHOWING ROUTES/STOPS ONLY (NO STREET MAP, NO LIVE BUSES)';
     } else {
       mapStatus.textContent = 'CONNECTING TO LIVE TRACKER...';
       TheBusLiveMap.startPolling(10000, (result) => {
+        // navigator.onLine only means the device has SOME network path,
+        // not that tile.openstreetmap.org specifically is reachable (a
+        // captive wifi portal or a firewall blocking just tile servers
+        // would leave this true while the basemap still never loads) --
+        // isBasemapHealthy() catches that case too, so the message stays
+        // honest either way.
+        const basemapNote = TheBusLiveMap.isBasemapHealthy() ? '' : ' (NO STREET MAP)';
         if (!result.ok) {
-          mapStatus.textContent = 'LIVE TRACKER UNAVAILABLE -- ROUTES/STOPS STILL SHOWN';
+          mapStatus.textContent = `LIVE TRACKER UNAVAILABLE -- ROUTES/STOPS STILL SHOWN${basemapNote}`;
         } else if (result.count === 0) {
-          mapStatus.textContent = 'NO BUSES CURRENTLY RUNNING';
+          mapStatus.textContent = `NO BUSES CURRENTLY RUNNING${basemapNote}`;
         } else {
-          mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE`;
+          mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE${basemapNote}`;
         }
         if (busListOpen) renderBusList(); // keep it live while open, same cadence as the map markers
       });
@@ -258,35 +360,94 @@
     onboardLocation.hidden = false;
   }
 
+  // Past this many days since the last successful server contact (or if
+  // there's never been one at all), the freshness line switches from a
+  // subtle note to an explicit warning color. 30 days is deliberately
+  // generous -- the backend checks the county's feed daily and small-
+  // agency schedules can validly go unchanged for months, so this isn't
+  // about "the schedule is probably wrong," it's about "this app hasn't
+  // been able to confirm anything for a genuinely long time, independent
+  // of whether the data happens to still be accurate."
+  const FRESHNESS_WARN_DAYS = 30;
+  const dataFreshnessEl = document.getElementById('data-freshness');
+
+  function formatFreshness(lastSyncedAt) {
+    if (!lastSyncedAt) {
+      return { text: 'SCHEDULE DATA: NOT YET CONFIRMED WITH SERVER', stale: true };
+    }
+    const ageDays = Math.floor((Date.now() - lastSyncedAt) / 86400000);
+    const when = ageDays <= 0 ? 'TODAY' : ageDays === 1 ? '1 DAY AGO' : `${ageDays} DAYS AGO`;
+    return { text: `SCHEDULE DATA LAST CONFIRMED: ${when}`, stale: ageDays >= FRESHNESS_WARN_DAYS };
+  }
+
+  async function renderFreshness() {
+    const lastSyncedAt = await TheBusStorage.getLastSyncedAt();
+    const { text, stale } = formatFreshness(lastSyncedAt);
+    dataFreshnessEl.textContent = text;
+    dataFreshnessEl.hidden = false;
+    dataFreshnessEl.classList.toggle('freshness-stale', stale);
+  }
+
+  /** Wires a freshly-activated dataset into every part of the app that reads it. */
+  function activateDataset(data) {
+    TheBusQueryEngine.setDataset(data);
+    lastDataset = data;
+    // Covers the case where the rider switched to the map tab before this
+    // ran -- the map would've drawn with no routes/stops yet otherwise.
+    if (mapInitialized && !mapView.hidden) TheBusLiveMap.drawStaticData(lastDataset);
+  }
+
   async function boot() {
     // Not awaited -- shouldn't block the terminal loading underneath it --
     // but still must never fail silently (see maybeShowOnboarding's own
     // internal try/catch for why this matters).
     maybeShowOnboarding().catch((err) => console.error('onboarding: unexpected failure', err));
-    setStatus('INITIALIZING OFFLINE DATASET...');
+    setStatus('LOADING...');
 
-    const { data, status } = await TheBusSync.syncData(setStatus);
+    // STEP 1 -- instant, no network: whatever's on disk from a prior
+    // sync, or (first-ever launch) the real schedule data bundled inside
+    // the app itself. This is what makes a fresh install answer real
+    // questions immediately instead of waiting on a possibly-sleeping
+    // backend, or showing nothing at all with no connection.
+    const { data: initialData, source } = await TheBusSync.getInitialData();
 
-    if (!data) {
+    if (initialData) {
+      activateDataset(initialData);
+      TheBusSearchIndex.ensureLoaded();
+      bootStatus.classList.add('ready');
+      setStatus(source === 'bundled' ? 'READY (BUILT-IN SCHEDULE DATA)' : 'READY (OFFLINE CACHE)');
+      renderFreshness();
+      appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+      // Don't pop the keyboard open behind an onboarding modal that's
+      // still up -- this can finish before the rider has answered it.
+      if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
+    } else {
+      // Only reachable if even the bundled snapshot is missing/corrupt --
+      // shouldn't happen for a correctly-built release, but still needs
+      // a real message rather than a silent blank screen.
       setStatus('NO DATA AVAILABLE -- CONNECT TO NETWORK AND RESTART');
       appendEntry('err', 'UNABLE TO LOAD TRANSIT DATA. THIS APP REQUIRES AT LEAST ONE ONLINE SYNC BEFORE IT CAN WORK OFFLINE.');
-      return;
     }
 
-    TheBusQueryEngine.setDataset(data);
-    TheBusSearchIndex.ensureLoaded();
-    lastDataset = data;
-    // Covers the case where the user switched to the map tab before the
-    // initial sync finished -- the map would've drawn with no routes/
-    // stops yet since lastDataset was still null at that point.
-    if (mapInitialized && !mapView.hidden) TheBusLiveMap.drawStaticData(lastDataset);
-    bootStatus.classList.add('ready');
-    setStatus(status === 'synced' ? 'DATASET SYNCED -- READY' : 'READY (OFFLINE CACHE)');
-
-    appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
-    // Don't pop the keyboard open behind an onboarding modal that's
-    // still up -- data sync can finish before the rider has answered it.
-    if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
+    // STEP 2 -- background: quietly check for anything newer than what's
+    // already on screen. Never blocks, never touches the status line
+    // unless it actually finds something to swap in, so it can't make an
+    // already-working app look broken or stuck mid-use.
+    const { data: freshData, updated } = await TheBusSync.checkForUpdate();
+    if (updated && freshData) {
+      TheBusSearchIndex.ensureLoaded();
+      activateDataset(freshData);
+      bootStatus.classList.add('ready');
+      setStatus('DATASET SYNCED -- READY');
+      if (!initialData) {
+        appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+      }
+    }
+    // Re-render regardless of whether anything NEW came down -- a check
+    // that confirms "you're already current" still moves the "last
+    // confirmed" timestamp forward, so the freshness line should reflect
+    // that too, not just an actual data change.
+    renderFreshness();
   }
 
   boot();

@@ -18,6 +18,20 @@
   let currentDataset = null;
   const busMarkersById = new Map();
 
+  // Whether the OSM basemap tiles are actually rendering right now --
+  // separate from navigator.onLine, which only says the DEVICE has a
+  // network path, not that THIS specific host is reachable (a captive
+  // wifi portal, a corporate firewall blocking just tile servers, etc.
+  // would leave navigator.onLine true while every tile request still
+  // fails). Optimistic by default; a real tile error flips it false, a
+  // later full successful batch load flips it back -- so a transient
+  // single-tile hiccup during normal panning doesn't get treated the
+  // same as the basemap being genuinely unreachable.
+  let basemapHealthy = true;
+  function isBasemapHealthy() {
+    return basemapHealthy;
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -42,7 +56,10 @@
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
-    }).addTo(map);
+    })
+      .on('tileerror', () => { basemapHealthy = false; })
+      .on('load', () => { basemapHealthy = true; }) // a full batch finishing means tiles ARE reaching this device again
+      .addTo(map);
 
     routeLayerGroup = L.layerGroup().addTo(map);
     stopLayerGroup = L.layerGroup().addTo(map);
@@ -251,5 +268,5 @@
     });
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries };
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy };
 })(window);

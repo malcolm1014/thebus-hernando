@@ -4,6 +4,7 @@
   "description": "Offline-first 90s-terminal transit assistant for Hernando County, FL. Vanilla JS/HTML/CSS bundled into a native Android shell via Capacitor.",
   "scripts": {
     "test": "node --test test/",
+    "refresh:snapshot": "node scripts/refresh-snapshot.js",
     "sync": "cap sync android",
     "open:android": "cap open android",
     "add:android": "cap add android",

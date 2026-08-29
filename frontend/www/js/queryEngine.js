@@ -9,6 +9,22 @@
   let dataset = null;
   let index = null; // { routes: [{id, shortName, longName}], stops: [{id, name}] }
 
+  // Side channel, not part of answerQuery()'s return value: which real-
+  // world point (if any) the MOST RECENT answer was actually about, so
+  // app.js can optionally show a small static map image alongside the
+  // text without answerQuery() itself having to change its return type
+  // (a plain string) -- every existing caller and test already depends
+  // on that shape. Reset at the top of every answerQuery() call so a
+  // location-less answer (e.g. "list stops on route 10") never leaves a
+  // stale previous location attached to it.
+  let lastLocation = null;
+  function setLastLocation(lat, lon, label) {
+    lastLocation = (lat != null && lon != null) ? { lat, lon, label } : null;
+  }
+  function getLastLocation() {
+    return lastLocation;
+  }
+
   function setDataset(data) {
     dataset = data;
     // Each stop's own name is always a candidate; its `aliases` (informal
@@ -329,6 +345,7 @@
     }
     if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
     const stop = dataset.stops[parsed.stop.id];
+    setLastLocation(stop.lat, stop.lon, stop.name);
     const routeList = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
     const coords = (stop.lat != null && stop.lon != null)
       ? `${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`
@@ -383,6 +400,7 @@
 
   function knownStopAnswer(landmarkLabel, stop, now) {
     const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    setLastLocation(stop.lat, stop.lon, stop.name);
     return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(stop, now)}`;
   }
 
@@ -390,6 +408,7 @@
     const best = nearestStopToPoint(lat, lon);
     if (!best) return 'NO STOPS ON FILE.';
     const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    setLastLocation(best.stop.lat, best.stop.lon, best.stop.name);
     return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(best.stop, now)}`;
   }
 
@@ -427,10 +446,16 @@
     if (!isSelf) {
       const alias = TheBusSearchIndex.lookupAlias('landmark', normalizedLandmark);
       if (alias) {
-        if (alias.kind === 'stop') return knownStopAnswer(parsed.landmark, dataset.stops[alias.id], now);
+        if (alias.kind === 'stop') {
+          console.log('[thebus:tier] TIER 3 (LANGUAGE) -> stop', { query: normalizedLandmark, resolvedTo: alias.id });
+          return knownStopAnswer(parsed.landmark, dataset.stops[alias.id], now);
+        }
         if (alias.kind === 'place') {
           const place = TheBusSearchIndex.getPlaceById(alias.id);
-          if (place) return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
+          if (place) {
+            console.log('[thebus:tier] TIER 3 (LANGUAGE) -> place', { query: normalizedLandmark, resolvedTo: alias.id });
+            return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
+          }
         }
       }
     }
@@ -439,14 +464,17 @@
     if (directMatch && directMatch.alternatives.length === 0) {
       const stop = dataset.stops[directMatch.id];
       TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'stop', id: directMatch.id, name: stop.name });
+      console.log('[thebus:tier] TIER 1 (GTFS)', { query: normalizedLandmark, resolvedTo: directMatch.id });
       return knownStopAnswer(parsed.landmark, stop, now);
     }
 
     if (isSelf) {
       const pos = await TheBusGeolocate.getCurrentPosition();
       if (!pos) {
+        console.log('[thebus:tier] GPS -> unavailable', { query: normalizedLandmark });
         return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
       }
+      console.log('[thebus:tier] GPS', { query: normalizedLandmark, lat: pos.lat, lon: pos.lon });
       return nearestToPointAnswer('you', pos.lat, pos.lon, now);
     }
 
@@ -454,10 +482,12 @@
     if (placeMatch && placeMatch.alternatives.length === 0) {
       const place = TheBusSearchIndex.getPlaceById(placeMatch.id);
       TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: place.id, name: place.name });
+      console.log('[thebus:tier] TIER 2 (PLACES)', { query: normalizedLandmark, resolvedTo: place.id });
       return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
     }
 
     if (!navigator.onLine) {
+      console.log('[thebus:tier] NETWORK -> skipped, offline', { query: normalizedLandmark });
       return `LOOKING UP "${parsed.landmark.toUpperCase()}" NEEDS A NETWORK CONNECTION. TRY AGAIN WHEN ONLINE.`;
     }
 
@@ -469,9 +499,11 @@
       return `COULDN'T LOOK UP "${parsed.landmark.toUpperCase()}" RIGHT NOW. TRY AGAIN IN A MOMENT.`;
     }
     if (!place) {
+      console.log('[thebus:tier] NETWORK -> not found', { query: normalizedLandmark });
       return `COULDN'T FIND "${parsed.landmark.toUpperCase()}" NEAR HERNANDO COUNTY. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.`;
     }
 
+    console.log('[thebus:tier] NETWORK (geocoded, folded into tiers 2/3 for next time)', { query: normalizedLandmark, lat: place.lat, lon: place.lon });
     const placeId = TheBusSearchIndex.recordPlace({ name: parsed.landmark, lat: place.lat, lon: place.lon });
     TheBusSearchIndex.recordAlias('landmark', normalizedLandmark, { kind: 'place', id: placeId, name: parsed.landmark });
     return nearestToPointAnswer(parsed.landmark, place.lat, place.lon, now);
@@ -499,6 +531,7 @@
    * @param {Date} now - device clock (caller-supplied so this stays pure/testable)
    */
   async function answerQuery(text, now) {
+    setLastLocation(null, null, null);
     if (!dataset) return 'DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.';
     const parsed = TheBusIntentParser.parseQuery(text, index);
 
@@ -513,5 +546,5 @@
     }
   }
 
-  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive };
+  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive, getLastLocation };
 })(window);

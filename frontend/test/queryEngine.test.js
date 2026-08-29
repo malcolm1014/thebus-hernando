@@ -38,6 +38,46 @@ test('FIND_NEXT_ARRIVAL: no service on a day the service does not run', async ()
   assert.match(answer, /TOMORROW/);
 });
 
+// calendar_dates.txt exceptions -- distinct from the weekly-pattern test
+// above, which never touches addedDates/removedDates at all. A real
+// GTFS feed can override the weekly pattern in EITHER direction for a
+// specific date (a holiday cancellation, or extra service added for an
+// event); isServiceActiveForClock (queryEngine.js) checks both before
+// ever consulting the weekday flags, and both directions need their own
+// test -- "the weekly pattern says no" and "an exception says no even
+// though the weekly pattern says yes" are different code paths that
+// could each be broken independently.
+test('FIND_NEXT_ARRIVAL: a calendar_dates.txt exception REMOVES service on a day the weekly pattern alone says should run (e.g. a holiday closure)', async () => {
+  const dataset = buildMockDataset();
+  // TUESDAY_9AM_ET's agency-local date -- WEEKDAY normally runs Tuesdays,
+  // this exception cancels specifically THIS Tuesday.
+  dataset.services.WEEKDAY.removedDates = ['20260825'];
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_9AM_ET);
+  // Every one of today's otherwise-scheduled R1 arrivals must roll to
+  // tomorrow, exactly like the weekly-pattern-off case above -- proving
+  // the exception, not just the weekday flag, is what's being honored.
+  assert.match(answer, /TOMORROW/);
+});
+
+test('FIND_NEXT_ARRIVAL: a calendar_dates.txt exception ADDS service on a day the weekly pattern alone says should NOT run (e.g. a special-event shuttle)', async () => {
+  const dataset = buildMockDataset();
+  // A service that never runs on any weekday by its regular pattern --
+  // only this one calendar_dates-added date brings it to life.
+  dataset.services.SPECIAL = {
+    monday: false, tuesday: false, wednesday: false, thursday: false,
+    friday: false, saturday: false, sunday: false,
+    startDate: null, endDate: null,
+    addedDates: ['20260825'], removedDates: [],
+  };
+  dataset.stops.S1.routes[0].arrivals.push(
+    { tripId: 'T4', serviceId: 'SPECIAL', headsign: 'Special Event Shuttle', minutes: 10 * 60 }
+  );
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /SPECIAL EVENT SHUTTLE/);
+});
+
 test('FIND_NEXT_ARRIVAL: ambiguous stop match asks for clarification instead of silently guessing', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   const answer = await TheBusQueryEngine.answerQuery('when is the next bus at spring hill dr', TUESDAY_9AM_ET);
@@ -58,6 +98,26 @@ test('FIND_STOP_LOCATION: returns coordinates and served routes', async () => {
   const answer = await TheBusQueryEngine.answerQuery('where is Avalon Publix', TUESDAY_9AM_ET);
   assert.match(answer, /STOP: AVALON PUBLIX/);
   assert.match(answer, /28\.50000, -82\.60000/);
+});
+
+// getLastLocation() is a side channel, not part of answerQuery()'s own
+// return value -- app.js reads it right after awaiting answerQuery() to
+// optionally show a small static map image alongside a location-bearing
+// answer, without changing answerQuery()'s plain-string contract every
+// other test above already depends on.
+test('getLastLocation: a stop-location answer exposes that stop\'s coordinates for the caller to optionally show a map', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  await TheBusQueryEngine.answerQuery('where is Avalon Publix', TUESDAY_9AM_ET);
+  assert.deepEqual(TheBusQueryEngine.getLastLocation(), { lat: 28.50, lon: -82.60, label: 'Avalon Publix' });
+});
+
+test('getLastLocation: a query with no specific location (e.g. listing a route\'s stops) clears it, not leaving a stale previous location attached', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  await TheBusQueryEngine.answerQuery('where is Avalon Publix', TUESDAY_9AM_ET);
+  assert.notEqual(TheBusQueryEngine.getLastLocation(), null);
+
+  await TheBusQueryEngine.answerQuery('list stops on route 1', TUESDAY_9AM_ET);
+  assert.equal(TheBusQueryEngine.getLastLocation(), null);
 });
 
 test('LIST_ROUTE_STOPS: lists every stop on a route in order', async () => {
@@ -90,6 +150,10 @@ test('FIND_NEAREST_STOP: resolves a geocoded place to the actual closest stop by
     const answer = await TheBusQueryEngine.answerQuery('nearest stop to the test landmark', TUESDAY_9AM_ET);
     assert.match(answer, /NEAREST STOP TO THE TEST LANDMARK/);
     assert.match(answer, /AVALON PUBLIX/);
+    // getLastLocation() must expose the resolved STOP's coordinates (for
+    // a map centered on where the bus actually is), not the landmark's
+    // raw geocoded point -- those can differ by a real distance.
+    assert.deepEqual(TheBusQueryEngine.getLastLocation(), { lat: 28.50, lon: -82.60, label: 'Avalon Publix' });
   } finally {
     delete global.TheBusGeocode;
   }

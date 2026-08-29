@@ -22,6 +22,21 @@
 
 * { box-sizing: border-box; }
 
+/* Visually hidden but still reachable by screen readers -- for a real
+   programmatic label where the visible design doesn't want (or need)
+   visible label text of its own. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -44,8 +59,9 @@ body {
   background: var(--bg);
 }
 
-/* Subtle scanline + vignette overlay, pure CSS, no images */
-#crt::before {
+/* Subtle scanline + vignette overlay, pure CSS, no images. Both skipped
+   entirely once #fx-toggle turns effects off (see .effects-off below). */
+#crt:not(.effects-off)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -61,7 +77,7 @@ body {
   z-index: 2;
 }
 
-#crt::after {
+#crt:not(.effects-off)::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -71,9 +87,14 @@ body {
 }
 
 /* Subtle brightness-modulation flicker, like a real CRT's beam never
-   being perfectly steady. Off entirely for motion-sensitive viewers. */
+   being perfectly steady. Off for motion-sensitive viewers via the OS's
+   own prefers-reduced-motion setting -- necessary but not sufficient
+   (a rider may want it off without knowing that's a system setting, or
+   without wanting to change it system-wide just for this one app), so
+   #fx-toggle in app.js also gates it directly via .effects-off, applied
+   or removed regardless of the OS preference. */
 @media (prefers-reduced-motion: no-preference) {
-  #crt { animation: crt-flicker 6s infinite; }
+  #crt:not(.effects-off) { animation: crt-flicker 6s infinite; }
 }
 
 @keyframes crt-flicker {
@@ -93,9 +114,13 @@ body {
   padding: 16px;
   /* Layered blur radii approximate a phosphor bloom without duplicating
      DOM content for a real blurred-copy layer (not worth the extra
-     paint cost on a phone for this effect). */
+     paint cost on a phone for this effect). Also gated off by
+     #fx-toggle -- bloom softens text edges, which some low-vision
+     riders will want off even though it's not technically "motion." */
   text-shadow: 0 0 1px var(--fg), 0 0 2px var(--fg), 0 0 6px var(--fg-dim), 0 0 12px var(--fg-dim);
 }
+
+#crt.effects-off #screen { text-shadow: none; }
 
 #boot-banner {
   flex: 0 0 auto;
@@ -107,6 +132,25 @@ body {
 }
 
 #boot-status.ready { color: var(--fg-bright); }
+
+#fx-toggle {
+  display: inline-block;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 18px;
+  padding: 8px 4px; /* text runs small here, so padding (not font-size) gets this to a real touch target */
+  min-height: 44px;
+  cursor: pointer;
+}
+
+/* How long since this device last actually confirmed with the server --
+   subtle (dim, same as the rest of the boot banner) when recent, an
+   explicit warning color once it's been long enough that the rider
+   should know we genuinely don't know if anything's changed. */
+#data-freshness { font-size: 20px; }
+#data-freshness.freshness-stale { color: #ff4444; text-shadow: 0 0 4px #ff4444; }
 
 #view-tabs {
   flex: 0 0 auto;
@@ -121,7 +165,11 @@ body {
   color: var(--fg-dim);
   font-family: inherit;
   font-size: 22px;
-  padding: 0;
+  /* Text glyphs alone run well under the 48dp touch-target guideline at
+     this font size -- padding (not a font-size bump, which would throw
+     off the visual rhythm of the tab row) gets real tappable height. */
+  padding: 12px 4px;
+  min-height: 44px;
   cursor: pointer;
 }
 
@@ -146,6 +194,18 @@ body {
 }
 
 #history .entry { margin-bottom: 10px; }
+
+/* A small static map image attached below a location-bearing answer
+   (see app.js's appendMapImage). Same tinting the live map view applies
+   to its OSM tiles, so a full-color map doesn't clash against an
+   otherwise strictly green-on-black screen. */
+.map-thumb { text-shadow: none; }
+.map-thumb img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--fg-dim);
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
 #history .you::before { content: "> "; color: var(--fg-dim); }
 #history .you { color: var(--fg-bright); }
 #history .sys { color: var(--fg); }
@@ -223,6 +283,9 @@ body {
   font-family: inherit;
   font-size: 18px;
   padding: 4px 8px;
+  min-height: 44px; /* text alone runs well under a real touch target at this font size */
+  display: flex;
+  align-items: center;
   border: 1px solid var(--fg-dim);
   cursor: pointer;
 }
@@ -307,7 +370,7 @@ body {
   border-bottom: 1px solid var(--fg-dim);
   padding-bottom: 8px;
   margin-bottom: 12px;
-  padding-right: 32px; /* keeps the title clear of .modal-close */
+  padding-right: 44px; /* keeps the title clear of .modal-close (now 44px, was 34px) */
 }
 
 .modal-body {
@@ -345,8 +408,8 @@ body {
   font-family: inherit;
   font-size: 22px;
   line-height: 1;
-  width: 34px;
-  height: 34px;
+  width: 44px; /* was 34px -- under the ~48dp touch-target guideline */
+  height: 44px;
   cursor: pointer;
 }
 

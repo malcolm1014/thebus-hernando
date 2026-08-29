@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<!-- No maximum-scale/user-scalable=no here on purpose -- that blocks
+     pinch-to-zoom entirely, which fails WCAG 1.4.4 (Resize Text) and is
+     a real problem for any low-vision rider trying to read the small
+     answer text or bus-list panel. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TheBus // Hernando County Transit</title>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="css/terminal.css" />
@@ -13,7 +17,15 @@
       <div id="boot-banner">
         THEBUS TRANSIT TERMINAL v1.0<br/>
         HERNANDO COUNTY PUBLIC TRANSPORTATION<br/>
-        <span id="boot-status">INITIALIZING OFFLINE DATASET...</span>
+        <span id="boot-status">INITIALIZING OFFLINE DATASET...</span><br/>
+        <span id="data-freshness" hidden></span>
+        <!-- Independent of the OS's prefers-reduced-motion setting --
+             a rider may find the flicker/glow uncomfortable (or just
+             distracting) without knowing that's a system setting they
+             could change, or without wanting to change it system-wide
+             just for this one app. Persisted via TheBusStorage; the
+             terminal look itself is never removed, only optional. -->
+        <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
       </div>
 
       <div id="view-tabs" role="tablist">
@@ -25,7 +37,7 @@
         <div id="history" aria-live="polite"></div>
 
         <div id="input-line">
-          <span class="prompt">&gt;</span>
+          <span class="prompt" aria-hidden="true">&gt;</span>
           <!-- The real, visible input -- styled to look like terminal text
                (transparent background, matching font/color) rather than
                mirrored into a separate fake element. A prior version tried
@@ -33,7 +45,11 @@
                fake span, which broke Android keyboards' own cursor/
                composition tracking (confirmed on-device: reversed text
                entry, broken backspace). Letting the OS keyboard manage a
-               real, visible input directly avoids fighting it. -->
+               real, visible input directly avoids fighting it.
+               The "&gt;" prompt beside it is decorative (aria-hidden) --
+               a screen reader needs an actual programmatic label, which
+               a plain adjacent glyph never provides on its own. -->
+          <label for="command-input" class="sr-only">Type your question, e.g. when is the next bus at a stop</label>
           <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
                  autocorrect="off" spellcheck="false" inputmode="text" />
         </div>
