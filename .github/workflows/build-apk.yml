@@ -42,6 +42,15 @@ jobs:
       - name: Generate native Android project
         run: npx cap add android
 
+      - name: Add required Android permissions (@capacitor/geolocation)
+        # @capacitor/geolocation's own AAR manifest is deliberately empty
+        # -- per its README, the CONSUMING app must add these permission
+        # lines itself. Nothing else in this pipeline does that, and
+        # `cap add android` regenerates a fresh manifest from Capacitor's
+        # stock template every run, so this has to be re-applied every
+        # build, same reasoning as the signing-config step below.
+        run: node scripts/patch-android-manifest.js
+
       - name: Generate icon/splash assets
         run: npx capacitor-assets generate --android
 

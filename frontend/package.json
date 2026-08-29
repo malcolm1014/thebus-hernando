@@ -7,7 +7,8 @@
     "refresh:snapshot": "node scripts/refresh-snapshot.js",
     "sync": "cap sync android",
     "open:android": "cap open android",
-    "add:android": "cap add android",
+    "add:android": "cap add android && npm run fix:android-manifest",
+    "fix:android-manifest": "node scripts/patch-android-manifest.js",
     "gen:assets": "capacitor-assets generate --android"
   },
   "dependencies": {
