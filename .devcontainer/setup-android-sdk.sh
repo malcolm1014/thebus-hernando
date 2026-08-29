@@ -8,11 +8,18 @@
 set -euo pipefail
 
 SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/android-sdk}"
-CMDLINE_TOOLS_VERSION="11076708" # https://developer.android.com/studio#command-line-tools-only -- re-check if this 404s, Google doesn't keep a stable "latest" URL
+# https://developer.android.com/studio#command-line-tools-only -- Google
+# doesn't keep a stable "latest" URL, so this WILL go stale; if it 404s,
+# get the current version+base-path pair from the authoritative manifest:
+#   curl -sSL https://dl.google.com/android/repository/repository2-3.xml \
+#     | grep -o 'commandlinetools-linux-[0-9]*_latest.zip' | sort -u | tail -1
+# (note the base path is /android/repository/, NOT /android/repo/ -- the
+# devsite download page and some docs link the wrong one)
+CMDLINE_TOOLS_VERSION="16111833"
 
 mkdir -p "$SDK_ROOT/cmdline-tools"
 cd /tmp
-curl -sSL -o cmdline-tools.zip "https://dl.google.com/android/repo/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+curl -fsSL -o cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
 unzip -q cmdline-tools.zip
 # The zip's own top-level folder is named "cmdline-tools" -- sdkmanager
 # expects it nested one level deeper, at cmdline-tools/latest/, or every
