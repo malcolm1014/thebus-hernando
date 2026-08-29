@@ -12,6 +12,17 @@
  * least 1.1s apart regardless of how many concurrent app users trigger
  * a cache-miss lookup at once. Aggressive caching (landmarks don't move)
  * keeps most real usage from ever reaching Nominatim a second time.
+ *
+ * The cache is in-memory only, not written to disk. On Render's free
+ * tier the whole container (including anything on disk) is torn down
+ * and rebuilt on every sleep/wake cycle, not just the process -- so
+ * file-based persistence here would survive individual restarts but not
+ * the idle-sleep cycle this backend actually goes through most often,
+ * making it not worth the added complexity. It still meaningfully
+ * reduces Nominatim traffic during any stretch the instance stays warm
+ * (a burst of nearby queries, or while an external pinger is keeping it
+ * awake). Revisit if this ever moves to a paid Render tier with a real
+ * persistent disk or "always on" instance.
  */
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
@@ -22,7 +33,23 @@ const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const VIEWBOX = '-82.75,28.65,-82.35,28.25';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Without a cap, a stream of distinct junk queries (abuse, or just an
+// unlucky number of genuinely different real lookups over a long warm
+// stretch) would grow this Map forever -- entries only ever got
+// re-examined when the SAME key was queried again, never proactively.
+// A few hundred landmarks/businesses comfortably covers a single small
+// county; oldest-inserted entries are evicted first once over the cap
+// (see `cache.keys().next()` below -- Map preserves insertion order).
+const CACHE_MAX_ENTRIES = 500;
 const cache = new Map(); // normalized query -> { data, expiresAt }
+
+/** Inserts into `map`, evicting the oldest entry first if already at `maxEntries` -- pulled out on its own so the eviction behavior is directly testable without going through the real 1.1s-per-request Nominatim throttle below. */
+function cacheSet(map, maxEntries, key, value) {
+  if (map.size >= maxEntries && !map.has(key)) {
+    map.delete(map.keys().next().value); // oldest-inserted entry (Map preserves insertion order)
+  }
+  map.set(key, value);
+}
 
 let requestQueue = Promise.resolve();
 let lastRequestAt = 0;
@@ -63,8 +90,8 @@ async function geocode(query) {
     ? { lat: Number(results[0].lat), lon: Number(results[0].lon), displayName: results[0].display_name }
     : null;
 
-  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  cacheSet(cache, CACHE_MAX_ENTRIES, key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
   return data;
 }
 
-module.exports = { geocode };
+module.exports = { geocode, cacheSet, CACHE_MAX_ENTRIES };

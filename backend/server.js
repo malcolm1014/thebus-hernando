@@ -6,9 +6,29 @@ const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
 const { geocode } = require('./src/geocode');
+const { fetchStaticMap } = require('./src/staticmap');
+const { createRateLimiter } = require('./src/rateLimit');
 
 const app = express();
+// Render sits its own reverse proxy in front of every service -- without
+// this, req.ip is always the proxy's address, not the real client's, and
+// the rate limiter below would lump every single visitor into one shared
+// bucket instead of limiting each of them individually.
+app.set('trust proxy', 1);
 app.use(cors());
+
+const geocodeRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
+const staticmapRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
+// Generous relative to real usage (a device checks /api/version once per
+// app open, and only pulls /api/download when that check finds a newer
+// version -- both far under these limits for any real rider, including
+// several devices sharing one NAT'd IP) -- these exist to cap outright
+// abuse of an unauthenticated public endpoint, not to constrain normal
+// use. /api/download's payload is the largest thing this backend serves
+// (the full dataset), hence the tighter number.
+const versionRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
+const downloadRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
+const crashReportRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 10 });
 
 let etlRunning = false;
 
@@ -23,7 +43,7 @@ async function ensureInitialData() {
  * Returns just the dataset's content hash + generation timestamp, so the
  * client can cheaply decide whether it needs to re-download.
  */
-app.get('/api/version', (req, res) => {
+app.get('/api/version', versionRateLimit, (req, res) => {
   if (!fs.existsSync(config.outputPath)) {
     return res.status(503).json({ error: 'dataset not generated yet' });
   }
@@ -36,7 +56,7 @@ app.get('/api/version', (req, res) => {
  * Serves the full flattened dataset. This is the only endpoint that ships
  * the actual transit data -- the backend never interprets rider queries.
  */
-app.get('/api/download', (req, res) => {
+app.get('/api/download', downloadRateLimit, (req, res) => {
   if (!fs.existsSync(config.outputPath)) {
     return res.status(503).json({ error: 'dataset not generated yet' });
   }
@@ -99,7 +119,7 @@ app.get('/api/live-buses', async (req, res) => {
  * for why this is proxied (User-Agent + rate-limit policy compliance,
  * shared caching) rather than called directly from the app.
  */
-app.get('/api/geocode', async (req, res) => {
+app.get('/api/geocode', geocodeRateLimit, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) {
     return res.status(400).json({ error: 'missing required query parameter: q' });
@@ -111,6 +131,66 @@ app.get('/api/geocode', async (req, res) => {
     console.error('[server] geocode failed:', err);
     res.status(502).json({ error: 'geocoding unavailable', message: err.message });
   }
+});
+
+/**
+ * GET /api/staticmap?lat=<n>&lon=<n>
+ * Proxies a small rendered map image for one stop/landmark location from
+ * Geoapify's Static Maps API (see src/staticmap.js). Purely a visual
+ * nice-to-have on top of an already-complete text answer -- a 404 here
+ * (feature not configured) or a 502 (upstream failure) both just mean
+ * the client shows text-only, same as always.
+ */
+app.get('/api/staticmap', staticmapRateLimit, async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'missing or invalid required query parameters: lat, lon' });
+  }
+  try {
+    const image = await fetchStaticMap(lat, lon);
+    if (!image) {
+      return res.status(404).json({ error: 'static map not configured' });
+    }
+    res.setHeader('Content-Type', image.contentType);
+    res.send(image.buffer);
+  } catch (err) {
+    console.error('[server] static map fetch failed:', err);
+    res.status(502).json({ error: 'static map unavailable', message: err.message });
+  }
+});
+
+/**
+ * POST /api/crash-report
+ * A minimal, self-hosted alternative to a third-party crash-reporting
+ * SaaS (Sentry, Crashlytics, etc.) -- deliberately not one of those,
+ * since wiring one in means creating a vendor account and committing an
+ * API key/DSN, a decision worth making deliberately rather than as a
+ * side effect of an audit fix. This just logs to stdout, which Render
+ * already captures and makes visible in the service's own log viewer --
+ * enough to know something broke and see the stack trace, without a new
+ * account, a new dependency, or another place this app's data flows to.
+ * Upgrading to a real dashboard/alerting service later is a config
+ * change, not a rewrite -- this endpoint could proxy to one instead.
+ *
+ * Deliberately narrow: message + stack + a coarse screen label + the
+ * platform string. Never the rider's query text or location -- this app
+ * promises those never leave the device (see PRIVACY_POLICY.md), and a
+ * crash report is not an exception to that.
+ */
+app.post('/api/crash-report', express.json({ limit: '10kb' }), crashReportRateLimit, (req, res) => {
+  const body = req.body || {};
+  if (typeof body.message !== 'string' || !body.message) {
+    return res.status(400).json({ error: 'missing required field: message' });
+  }
+  console.error('[crash-report]', JSON.stringify({
+    message: body.message.slice(0, 2000),
+    stack: typeof body.stack === 'string' ? body.stack.slice(0, 4000) : undefined,
+    screen: typeof body.screen === 'string' ? body.screen.slice(0, 100) : undefined,
+    platform: typeof body.platform === 'string' ? body.platform.slice(0, 50) : undefined,
+    at: new Date().toISOString(),
+  }));
+  res.status(204).end();
 });
 
 app.get('/healthz', (req, res) => res.send('ok'));
