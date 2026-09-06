@@ -1,7 +1,7 @@
 {
   "name": "thebus-hernando",
   "version": "1.0.0",
-  "description": "Offline-first 90s-terminal transit assistant for Hernando County, FL. Vanilla JS/HTML/CSS bundled into a native Android shell via Capacitor.",
+  "description": "TriBus: offline-first 90s-terminal regional transit assistant covering Hernando, Pasco, and Tampa (HART) -- Citrus County pending. Vanilla JS/HTML/CSS bundled into a native Android shell via Capacitor.",
   "scripts": {
     "test": "node --test test/",
     "refresh:snapshot": "node scripts/refresh-snapshot.js",

@@ -389,7 +389,13 @@
   }
 
   /** Wires a freshly-activated dataset into every part of the app that reads it. */
-  function activateDataset(data) {
+  function activateDataset(rawData) {
+    // Single funnel point for every dataset source (on-device cache,
+    // bundled first-launch snapshot, or a fresh download) -- expanding
+    // the backend's compact wire format (see sync.js's expandDataset)
+    // exactly once, here, means queryEngine.js/liveMap.js never need to
+    // know the on-disk/on-the-wire shape differs from what they expect.
+    const data = TheBusSync.expandDataset(rawData);
     TheBusQueryEngine.setDataset(data);
     lastDataset = data;
     // Covers the case where the rider switched to the map tab before this

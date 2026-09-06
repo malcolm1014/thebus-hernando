@@ -89,7 +89,23 @@ function simplifyShapePoints(latLonPoints, toleranceMeters) {
  *   }
  * }
  */
-function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies, shapes }) {
+/**
+ * `agencyMeta` (optional): `{ id, label }` -- when provided, every
+ * GTFS id this function produces or references (route/stop/service/trip)
+ * is namespaced `${id}:${rawId}`, and each stop/route is tagged with
+ * `agencyId`/`agencyLabel`. This is what makes it safe to merge several
+ * agencies' otherwise-independent GTFS feeds into one dataset (see
+ * `mergeAgencyData` below) without their raw ids colliding -- two
+ * different counties' feeds both using "R1"/"WEEKDAY" as ids is
+ * expected, not a coincidence to guard against.
+ *
+ * Omitted (the default): every id passes through unchanged and no
+ * agency tag is added -- this is the exact, unmodified single-feed
+ * behavior this function always had, so every existing single-agency
+ * caller/test needs no changes at all.
+ */
+function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies, shapes }, agencyMeta = null) {
+  const ns = agencyMeta ? (id) => `${agencyMeta.id}:${id}` : (id) => id;
   const agencyTimezone = (agency[0] && agency[0].agency_timezone) || 'America/New_York';
 
   if (frequencies && frequencies.length > 0) {
@@ -107,7 +123,7 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
   // --- services: which days of the week / date exceptions each service_id runs ---
   const services = {};
   for (const c of calendar) {
-    services[c.service_id] = {
+    services[ns(c.service_id)] = {
       monday: c.monday === '1',
       tuesday: c.tuesday === '1',
       wednesday: c.wednesday === '1',
@@ -122,16 +138,17 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     };
   }
   for (const cd of calendarDates) {
-    if (!services[cd.service_id]) {
+    const key = ns(cd.service_id);
+    if (!services[key]) {
       // service defined only via exceptions (no calendar.txt row) -- start empty
-      services[cd.service_id] = {
+      services[key] = {
         monday: false, tuesday: false, wednesday: false, thursday: false,
         friday: false, saturday: false, sunday: false,
         startDate: null, endDate: null, addedDates: [], removedDates: [],
       };
     }
-    if (cd.exception_type === '1') services[cd.service_id].addedDates.push(cd.date);
-    else if (cd.exception_type === '2') services[cd.service_id].removedDates.push(cd.date);
+    if (cd.exception_type === '1') services[key].addedDates.push(cd.date);
+    else if (cd.exception_type === '2') services[key].removedDates.push(cd.date);
   }
 
   // --- shapes: shape_id -> [[lat, lon], ...] polyline (simplified), for drawing routes on the map view ---
@@ -152,23 +169,24 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
   // --- routes lookup ---
   const routeById = {};
   for (const r of routes) {
-    routeById[r.route_id] = {
-      id: r.route_id,
+    routeById[ns(r.route_id)] = {
+      id: ns(r.route_id),
       shortName: r.route_short_name || '',
       longName: r.route_long_name || '',
       color: r.route_color ? `#${r.route_color}` : null,
       textColor: r.route_text_color ? `#${r.route_text_color}` : null,
       stopIds: [], // filled below, first-seen trip order (a reasonable proxy for stop sequence)
       shapePoints: [], // filled below from the first trip's shape_id seen for this route
+      ...(agencyMeta ? { agencyId: agencyMeta.id, agencyLabel: agencyMeta.label } : {}),
     };
   }
 
   // --- trip_id -> {route_id, service_id, headsign, shapeId} ---
   const tripInfo = {};
   for (const t of trips) {
-    tripInfo[t.trip_id] = {
-      routeId: t.route_id,
-      serviceId: t.service_id,
+    tripInfo[ns(t.trip_id)] = {
+      routeId: ns(t.route_id),
+      serviceId: ns(t.service_id),
       headsign: t.trip_headsign || '', // resolved below once stop_times are walked, if still blank
       shapeId: t.shape_id || null,
     };
@@ -177,12 +195,13 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
   // --- stops lookup, seeded from stops.txt ---
   const stopById = {};
   for (const s of stops) {
-    stopById[s.stop_id] = {
-      id: s.stop_id,
+    stopById[ns(s.stop_id)] = {
+      id: ns(s.stop_id),
       name: s.stop_name || s.stop_id,
       lat: s.stop_lat ? Number(s.stop_lat) : null,
       lon: s.stop_lon ? Number(s.stop_lon) : null,
       routesById: {}, // temp working map, flattened to an array at the end
+      ...(agencyMeta ? { agencyId: agencyMeta.id, agencyLabel: agencyMeta.label } : {}),
     };
   }
 
@@ -191,8 +210,9 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
   // (needed for routes[].stopIds) while also emitting per-stop arrivals.
   const stopTimesByTrip = new Map();
   for (const st of stopTimes) {
-    if (!stopTimesByTrip.has(st.trip_id)) stopTimesByTrip.set(st.trip_id, []);
-    stopTimesByTrip.get(st.trip_id).push(st);
+    const tripKey = ns(st.trip_id);
+    if (!stopTimesByTrip.has(tripKey)) stopTimesByTrip.set(tripKey, []);
+    stopTimesByTrip.get(tripKey).push(st);
   }
 
   const seenRouteStops = new Map(); // routeId -> Set of stopIds already recorded, to keep stopIds ordered+unique
@@ -211,7 +231,7 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     // authored, and far more useful to a rider than repeating the route
     // name back at them.
     if (!trip.headsign) {
-      const lastStopId = rows[rows.length - 1].stop_id;
+      const lastStopId = ns(rows[rows.length - 1].stop_id);
       trip.headsign = stopById[lastStopId] ? stopById[lastStopId].name : '';
     }
 
@@ -226,12 +246,13 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
     const seenSet = seenRouteStops.get(route.id);
 
     for (const st of rows) {
-      const stop = stopById[st.stop_id];
+      const stopId = ns(st.stop_id);
+      const stop = stopById[stopId];
       if (!stop) continue; // stop_time referencing an unknown stop_id
 
-      if (!seenSet.has(st.stop_id)) {
-        seenSet.add(st.stop_id);
-        route.stopIds.push(st.stop_id);
+      if (!seenSet.has(stopId)) {
+        seenSet.add(stopId);
+        route.stopIds.push(stopId);
       }
 
       // A stop is served by this route whenever a stop_time row places it
@@ -250,6 +271,7 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
           longName: route.longName,
           color: route.color,
           arrivals: [],
+          ...(agencyMeta ? { agencyId: agencyMeta.id, agencyLabel: agencyMeta.label } : {}),
         };
       }
 
@@ -276,6 +298,7 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
       lat: stop.lat,
       lon: stop.lon,
       routes: routesArr,
+      ...(agencyMeta ? { agencyId: stop.agencyId, agencyLabel: stop.agencyLabel } : {}),
     };
   }
 
@@ -293,4 +316,63 @@ function transform({ agency, routes, trips, stops, stopTimes, calendar, calendar
   };
 }
 
-module.exports = { transform, DOW_KEYS };
+/**
+ * Combines several agencies' already-`transform()`-ed (namespaced)
+ * datasets into the one merged dataset the client actually ships and
+ * queries. Safe because every id `transform()` produced was namespaced
+ * `${agencyId}:${rawId}` (via the `agencyMeta` param above), so two
+ * agencies both using "R1"/"WEEKDAY" as their own internal ids can never
+ * collide once merged -- each `agencyResults` entry is `{ id, label,
+ * timezone, data }` where `data` is one agency's `transform()` output.
+ *
+ * `agencyTimezone` picks the most common timezone across agencies rather
+ * than assuming a single one -- true today (Hernando/Pasco/Hillsborough
+ * are ALL America/New_York) and correct if that ever stops being true,
+ * though `queryEngine.js` on the client still only ever computes "now"
+ * in ONE timezone for the whole merged dataset (see its own comment on
+ * `agencyTz()`) -- a real, documented simplification: a future feed
+ * from a different timezone would need that client-side assumption
+ * revisited too, not just this pick.
+ */
+function mergeAgencyData(agencyResults) {
+  const merged = {
+    generatedAt: new Date().toISOString(),
+    agencyTimezone: pickMostCommonTimezone(agencyResults),
+    agencies: {},
+    services: {},
+    routes: {},
+    stops: {},
+  };
+
+  for (const { id, label, timezone, data } of agencyResults) {
+    merged.agencies[id] = {
+      label,
+      timezone,
+      stopCount: Object.keys(data.stops).length,
+      routeCount: Object.keys(data.routes).length,
+    };
+    Object.assign(merged.services, data.services);
+    Object.assign(merged.routes, data.routes);
+    Object.assign(merged.stops, data.stops);
+  }
+
+  return merged;
+}
+
+function pickMostCommonTimezone(agencyResults) {
+  const counts = new Map();
+  for (const { timezone } of agencyResults) {
+    counts.set(timezone, (counts.get(timezone) || 0) + 1);
+  }
+  let best = 'America/New_York';
+  let bestCount = 0;
+  for (const [tz, count] of counts) {
+    if (count > bestCount) {
+      best = tz;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+module.exports = { transform, mergeAgencyData, DOW_KEYS };

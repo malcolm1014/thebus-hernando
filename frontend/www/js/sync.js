@@ -24,6 +24,43 @@
   // Point this at your deployed Render service.
   const API_BASE = 'https://thebus-hernando-backend.onrender.com';
 
+  /**
+   * Reverses the backend's compactForWire() (backend/src/compact.js) --
+   * a pure wire-format thing, applied here (once, right after a dataset
+   * is loaded from ANY source: cache, bundled snapshot, or a fresh
+   * download) so queryEngine.js never has to know the on-the-wire shape
+   * is different from the shape it's always worked with. Confirmed
+   * necessary, not preemptive: the real multi-agency dataset (Hernando +
+   * Pasco + HART) was 51MB uncompacted, 97% of it stop.routes[].arrivals
+   * entries repeating a small set of serviceId/headsign strings hundreds
+   * of thousands of times -- compaction interns those into one shared
+   * `stringPool` and stores each arrival as a compact
+   * [tripIdx, serviceIdx, headsignIdx, minutes] array instead of a 4-key
+   * object. A dataset with no `stringPool` (not compacted, or a stale
+   * pre-compaction bundled snapshot) passes through unchanged.
+   */
+  function expandDataset(data) {
+    if (!data || !Array.isArray(data.stringPool)) return data;
+    const pool = data.stringPool;
+    const stops = {};
+    for (const [stopId, stop] of Object.entries(data.stops || {})) {
+      stops[stopId] = {
+        ...stop,
+        routes: stop.routes.map((routeEntry) => ({
+          ...routeEntry,
+          arrivals: routeEntry.arrivals.map(([tripIdx, serviceIdx, headsignIdx, minutes]) => ({
+            tripId: pool[tripIdx],
+            serviceId: pool[serviceIdx],
+            headsign: pool[headsignIdx],
+            minutes,
+          })),
+        })),
+      };
+    }
+    const { stringPool, ...rest } = data;
+    return { ...rest, stops };
+  }
+
   async function fetchWithTimeout(url, ms) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ms);
@@ -97,5 +134,5 @@
     }
   }
 
-  global.TheBusSync = { getInitialData, checkForUpdate, API_BASE };
+  global.TheBusSync = { getInitialData, checkForUpdate, expandDataset, API_BASE };
 })(window);

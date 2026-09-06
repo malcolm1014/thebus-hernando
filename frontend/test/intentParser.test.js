@@ -120,3 +120,40 @@ test('parseQuery: route "N" number matches even when route_short_name is blank a
   const parsed = TheBusIntentParser.parseQuery('when is route 1 at Publix', index);
   assert.equal(parsed.route.id, 'R1');
 });
+
+test('classifyIntent: "from X to Y" resolves to PLAN_TRIP even when the query also contains other intents\' trigger words ("when"/"next")', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('I need to go from Publix Lakewood Plaza to Kass Circle'), 'PLAN_TRIP');
+  assert.equal(TheBusIntentParser.classifyIntent('what\'s the next bus from Publix to Kass Circle'), 'PLAN_TRIP');
+  assert.equal(TheBusIntentParser.classifyIntent('how do I get from the school to the mall'), 'PLAN_TRIP');
+});
+
+test('classifyIntent: a bare "to" with no "from" does not false-positive into PLAN_TRIP (e.g. "nearest stop to X" stays FIND_NEAREST_STOP)', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('nearest stop to the school'), 'FIND_NEAREST_STOP');
+});
+
+test('classifyIntent: broad, no-stop-named phrasings that never say "when"/"next" still resolve to FIND_NEXT_ARRIVAL instead of UNKNOWN (regression guard -- "any buses nearby" used to score 0 on every intent)', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('any buses nearby'), 'FIND_NEXT_ARRIVAL');
+  assert.equal(TheBusIntentParser.classifyIntent('is the bus close'), 'FIND_NEXT_ARRIVAL');
+  assert.equal(TheBusIntentParser.classifyIntent('what time is the next bus near me'), 'FIND_NEXT_ARRIVAL');
+});
+
+test('parseQuery: extracts origin/destination for "from X to Y", stopping at the FIRST "to" after "from" even when an earlier "to" appears before it', () => {
+  const parsed = TheBusIntentParser.parseQuery('I need to go from Publix Lakewood Plaza to Kass Circle', index);
+  assert.equal(parsed.intent, 'PLAN_TRIP');
+  assert.equal(parsed.origin, 'Publix Lakewood Plaza');
+  assert.equal(parsed.destination, 'Kass Circle');
+});
+
+test('parseQuery: extracts origin/destination for the reverse "to Y from X" phrasing', () => {
+  const parsed = TheBusIntentParser.parseQuery('how do I get to Kass Circle from Publix Lakewood Plaza', index);
+  assert.equal(parsed.intent, 'PLAN_TRIP');
+  assert.equal(parsed.origin, 'Publix Lakewood Plaza');
+  assert.equal(parsed.destination, 'Kass Circle');
+});
+
+test('parseQuery: a PLAN_TRIP-classified query with no extractable "from X to Y" shape yields null origin/destination instead of throwing', () => {
+  const parsed = TheBusIntentParser.parseQuery('plan my trip', index);
+  assert.equal(parsed.intent, 'PLAN_TRIP');
+  assert.equal(parsed.origin, null);
+  assert.equal(parsed.destination, null);
+});

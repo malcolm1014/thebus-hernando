@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { transform } = require('../src/transform');
+const { transform, mergeAgencyData } = require('../src/transform');
 
 /** Minimal hand-built GTFS row objects -- same shape csv-parse/sync produces from real CSV text, so transform() is exercised exactly as the real ETL would call it, without touching the filesystem. */
 function baseTables(overrides = {}) {
@@ -131,4 +131,59 @@ test('registers a stop as served by a route even when its stop_time row has no a
   assert.equal(data.stops.S2.routes[0].routeId, 'R1');
   assert.deepEqual(data.stops.S2.routes[0].arrivals, [], 'no displayable time, but still served');
   assert.deepEqual(data.routes.R1.stopIds, ['S1', 'S2']);
+});
+
+// Multi-agency support: `transform()`'s optional `agencyMeta` param and
+// `mergeAgencyData()` are what let several counties' independent GTFS
+// feeds combine into one dataset without their (frequently identical,
+// e.g. "R1"/"WEEKDAY") raw ids colliding.
+test('agencyMeta: namespaces every id (route/stop/service/trip) with the agency id, and tags stops/routes with agencyId/agencyLabel', () => {
+  const data = transform(baseTables(), { id: 'pasco', label: 'PascoGo' });
+  assert.deepEqual(Object.keys(data.stops).sort(), ['pasco:S1', 'pasco:S2']);
+  assert.deepEqual(Object.keys(data.routes), ['pasco:R1']);
+  assert.deepEqual(data.routes['pasco:R1'].stopIds, ['pasco:S1', 'pasco:S2']);
+  assert.equal(data.routes['pasco:R1'].agencyId, 'pasco');
+  assert.equal(data.routes['pasco:R1'].agencyLabel, 'PascoGo');
+  assert.equal(data.stops['pasco:S1'].agencyId, 'pasco');
+  assert.equal(data.stops['pasco:S1'].agencyLabel, 'PascoGo');
+
+  const arrival = data.stops['pasco:S1'].routes[0];
+  assert.equal(arrival.routeId, 'pasco:R1');
+  assert.equal(arrival.agencyLabel, 'PascoGo');
+  assert.equal(arrival.arrivals[0].tripId, 'pasco:T1');
+  assert.equal(arrival.arrivals[0].serviceId, 'pasco:WEEKDAY');
+  assert.deepEqual(Object.keys(data.services), ['pasco:WEEKDAY']);
+});
+
+test('agencyMeta omitted: ids pass through unchanged and no agency tag is added (exact pre-existing single-feed behavior)', () => {
+  const data = transform(baseTables());
+  assert.equal(data.routes.R1.agencyId, undefined);
+  assert.equal(data.stops.S1.agencyId, undefined);
+});
+
+test('mergeAgencyData: two agencies reusing the same raw ids ("R1"/"WEEKDAY"/"S1") never collide once merged, and each keeps its own stops/routes', () => {
+  const hernando = transform(baseTables(), { id: 'hernando', label: 'Hernando County Transit' });
+  const pasco = transform(baseTables(), { id: 'pasco', label: 'PascoGo' });
+  const merged = mergeAgencyData([
+    { id: 'hernando', label: 'Hernando County Transit', timezone: 'America/New_York', data: hernando },
+    { id: 'pasco', label: 'PascoGo', timezone: 'America/New_York', data: pasco },
+  ]);
+
+  assert.deepEqual(Object.keys(merged.stops).sort(), ['hernando:S1', 'hernando:S2', 'pasco:S1', 'pasco:S2']);
+  assert.deepEqual(Object.keys(merged.routes).sort(), ['hernando:R1', 'pasco:R1']);
+  assert.deepEqual(Object.keys(merged.services).sort(), ['hernando:WEEKDAY', 'pasco:WEEKDAY']);
+  assert.deepEqual(merged.agencies.hernando, { label: 'Hernando County Transit', timezone: 'America/New_York', stopCount: 2, routeCount: 1 });
+  assert.equal(merged.agencyTimezone, 'America/New_York');
+});
+
+test('mergeAgencyData: picks the most common timezone across agencies rather than assuming a single one', () => {
+  const a = transform(baseTables(), { id: 'a', label: 'Agency A' });
+  const b = transform(baseTables(), { id: 'b', label: 'Agency B' });
+  const c = transform(baseTables(), { id: 'c', label: 'Agency C' });
+  const merged = mergeAgencyData([
+    { id: 'a', label: 'Agency A', timezone: 'America/New_York', data: a },
+    { id: 'b', label: 'Agency B', timezone: 'America/New_York', data: b },
+    { id: 'c', label: 'Agency C', timezone: 'America/Chicago', data: c },
+  ]);
+  assert.equal(merged.agencyTimezone, 'America/New_York');
 });

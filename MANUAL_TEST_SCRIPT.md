@@ -22,10 +22,10 @@ stop" question, tagged `[thebus:tier]`. To see these on your phone:
    "USB debugging."
 2. Connect the phone to a computer with Chrome installed, via USB.
 3. On the computer, open `chrome://inspect#devices` in Chrome. Your
-   phone should appear, with TheBus listed as an inspectable target
+   phone should appear, with TriBus listed as an inspectable target
    once the app is open on the phone (Capacitor apps are Chrome-
    debuggable WebViews).
-4. Click "inspect" under TheBus's entry — a normal DevTools window
+4. Click "inspect" under TriBus's entry — a normal DevTools window
    opens, connected live to the app on your phone. The Console tab
    shows everything described below, in real time, as you type
    questions into the app.
@@ -44,7 +44,7 @@ asked).
 |---|---|---|---|
 | 1 | `nearest stop to me` | A real stop name, a distance in miles, and "SERVED BY ROUTES: ..." | The distance should roughly match where you're actually standing — sanity-check it against a map app if unsure |
 | 2 | `when is the next bus` (no stop named at all) | Answers for the nearest stop to your current position, labeled "(NEAREST TO YOU)" | Confirms the GPS fallback works for FIND_NEXT_ARRIVAL too, not just FIND_NEAREST_STOP |
-| 3 | Turn off Location for the app (Android Settings → Apps → TheBus → Permissions → Location → Don't allow), then repeat step 1 | `COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.` | An honest failure message, not a crash or a silent wrong answer |
+| 3 | Turn off Location for the app (Android Settings → Apps → TriBus → Permissions → Location → Don't allow), then repeat step 1 | `COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.` | An honest failure message, not a crash or a silent wrong answer |
 
 In the DevTools console, step 1 should show:
 ```

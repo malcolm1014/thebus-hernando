@@ -7,7 +7,7 @@
      a real problem for any low-vision rider trying to read the small
      answer text or bus-list panel. -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TheBus // Hernando County Transit</title>
+<title>TriBus // Nature Coast to Tampa Bay Transit</title>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="css/terminal.css" />
 </head>
@@ -15,8 +15,8 @@
   <div id="crt">
     <div id="screen">
       <div id="boot-banner">
-        THEBUS TRANSIT TERMINAL v1.0<br/>
-        HERNANDO COUNTY PUBLIC TRANSPORTATION<br/>
+        TRIBUS TRANSIT TERMINAL v1.0<br/>
+        HERNANDO * PASCO * TAMPA BAY (HART)<br/>
         <span id="boot-status">INITIALIZING OFFLINE DATASET...</span><br/>
         <span id="data-freshness" hidden></span>
         <!-- Independent of the OS's prefers-reduced-motion setting --
@@ -70,7 +70,7 @@
     <div class="modal-box">
       <div id="onboard-location-title" class="modal-title">SHARE YOUR LOCATION?</div>
       <p class="modal-body">
-        THEBUS CAN FIND THE NEAREST STOP OR THE NEXT BUS NEAR YOU
+        TRIBUS CAN FIND THE NEAREST STOP OR THE NEXT BUS NEAR YOU
         AUTOMATICALLY IF YOU SHARE YOUR LOCATION. YOU CAN ALWAYS SKIP
         THIS AND JUST TYPE A STOP OR PLACE NAME INSTEAD.
       </p>
@@ -84,14 +84,16 @@
   <div id="onboard-help" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-help-title">
     <div class="modal-box">
       <button type="button" id="onboard-help-close" class="modal-close" aria-label="Close">X</button>
-      <div id="onboard-help-title" class="modal-title">HOW TO USE THEBUS</div>
+      <div id="onboard-help-title" class="modal-title">HOW TO USE TRIBUS</div>
       <p class="modal-body">
         TYPE A QUESTION AND PRESS ENTER. TRY THINGS LIKE:<br/>
         <br/>
-        &gt; WHEN IS THE NEXT BUS AT &lt;STOP&gt;?<br/>
+        &gt; WHEN IS THE NEXT BUS AT &lt;STOP&gt;? (OR JUST "WHEN'S<br/>
+        &nbsp;&nbsp;THE NEXT BUS?" WITH LOCATION ON)<br/>
         &gt; NEAREST STOP TO &lt;PLACE&gt;? (OR "...TO ME?")<br/>
         &gt; FIRST/LAST BUS AT &lt;STOP&gt;?<br/>
         &gt; LIST STOPS ON ROUTE &lt;N&gt;<br/>
+        &gt; FROM &lt;PLACE&gt; TO &lt;PLACE&gt;? (PLANS YOUR WHOLE TRIP)<br/>
         <br/>
         TAP [ LIVE MAP ] ABOVE TO SEE ROUTES AND BUSES IN REAL TIME.
         ONCE SYNCED, EVERYTHING BUT LIVE BUS POSITIONS WORKS OFFLINE.

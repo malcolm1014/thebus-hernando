@@ -311,6 +311,61 @@ test('FIND_NEXT_ARRIVAL: no stop named at all falls back to GPS and answers for 
   }
 });
 
+// Broad, no-location-named phrasings ("when is the next stop?", "any
+// buses nearby") -- these all mean the same thing as "when is the next
+// bus at me" but never say "me"/a stop explicitly. Regression-guards
+// both the classifyIntent cue coverage (a phrase like "any buses
+// nearby" used to score 0 on every intent and fall to the generic
+// "COMMAND NOT RECOGNIZED" help text) and the GPS fallback actually
+// firing once classified.
+test('FIND_NEXT_ARRIVAL: broad "when is the next stop?" phrasing (not "bus") still resolves via GPS to the nearest stop\'s real arrivals', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }) };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('when is the next stop?', TUESDAY_9AM_ET);
+    assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(NEAREST TO YOU\)/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEXT_ARRIVAL: "any buses nearby" and "is the bus close" -- broad phrasings with no "when"/"next" at all -- still classify as FIND_NEXT_ARRIVAL and resolve via GPS instead of falling to the generic help text', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }) };
+  try {
+    for (const q of ['any buses nearby', 'is the bus close']) {
+      const answer = await TheBusQueryEngine.answerQuery(q, TUESDAY_9AM_ET);
+      assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(NEAREST TO YOU\)/, `for query: "${q}"`);
+    }
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_STOP: a bare "nearest stop?"/"closest bus" with no place named at all falls back to GPS instead of demanding a place name', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }) };
+  try {
+    const a1 = await TheBusQueryEngine.answerQuery('nearest stop?', TUESDAY_9AM_ET);
+    assert.match(a1, /NEAREST STOP TO YOU:\nAVALON PUBLIX/);
+    const a2 = await TheBusQueryEngine.answerQuery('closest bus', TUESDAY_9AM_ET);
+    assert.match(a2, /NEAREST STOP TO YOU:\nAVALON PUBLIX/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_STOP: a bare "nearest stop?" with GPS unavailable gets an honest message, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest stop?', TUESDAY_9AM_ET);
+    assert.match(answer, /DIDN'T CATCH A PLACE NAME/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
 test('FIND_NEAREST_STOP (via GPS): a route with no published times at the nearest stop falls back to the same route\'s real next departure at the nearest OTHER stop that has one, instead of just admitting defeat', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset({
     routes: {
@@ -378,4 +433,260 @@ test('answerQuery: a bare route name with no command keyword at all (not even th
   TheBusQueryEngine.setDataset(buildMockDataset());
   const answer = await TheBusQueryEngine.answerQuery('Blue', TUESDAY_9AM_ET);
   assert.match(answer, /STOPS:/);
+});
+
+// PLAN_TRIP -- "from X to Y" multi-leg itinerary planning.
+test('PLAN_TRIP: a direct ride (both stops on the same route, same trip) is answered with a single leg and no transfer note', async () => {
+  const dataset = buildMockDataset();
+  dataset.stops.S1.routes[0].arrivals.push({ tripId: 'TDIRECT', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 });
+  dataset.stops.S2.routes[0].arrivals.push({ tripId: 'TDIRECT', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 + 15 });
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Avalon Publix to Pine Island Park', TUESDAY_9AM_ET);
+  assert.match(answer, /TRIP FROM AVALON PUBLIX TO PINE ISLAND PARK/);
+  assert.match(answer, /BOARD ROUTE 1 RED TOWARD PINE ISLAND PARK AT AVALON PUBLIX/);
+  assert.match(answer, /ARRIVE 15 MIN \(9:15 AM\)/);
+  assert.doesNotMatch(answer, /TRANSFER/);
+  assert.match(answer, /TOTAL TRAVEL TIME: ~15 MIN \(DIRECT\)/);
+});
+
+test('PLAN_TRIP: a trip needing one transfer at a shared hub stop is planned correctly, and correctly labeled as a transfer', async () => {
+  const dataset = buildMockDataset({
+    routes: {
+      R1: { id: 'R1', shortName: '', longName: 'Route 1 Red', color: '#f00', textColor: null, stopIds: ['S1', 'HUB'], shapePoints: [] },
+      R2: { id: 'R2', shortName: '', longName: 'Route 2 Blue', color: '#00f', textColor: null, stopIds: ['HUB', 'S2'], shapePoints: [] },
+    },
+    stops: {
+      S1: {
+        id: 'S1', name: 'Avalon Publix', lat: 28.50, lon: -82.60,
+        routes: [{ routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#f00', arrivals: [
+          { tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Downtown Hub', minutes: 9 * 60 },
+        ] }],
+      },
+      HUB: {
+        id: 'HUB', name: 'Downtown Transfer Hub', lat: 28.52, lon: -82.58,
+        routes: [
+          { routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#f00', arrivals: [
+            { tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Downtown Hub', minutes: 9 * 60 + 20 },
+          ] },
+          { routeId: 'R2', shortName: '', longName: 'Route 2 Blue', color: '#00f', arrivals: [
+            { tripId: 'T2', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 + 30 },
+          ] },
+        ],
+      },
+      S2: {
+        id: 'S2', name: 'Pine Island Park', lat: 28.60, lon: -82.70,
+        routes: [{ routeId: 'R2', shortName: '', longName: 'Route 2 Blue', color: '#00f', arrivals: [
+          { tripId: 'T2', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 + 45 },
+        ] }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Avalon Publix to Pine Island Park', TUESDAY_9AM_ET);
+  assert.match(answer, /1\. BOARD ROUTE 1 RED TOWARD DOWNTOWN HUB AT AVALON PUBLIX/);
+  assert.match(answer, /TRANSFER \(3\+ MIN\)/);
+  assert.match(answer, /2\. BOARD ROUTE 2 BLUE TOWARD PINE ISLAND PARK AT DOWNTOWN TRANSFER HUB/);
+  assert.match(answer, /TOTAL TRAVEL TIME: ~45 MIN \(1 TRANSFER\)/);
+});
+
+test('PLAN_TRIP: two real-world places (resolved via the geocoder, not named stops) plan a trip through their nearest stops, including a walking line for each end', async () => {
+  const dataset = buildMockDataset();
+  // Departs 10 min after "now" -- unlike the exact-named-stop test above
+  // (walkMinutes: 0), a geocoded point is a fraction of a mile OFF its
+  // nearest stop, so it needs a little real buffer to walk there first.
+  dataset.stops.S1.routes[0].arrivals.push({ tripId: 'TDIRECT', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 + 10 });
+  dataset.stops.S2.routes[0].arrivals.push({ tripId: 'TDIRECT', serviceId: 'WEEKDAY', headsign: 'Pine Island Park', minutes: 9 * 60 + 25 });
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  // Just off S1's real coordinates (28.50, -82.60) and S2's (28.60, -82.70) --
+  // close enough that each resolves to that stop as its nearest, but not an
+  // exact match, so this exercises the NETWORK/walking-distance path rather
+  // than the "named stop" case the direct-ride test above already covers.
+  let call = 0;
+  global.TheBusGeocode = {
+    lookup: async () => {
+      call += 1;
+      return call === 1 ? { lat: 28.5005, lon: -82.6005 } : { lat: 28.6005, lon: -82.7005 };
+    },
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('from Some Random Shop to Another Random Place', TUESDAY_9AM_ET);
+    assert.match(answer, /WALK .* MI TO AVALON PUBLIX/);
+    assert.match(answer, /WALK .* MI FROM PINE ISLAND PARK TO YOUR DESTINATION/);
+  } finally {
+    delete global.TheBusGeocode;
+  }
+});
+
+test('PLAN_TRIP: no bus connection exists between the two places gives an honest message, not a crash', async () => {
+  const dataset = buildMockDataset();
+  dataset.stops.ISOLATED = { id: 'ISOLATED', name: 'Isolated Stop', lat: 29.0, lon: -83.0, routes: [] };
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Avalon Publix to Isolated Stop', TUESDAY_9AM_ET);
+  assert.match(answer, /COULDN'T FIND A BUS CONNECTION/);
+});
+
+test('PLAN_TRIP: an origin and destination that are barely apart suggest walking instead of proposing a bus itinerary', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Avalon Publix to Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /WALKING IS PROBABLY FASTER THAN A BUS/);
+});
+
+test('PLAN_TRIP: a query classified as PLAN_TRIP but missing an extractable origin/destination asks for both instead of crashing', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('plan my trip', TUESDAY_9AM_ET);
+  assert.match(answer, /DIDN'T CATCH BOTH A START AND AN END/);
+});
+
+// Cross-agency trip planning: two counties' feeds never share a literal
+// stop id, so a real regional transfer only exists as "get off here,
+// walk a short distance, board a different agency's bus over there" --
+// this is what getNearbyStopsIndex()/relaxRound's nearby-stop seeding
+// exists for. HERN_HUB and PASCO_HUB below are two DIFFERENT physical
+// stops (different agencyId) ~0.18 mi apart -- no route serves both, so
+// this itinerary is only findable via that walking-transfer mechanism.
+test('FIND_NEXT_ARRIVAL: a route with an agencyLabel (a merged multi-agency dataset) gets it prefixed onto every mention, disambiguating two agencies that both happen to have a "Route 1"', async () => {
+  const dataset = buildMockDataset({
+    stops: {
+      S1: {
+        id: 'S1', name: 'Shared-Named Stop', lat: 28.50, lon: -82.60,
+        routes: [{
+          routeId: 'P1', shortName: '', longName: 'Route 1', color: '#00f', agencyId: 'pasco', agencyLabel: 'PascoGo',
+          arrivals: [{ tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Somewhere', minutes: 9 * 60 + 10 }],
+        }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Shared-Named Stop', TUESDAY_9AM_ET);
+  assert.match(answer, /PASCOGO ROUTE 1/);
+});
+
+test('FIND_NEXT_ARRIVAL: a route whose long name is just "Route " + its short name is NOT shown as a redundant "ROUTE 14 (ROUTE 14)" (regression guard for a real bug found by running the ETL against PascoGo\'s actual feed, which populates both fields this way -- unlike Hernando\'s blank-shortName style)', async () => {
+  const dataset = buildMockDataset({
+    stops: {
+      S1: {
+        id: 'S1', name: 'Pasco Stop', lat: 28.50, lon: -82.60,
+        routes: [{
+          routeId: 'P14', shortName: '14', longName: 'Route 14', color: '#002395', agencyId: 'pasco', agencyLabel: 'PascoGo',
+          arrivals: [{ tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Somewhere', minutes: 9 * 60 + 10 }],
+        }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Pasco Stop', TUESDAY_9AM_ET);
+  assert.match(answer, /PASCOGO ROUTE 14 --/);
+  assert.doesNotMatch(answer, /ROUTE 14 \(ROUTE 14\)/);
+});
+
+test('FIND_NEXT_ARRIVAL: a route with genuinely different short/long names (e.g. HART\'s "1"/"Florida Avenue") still shows both -- the redundancy fix must not swallow real information', async () => {
+  const dataset = buildMockDataset({
+    stops: {
+      S1: {
+        id: 'S1', name: 'HART Stop', lat: 28.50, lon: -82.60,
+        routes: [{
+          routeId: 'H1', shortName: '1', longName: 'Florida Avenue', color: '#09346D', agencyId: 'hart', agencyLabel: 'HART',
+          arrivals: [{ tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Somewhere', minutes: 9 * 60 + 10 }],
+        }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at HART Stop', TUESDAY_9AM_ET);
+  assert.match(answer, /HART ROUTE 1 \(FLORIDA AVENUE\)/);
+});
+
+test('PLAN_TRIP: connects two different agencies via a short walk between their nearest stops (the core "multi-county" mechanism)', async () => {
+  const dataset = buildMockDataset({
+    routes: {
+      H1: { id: 'H1', shortName: '', longName: 'Hernando Route 1', color: '#f00', textColor: null, stopIds: ['HERN_A', 'HERN_HUB'], shapePoints: [] },
+      P1: { id: 'P1', shortName: '', longName: 'Pasco Route 1', color: '#00f', textColor: null, stopIds: ['PASCO_HUB', 'PASCO_B'], shapePoints: [] },
+    },
+    stops: {
+      HERN_A: {
+        id: 'HERN_A', name: 'Hernando Start', lat: 28.40, lon: -82.70, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H1', shortName: '', longName: 'Hernando Route 1', color: '#f00', arrivals: [
+          { tripId: 'TH1', serviceId: 'WEEKDAY', headsign: 'Hernando Hub', minutes: 9 * 60 },
+        ] }],
+      },
+      HERN_HUB: {
+        id: 'HERN_HUB', name: 'County Line Hub (Hernando Side)', lat: 28.50, lon: -82.60, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H1', shortName: '', longName: 'Hernando Route 1', color: '#f00', arrivals: [
+          { tripId: 'TH1', serviceId: 'WEEKDAY', headsign: 'Hernando Hub', minutes: 9 * 60 + 20 },
+        ] }],
+      },
+      // ~0.18 mi from HERN_HUB -- a DIFFERENT agency's stop, close enough to walk, too far to be the "same place."
+      PASCO_HUB: {
+        id: 'PASCO_HUB', name: 'County Line Hub (Pasco Side)', lat: 28.502, lon: -82.598, agencyId: 'pasco', agencyLabel: 'PascoGo',
+        routes: [{ routeId: 'P1', shortName: '', longName: 'Pasco Route 1', color: '#00f', arrivals: [
+          { tripId: 'TP1', serviceId: 'WEEKDAY', headsign: 'Pasco Destination', minutes: 9 * 60 + 35 },
+        ] }],
+      },
+      PASCO_B: {
+        id: 'PASCO_B', name: 'Pasco Destination', lat: 28.55, lon: -82.55, agencyId: 'pasco', agencyLabel: 'PascoGo',
+        routes: [{ routeId: 'P1', shortName: '', longName: 'Pasco Route 1', color: '#00f', arrivals: [
+          { tripId: 'TP1', serviceId: 'WEEKDAY', headsign: 'Pasco Destination', minutes: 9 * 60 + 50 },
+        ] }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Hernando Start to Pasco Destination', TUESDAY_9AM_ET);
+  assert.match(answer, /1\. BOARD ROUTE HERNANDO ROUTE 1 TOWARD HERNANDO HUB AT HERNANDO START/);
+  assert.match(answer, /RIDE TO COUNTY LINE HUB \(HERNANDO SIDE\)/);
+  assert.doesNotMatch(answer, /\n   TRANSFER \(/, 'a walking transfer should show its own WALK line, not the plain same-stop TRANSFER note');
+  assert.match(answer, /WALK 0\.1[0-9] MI TO COUNTY LINE HUB \(PASCO SIDE\)/);
+  assert.match(answer, /2\. BOARD ROUTE PASCO ROUTE 1 TOWARD PASCO DESTINATION AT COUNTY LINE HUB \(PASCO SIDE\)/);
+  assert.match(answer, /TOTAL TRAVEL TIME: ~50 MIN \(1 TRANSFER\)/);
+});
+
+test('PLAN_TRIP: never proposes a cross-agency-style walking transfer between two stops of the SAME agency (that would just be an ordinary same-stop transfer, not a new capability)', async () => {
+  // Same shape as the cross-agency test above (a far origin/destination,
+  // each one ride away from a "hub" pair ~0.18 mi apart) but BOTH hub
+  // stops share the same agencyId this time -- getNearbyStopsIndex()
+  // must exclude same-agency pairs, so no walking transfer is ever
+  // offered between them and this trip should have no real connection.
+  const dataset = buildMockDataset({
+    routes: {
+      H1: { id: 'H1', shortName: '', longName: 'Route 1', color: '#f00', textColor: null, stopIds: ['A', 'HUB1'], shapePoints: [] },
+      H2: { id: 'H2', shortName: '', longName: 'Route 2', color: '#00f', textColor: null, stopIds: ['HUB2', 'B'], shapePoints: [] },
+    },
+    stops: {
+      A: {
+        id: 'A', name: 'Far Stop A', lat: 28.40, lon: -82.70, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H1', shortName: '', longName: 'Route 1', color: '#f00', arrivals: [
+          { tripId: 'TA', serviceId: 'WEEKDAY', headsign: 'Hub One', minutes: 9 * 60 },
+        ] }],
+      },
+      HUB1: {
+        id: 'HUB1', name: 'Hub One', lat: 28.50, lon: -82.60, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H1', shortName: '', longName: 'Route 1', color: '#f00', arrivals: [
+          { tripId: 'TA', serviceId: 'WEEKDAY', headsign: 'Hub One', minutes: 9 * 60 + 20 },
+        ] }],
+      },
+      // ~0.18 mi from HUB1, but the SAME agencyId -- must NOT be offered as a walking transfer.
+      HUB2: {
+        id: 'HUB2', name: 'Hub Two', lat: 28.502, lon: -82.598, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H2', shortName: '', longName: 'Route 2', color: '#00f', arrivals: [
+          { tripId: 'TB', serviceId: 'WEEKDAY', headsign: 'Far Stop B', minutes: 9 * 60 + 35 },
+        ] }],
+      },
+      B: {
+        id: 'B', name: 'Far Stop B', lat: 28.55, lon: -82.55, agencyId: 'hernando', agencyLabel: 'Hernando County Transit',
+        routes: [{ routeId: 'H2', shortName: '', longName: 'Route 2', color: '#00f', arrivals: [
+          { tripId: 'TB', serviceId: 'WEEKDAY', headsign: 'Far Stop B', minutes: 9 * 60 + 50 },
+        ] }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('from Far Stop A to Far Stop B', TUESDAY_9AM_ET);
+  assert.match(answer, /COULDN'T FIND A BUS CONNECTION/);
 });

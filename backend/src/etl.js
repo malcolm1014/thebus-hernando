@@ -2,9 +2,10 @@ const fs = require('fs');
 const config = require('./config');
 const { fetchGtfs } = require('./gtfsFetch');
 const { parseAllGtfs } = require('./gtfsParse');
-const { transform } = require('./transform');
+const { transform, mergeAgencyData } = require('./transform');
 const { enrichAliases } = require('./enrich');
 const { hashContent } = require('./hash');
+const { compactForWire, expandFromWire } = require('./compact');
 
 /**
  * Refuses to trust a new dataset that looks like a broken/truncated
@@ -26,16 +27,31 @@ function isSuspiciouslySmaller(previous, next) {
 function readPreviousData() {
   if (!fs.existsSync(config.outputPath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(config.outputPath, 'utf8'));
+    // The on-disk file is wire-compacted (writeDataset() below) -- expand
+    // it back to transform()'s normal shape before anything else in this
+    // module touches it. extractAgencySlice()'s fallback path in
+    // particular feeds this straight back into mergeAgencyData() as if
+    // it were fresh transform() output, so it must match that shape.
+    return expandFromWire(JSON.parse(fs.readFileSync(config.outputPath, 'utf8')));
   } catch {
     return null; // corrupt/partial previous file -- don't let it block a fresh write
   }
 }
 
+/**
+ * Compacted here, not in mergeAgencyData() -- `data` itself stays in its
+ * normal, readable, per-arrival-object shape for the rest of the ETL
+ * (isSuspiciouslySmaller's counts, enrichAliases's per-stop iteration,
+ * etc. all keep working unchanged); only the bytes actually written to
+ * disk are compact. Called twice per run (the early schedule-only write,
+ * then again after alias enrichment finishes) -- each call compacts
+ * whatever `data` looks like at that moment, so both writes stay small.
+ */
 function writeDataset(data) {
-  const json = JSON.stringify(data);
+  const compact = compactForWire(data);
+  const json = JSON.stringify(compact);
   const version = hashContent(Buffer.from(json));
-  const payload = JSON.stringify({ version, ...data });
+  const payload = JSON.stringify({ version, ...compact });
   fs.writeFileSync(config.outputPath, payload);
   return version;
 }
@@ -59,15 +75,75 @@ function writeDataset(data) {
  * enrichment then finishes in the background and the second write bumps
  * the version so clients pick up the richer aliases on their next sync.
  */
+/**
+ * Pulls one agency's own slice (its stops/routes/services, identified by
+ * the `${agencyId}:` id prefix `transform()`'s `agencyMeta` param adds)
+ * back out of a previously-written MERGED dataset. Used as a per-agency
+ * fallback below: one agency's feed being temporarily unreachable (a
+ * real, confirmed risk -- see the README section on Citrus County's
+ * feed) shouldn't blank that agency out of the app, or fail the whole
+ * multi-agency run, when we already have its last known-good data.
+ */
+function extractAgencySlice(previousMerged, agencyId) {
+  if (!previousMerged) return null;
+  const prefix = `${agencyId}:`;
+  const stops = {};
+  const routes = {};
+  const services = {};
+  for (const [id, stop] of Object.entries(previousMerged.stops || {})) if (id.startsWith(prefix)) stops[id] = stop;
+  for (const [id, route] of Object.entries(previousMerged.routes || {})) if (id.startsWith(prefix)) routes[id] = route;
+  for (const [id, svc] of Object.entries(previousMerged.services || {})) if (id.startsWith(prefix)) services[id] = svc;
+  if (Object.keys(stops).length === 0) return null; // nothing to fall back to
+  const timezone = (previousMerged.agencies && previousMerged.agencies[agencyId] && previousMerged.agencies[agencyId].timezone) || previousMerged.agencyTimezone;
+  return { agencyTimezone: timezone, services, routes, stops };
+}
+
+/**
+ * Fetches, parses, and transforms ONE agency -- isolated in its own
+ * try/catch so one agency's feed being down doesn't take the other
+ * agencies (or the whole run) with it. Falls back to that agency's own
+ * slice of the last known-good merged dataset when the live pull fails
+ * and a fallback is available; returns null only when there's truly
+ * nothing usable for this agency (a brand-new agency's very first pull
+ * failing, with no previous data to fall back to).
+ */
+async function fetchAndTransformAgency(agency, previousMerged) {
+  try {
+    await fetchGtfs(agency);
+    const tables = parseAllGtfs(agency.id);
+    const data = transform(tables, { id: agency.id, label: agency.label });
+    return { id: agency.id, label: agency.label, timezone: data.agencyTimezone, data };
+  } catch (err) {
+    console.error(`[etl] [${agency.id}] FAILED: ${err.message}`);
+    const fallback = extractAgencySlice(previousMerged, agency.id);
+    if (!fallback) {
+      console.error(`[etl] [${agency.id}] no previous data to fall back to -- this agency contributes nothing to this run`);
+      return null;
+    }
+    console.warn(`[etl] [${agency.id}] falling back to its last known-good data`);
+    return { id: agency.id, label: agency.label, timezone: fallback.agencyTimezone, data: fallback };
+  }
+}
+
 async function runEtl() {
   const startedAt = Date.now();
   console.log('[etl] starting run');
 
+  if (config.agencies.length === 0) {
+    throw new Error('No agency GTFS feed URLs configured. Copy .env.example to .env and fill in at least one GTFS_FEED_URL_* var.');
+  }
+
   const previous = readPreviousData();
 
-  await fetchGtfs();
-  const tables = parseAllGtfs();
-  const data = transform(tables);
+  const agencyResults = (await Promise.all(
+    config.agencies.map((agency) => fetchAndTransformAgency(agency, previous))
+  )).filter(Boolean);
+
+  if (agencyResults.length === 0) {
+    throw new Error('every configured agency failed this run, with no previous data to fall back to -- refusing to write an empty dataset');
+  }
+
+  const data = mergeAgencyData(agencyResults);
 
   if (isSuspiciouslySmaller(previous, data)) {
     const prevStops = Object.keys(previous.stops).length;
@@ -85,7 +161,7 @@ async function runEtl() {
   const stopCount = Object.keys(data.stops).length;
   const routeCount = Object.keys(data.routes).length;
   const ms = Date.now() - startedAt;
-  console.log(`[etl] wrote ${config.outputPath} (${routeCount} routes, ${stopCount} stops, version ${initialVersion}) in ${ms}ms -- alias enrichment continues in the background`);
+  console.log(`[etl] wrote ${config.outputPath} (${config.agencies.length} agencies configured, ${agencyResults.length} contributed data, ${routeCount} routes, ${stopCount} stops, version ${initialVersion}) in ${ms}ms -- alias enrichment continues in the background`);
 
   await enrichAliases(data);
   const finalVersion = writeDataset(data);
@@ -101,4 +177,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runEtl, isSuspiciouslySmaller };
+module.exports = { runEtl, isSuspiciouslySmaller, extractAgencySlice };

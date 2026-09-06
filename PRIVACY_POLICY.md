@@ -1,9 +1,11 @@
-# Privacy Policy — TheBus (Hernando County Transit Terminal)
+# Privacy Policy — TriBus (Nature Coast to Tampa Bay Transit)
 
 **Last updated:** [fill in date of first publish]
 
-TheBus is an offline-first transit companion app for Hernando County, FL
-public transportation. This policy describes exactly what data the app
+TriBus is an offline-first transit companion app covering Hernando and
+Pasco County, FL public transportation, plus Tampa's HART system —
+Citrus County is a planned addition, not yet live (see the project's own
+README for why). This policy describes exactly what data the app
 collects, uses, and sends off your device — nothing more, nothing less
 than what the app's code actually does.
 

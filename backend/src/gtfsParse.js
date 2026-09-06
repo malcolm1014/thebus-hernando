@@ -1,11 +1,11 @@
 const { parse } = require('csv-parse/sync');
 const { readGtfsFile } = require('./gtfsFetch');
 
-/** Parses one GTFS CSV file into an array of row objects. Returns [] if the file is absent (some GTFS files are optional). */
-function parseFile(name) {
-  const raw = readGtfsFile(name);
+/** Parses one agency's GTFS CSV file into an array of row objects. Returns [] if the file is absent (some GTFS files are optional). */
+function parseFile(agencyId, name) {
+  const raw = readGtfsFile(agencyId, name);
   if (!raw) {
-    console.warn(`[gtfsParse] ${name} not present in feed, skipping`);
+    console.warn(`[gtfsParse] [${agencyId}] ${name} not present in feed, skipping`);
     return [];
   }
   return parse(raw, {
@@ -29,18 +29,18 @@ function gtfsTimeToMinutes(hhmmss) {
   return h * 60 + m + (s ? s / 60 : 0);
 }
 
-/** Parses all the GTFS tables the transform step needs. */
-function parseAllGtfs() {
+/** Parses all the GTFS tables the transform step needs, for one agency. */
+function parseAllGtfs(agencyId) {
   return {
-    agency: parseFile('agency.txt'),
-    routes: parseFile('routes.txt'),
-    trips: parseFile('trips.txt'),
-    stops: parseFile('stops.txt'),
-    stopTimes: parseFile('stop_times.txt'),
-    calendar: parseFile('calendar.txt'),
-    calendarDates: parseFile('calendar_dates.txt'), // optional, service exceptions
-    frequencies: parseFile('frequencies.txt'), // optional, headway-based trips
-    shapes: parseFile('shapes.txt'), // optional, route polylines for the map view
+    agency: parseFile(agencyId, 'agency.txt'),
+    routes: parseFile(agencyId, 'routes.txt'),
+    trips: parseFile(agencyId, 'trips.txt'),
+    stops: parseFile(agencyId, 'stops.txt'),
+    stopTimes: parseFile(agencyId, 'stop_times.txt'),
+    calendar: parseFile(agencyId, 'calendar.txt'),
+    calendarDates: parseFile(agencyId, 'calendar_dates.txt'), // optional, service exceptions
+    frequencies: parseFile(agencyId, 'frequencies.txt'), // optional, headway-based trips
+    shapes: parseFile(agencyId, 'shapes.txt'), // optional, route polylines for the map view
   };
 }
 

@@ -69,11 +69,15 @@ function saveCache(cache) {
  * Cache key doubles as automatic invalidation: if a stop's own name or
  * served routes ever change, the key changes with them, so a real-world
  * rename or schedule change always regenerates fresh aliases instead of
- * silently shipping stale ones forever.
+ * silently shipping stale ones forever. Includes `stop.agencyId` (when
+ * present, i.e. a multi-agency merged dataset) so two DIFFERENT stops
+ * from different counties that happen to share a name and route-name
+ * pattern (plausible -- "Main St", "Route 1" aren't unique to one
+ * agency) never share a cached alias list meant for a different place.
  */
 function cacheKey(stop) {
   const routeNames = stop.routes.map((r) => r.shortName || r.longName).sort().join('|');
-  return `${stop.name}::${routeNames}`;
+  return `${stop.agencyId || ''}::${stop.name}::${routeNames}`;
 }
 
 function buildPrompt(stop) {

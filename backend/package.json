@@ -1,7 +1,7 @@
 {
   "name": "thebus-hernando-backend",
   "version": "1.0.0",
-  "description": "ETL server: downloads Hernando County GTFS, flattens it into transit_data.json for the offline TheBus mobile client. Serves only /api/version and /api/download -- it does NOT answer rider queries.",
+  "description": "TriBus ETL server: downloads GTFS feeds from multiple Florida transit agencies (Hernando, Pasco, HART/Tampa -- Citrus pending, see README), merges them into transit_data.json for the offline TriBus mobile client. Serves only /api/version and /api/download -- it does NOT answer rider queries.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

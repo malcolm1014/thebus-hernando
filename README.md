@@ -1,12 +1,26 @@
-# TheBus -- Hernando County Transit Terminal
+# TriBus -- Nature Coast to Tampa Bay Transit Terminal
 
-Offline-first mobile transit assistant with a retro MS-DOS/CRT command-line
-interface. A lightweight Node.js ETL server converts Hernando County's GTFS
-feed into one flat JSON file; a Capacitor-wrapped vanilla JS app caches that
-file on-device and answers rider questions with a regex-based rule engine
-(no LLM, no network needed after first sync). A second tab adds a live map:
-routes and stops draw from the same offline dataset, with real-time bus
-positions overlaid when the device has a connection.
+Offline-first REGIONAL transit assistant with a retro MS-DOS/CRT command-line
+interface, covering multiple Florida transit agencies -- not just one county.
+A lightweight Node.js ETL server pulls GTFS feeds from several agencies,
+merges them into one flat JSON file (see "Multi-agency architecture" below),
+and a Capacitor-wrapped vanilla JS app caches that file on-device and answers
+rider questions -- including full "from A to B" trip planning that can cross
+agency boundaries -- with a regex-based rule engine (no LLM, no network
+needed after first sync). A second tab adds a live map: routes and stops
+draw from the same offline dataset, with real-time bus positions overlaid
+when the device has a connection.
+
+TriBus started as a single-county app ("TheBus", Hernando County only) --
+that origin is still visible in some internal names (the `TheBus*` JS module
+namespace, the `thebus-hernando` repo/backend-service name, the
+`com.savvysecurity.thebus` Android package id) that were deliberately left
+unchanged during the rename: renaming any of those has a real operational
+cost (a new Android package id means every existing install is treated as a
+brand-new app, losing all local data; renaming the live Render service
+breaks the URL the already-shipped app is hardcoded to hit) that wasn't part
+of this pass. Only rider-visible branding (the app's display name/title,
+onboarding text) was renamed.
 
 ## Layout
 
@@ -16,17 +30,38 @@ thebus-hernando/
 
   backend/                  Node/Express ETL server (deploy to Render)
     src/
-      config.js              env-driven paths/settings
-      gtfsFetch.js            downloads + unzips the GTFS feed, with retry/backoff
-      gtfsParse.js            CSV -> row objects, HH:MM:SS -> minutes
-      transform.js            flattens routes/trips/stops/stop_times into
-                               the stop-keyed structure the client wants;
-                               resolves agency timezone, derives a headsign
-                               from each trip's final stop when blank
-      etl.js                  orchestrates fetch -> parse -> transform -> write;
-                               refuses to overwrite a known-good dataset with
-                               a suspiciously-smaller one (broken-feed guard)
+      config.js              env-driven paths/settings; `agencies[]` -- one
+                               entry per configured GTFS_FEED_URL_* (see
+                               "Multi-agency architecture" below)
+      gtfsFetch.js            downloads + unzips ONE agency's GTFS feed
+                               (to its own data/raw/<agencyId>/), with
+                               retry/backoff
+      gtfsParse.js            CSV -> row objects, HH:MM:SS -> minutes, for
+                               one agency's raw dir
+      transform.js            flattens one agency's routes/trips/stops/
+                               stop_times into the stop-keyed structure the
+                               client wants; resolves that agency's own
+                               timezone, derives a headsign from each trip's
+                               final stop when blank; namespaces every id
+                               with `${agencyId}:` when told which agency
+                               it's transforming (`mergeAgencyData` then
+                               combines several agencies' output into one
+                               dataset with zero id collisions)
+      etl.js                  orchestrates fetch -> parse -> transform for
+                               EVERY configured agency (in parallel), merges
+                               them, and writes the result; one agency's
+                               feed failing falls back to that agency's own
+                               slice of the last known-good merge rather
+                               than failing the whole run or blanking that
+                               agency out (extractAgencySlice/
+                               fetchAndTransformAgency); still refuses to
+                               overwrite a known-good MERGED dataset with a
+                               suspiciously-smaller one (broken-feed guard,
+                               now watching the combined totals)
       hash.js                 content hash used as the dataset "version"
+      compact.js              wire-format compaction applied only in
+                               writeDataset() below, right before bytes
+                               hit disk -- see "Keeping the payload lean"
       passio.js                proxies Passio GO's real-time bus-position
                                feed (see "Live map" below) -- unofficial,
                                undocumented, reverse-engineered
@@ -67,7 +102,10 @@ thebus-hernando/
         storage.js             Capacitor Filesystem/Preferences wrapper
                                 (falls back to localStorage outside the shell)
         sync.js                 version check -> conditional download -> cache;
-                                also exports API_BASE, shared with liveMap.js
+                                also exports API_BASE (shared with liveMap.js)
+                                and expandDataset() (reverses the backend's
+                                wire-format compaction, see "Keeping the
+                                payload lean")
         intentParser.js         weighted-scoring intent classifier + fuzzy entity
                                 extraction (exact substring -> word overlap
                                 -> Jaro-Winkler typo tolerance), abbreviation
@@ -78,12 +116,68 @@ thebus-hernando/
                                 search foolproof" below for the full story)
         queryEngine.js           filters the cached dataset against
                                 agency-local time (not device-local),
-                                correct across midnight
+                                correct across midnight; also plans
+                                "from A to B" trips -- a bounded (up to
+                                MAX_TRANSFERS) earliest-arrival search
+                                that can cross agency boundaries via a
+                                short walking transfer between two
+                                different agencies' nearby stops, see
+                                "Planning a trip from A to B" below
         liveMap.js               draws routes/stops from the offline dataset,
                                 polls /api/live-buses for real-time positions
         app.js                   terminal UI wiring + tab switching between
                                 the terminal and map views
 ```
+
+## Multi-agency architecture
+
+TriBus merges GTFS feeds from several independent Florida transit
+agencies into one dataset, rather than being built for a single county.
+As of this writing:
+
+| Agency | Status | Feed |
+|---|---|---|
+| Hernando County Transit | Live | `GTFS_FEED_URL_HERNANDO` (originally just `GTFS_FEED_URL`) |
+| PascoGo (Pasco County) | Live | `GTFS_FEED_URL_PASCO` -- also has its own GTFS-Realtime feed (not yet consumed here, see "Live map" below) |
+| HART (Hillsborough/Tampa) | Live | `GTFS_FEED_URL_HART` -- a full metro system, much bigger than the other two (~3.6MB raw vs. Hernando's ~500KB) |
+| Citrus County Transit | **Not live** | Feed found (their `bus_routes.php` page's "CCT GTFS Data" link), but hosted on a Cloudflare-protected CMS that blocks automated fetching entirely -- confirmed via curl (multiple user-agents/referers, HTTP 403) AND a real interactive browser navigating to the link twice with an 8s wait for any "under attack mode" interstitial (HTTP 503 both times). Listed inactive in `config.js`'s `AGENCY_DEFS` -- setting `GTFS_FEED_URL_CITRUS` activates it with no code change, whenever a workaround exists (most likely a headless-browser fetch step, deliberately not built yet given the added deployment weight/risk for one agency) |
+
+**How the merge works** (`backend/src/transform.js`, `backend/src/etl.js`):
+
+1. `etl.js` fetches, parses, and transforms EVERY configured agency in
+   parallel, each in its own try/catch -- one agency's feed being
+   temporarily down doesn't take the others with it, and doesn't fail
+   the whole run either. A failed agency falls back to its own slice of
+   the last known-good merged dataset (`extractAgencySlice`) if one
+   exists, so a transient outage never blanks that agency out of the app
+   riders already have.
+2. `transform()` takes an optional `agencyMeta: { id, label }`. When
+   given, every id it produces (`route_id`, `stop_id`, `service_id`,
+   `trip_id`) is namespaced `${id}:${rawId}`, and every stop/route is
+   tagged `agencyId`/`agencyLabel`. This is what makes it safe to merge
+   several agencies' independent feeds -- two counties both using "R1"
+   or "WEEKDAY" as their own internal ids is expected, not a coincidence
+   to guard against. Omitted (the default), every id passes through
+   unchanged -- the exact original single-feed behavior, so this is a
+   non-breaking addition, not a rewrite.
+3. `mergeAgencyData()` combines the namespaced outputs into one dataset,
+   plus a top-level `agencies: {}` map (label/timezone/counts per
+   agency) and a single `agencyTimezone` picked as the most common
+   timezone across agencies (all 4 real agencies here are
+   America/New_York, so this is moot today, but the pick is real and
+   tested rather than hardcoded).
+4. On the client, `routeLabel()` (`queryEngine.js`) prefixes a route's
+   own `agencyLabel` onto every mention when present ("PASCOGO ROUTE 1")
+   -- otherwise two different agencies' routes sharing a number would be
+   genuinely ambiguous in a trip itinerary that crosses between them.
+   Absent on a single-agency dataset, so this is invisible to a
+   deployment that never merges anything.
+
+**Known simplification**: the client (`queryEngine.js`'s `agencyTz()`)
+still computes "now" in exactly ONE timezone for the whole merged
+dataset. True and tested for all 4 real agencies here (all
+America/New_York) -- would need revisiting if a future agency in a
+different timezone were ever added.
 
 ## Backend: run it
 
@@ -211,6 +305,17 @@ runtime and falls back to `localStorage` automatically.
    network (see "Nearest stop to anywhere" below), the latter answers
    from the stop's *entire* day's schedule rather than just what's
    still upcoming.
+6. A genuinely **broad, no-stop-named question** ("when's the next
+   bus?", "when is the next stop?", "any buses nearby", "is the bus
+   close") is treated as shorthand for "at my current location" rather
+   than a failure to parse -- both `FIND_NEXT_ARRIVAL` and
+   `FIND_NEAREST_STOP` fall back to the device's GPS position whenever
+   no stop/place was named at all, the same way an explicit "...to me"
+   already did. `intentParser.js`'s cue table includes several
+   locationless phrasings specifically so these don't get missed by
+   intent classification and fall through to the generic help text
+   instead (a real gap: "any buses nearby" used to score 0 on every
+   intent).
 
 ## Making the search foolproof
 
@@ -291,12 +396,15 @@ highlights:
   distinctive word (a business name) wins outright over ones that only
   share the road number, instead of the two being treated as a genuine
   ambiguous tie. Regression-guarded in `test/intentParser.test.js`.
-- **Deliberately NOT built**, per the research: full "from A to B" trip
-  planning ([OpenTripPlanner](https://www.opentripplanner.org/)-style
-  routing is confirmed overkill for an 8-route single-county system --
-  small real transit voice apps surveyed don't attempt it either) and
-  phonetic matching like Metaphone (not worth the implementation cost
-  over Jaro-Winkler at a ~370-entry dataset size). Two real, scoped
+- **Revisited: "from A to B" trip planning is now built** (`PLAN_TRIP`,
+  see "Planning a trip from A to B" below) -- originally scoped out here
+  as OpenTripPlanner-style overkill for an 8-route system, but a full
+  RAPTOR implementation was never actually the alternative to "not
+  built": a bounded (0-or-1-transfer) earliest-arrival search over this
+  small a dataset is cheap to brute-force directly, and real riders
+  asked for exactly this question shape. **Deliberately NOT built**,
+  still: phonetic matching like Metaphone (not worth the implementation
+  cost over Jaro-Winkler at a ~370-entry dataset size). Two real, scoped
   ideas surfaced but not built this round, for a future pass: "next bus
   toward X" / "when should I leave to get to X by TIME" (real intent
   patterns from [`BWHackathons/BusSkill`](https://github.com/BWHackathons/BusSkill),
@@ -404,6 +512,75 @@ Google's Geocoding/Places API in place of (or alongside) Nominatim in
 `geocode.js` -- but that needs a Google Cloud billing account and API
 key, a decision left to you rather than made here.
 
+## Planning a trip from A to B
+
+`PLAN_TRIP` ("I need to go from Publix Lakewood Plaza to Kass Circle",
+"how do I get from X to Y", "directions from X to Y") plans a real,
+timed, multi-leg itinerary instead of answering about one stop at a
+time -- entirely deterministic, offline, and LLM-free, same as every
+other intent in this app (the only LLM anywhere in this codebase is
+`backend/src/enrich.js`'s ETL-time alias generation, which never runs at
+query time -- see "Data flow" below for why that split exists).
+
+1. **Both ends are resolved through the exact same tiered landmark
+   resolution `FIND_NEAREST_STOP` uses** (`resolveLandmark()` in
+   `queryEngine.js`, extracted from that intent's own code so both share
+   one implementation) -- a named stop, a real-world place via the
+   geocoder, or "me"/"here" via GPS all work identically for either end.
+   A resolved KNOWN STOP is used exactly as named (zero walking assumed
+   -- the rider said that exact stop); a resolved real-world POINT
+   instead gets the nearest few stops (up to 3, within 0.75 mi) as
+   boarding candidates, each with an estimated walk time.
+2. **`getTripsIndex()` reconstructs every real trip's own ordered
+   (stop, time) path** from data the client already has -- no backend/
+   ETL change needed. Every stop's `routes[].arrivals` entry already
+   carries its `tripId`; grouping those by `tripId` across every stop
+   and sorting by raw minutes recovers a trip's true stop order (GTFS
+   keeps a trip's own times monotonically increasing, including
+   past-midnight rows). Built once per dataset load and cached.
+3. **The search itself is a bounded (up to `MAX_TRANSFERS`, currently 3)
+   earliest-arrival search** (`relaxRound()`/`seedReach()`): round 0 is
+   the boarding candidates themselves; each later round treats every
+   stop reached so far (plus a real transfer buffer) as a new boarding
+   point and finds everywhere reachable with one additional ride.
+   Genuinely unbounded, OpenTripPlanner-style routing is still scoped
+   out (see "Making the search foolproof" above) -- but a *bounded*
+   multi-transfer search is cheap to brute-force even across a merged
+   multi-agency dataset, via `getStopTripIndex()` (a reverse index --
+   which trips pass through a given stop, and where -- so each round
+   only ever examines trips that actually reach a candidate stop,
+   instead of scanning every trip in the system per candidate). 3
+   transfers comfortably covers a full regional journey (e.g. Hernando
+   -> Pasco -> HART/Tampa) while staying bounded and fast.
+4. **A round can also walk to a nearby DIFFERENT agency's stop before
+   boarding** (`getNearbyStopsIndex()`) -- this is the actual mechanism
+   that makes cross-county trip planning possible at all. Two
+   independently-run transit agencies never share a literal stop id;
+   GTFS has no concept of "these two agencies' stops are the same
+   place." A real-world regional transfer only ever exists as "get off
+   here, walk a short distance (capped at `TRANSFER_WALK_MAX_MILES`,
+   0.3 mi), board a different agency's bus over there." The index is a
+   coarse spatial-hash (grid-bucketed) precomputation of every stop's
+   nearby OTHER-agency stops, built once per dataset load -- on a
+   single-agency dataset every stop's `agencyId` is `undefined`, so the
+   same-agency exclusion check means this index is always empty and
+   adds no behavior change for a non-merged deployment.
+5. **The itinerary with the lowest total real-world time wins** -- ride
+   time plus every walk segment (both ends, and any mid-trip
+   cross-agency transfer) -- preferring fewer transfers whenever two
+   itineraries would arrive at the same time (a "transfer" that doesn't
+   actually save time is never surfaced as if it were a genuine
+   alternative). Two places within 0.2 mi of each other get told to
+   just walk instead of being offered a bus itinerary for no real gain.
+
+**Known simplification, documented rather than silently wrong**: like
+`dayArrivals()`'s existing accepted simplification for overnight
+service, a single TRIP that itself straddles midnight would have its
+early and late stops resolved against different calendar-day references
+independently (see the comment on `resolveArrivalTiming()`). Not
+observed in this feed (daytime-only weekday service -- see
+`MANUAL_TEST_SCRIPT.md`), so not specially handled.
+
 ## First-launch onboarding
 
 Two modals appear once, on the very first launch, then never again
@@ -441,6 +618,14 @@ bus positions are the one part of this app that genuinely can't work
 offline (a cached bus position is actively misleading, not just stale),
 so those are only overlaid when the device has a connection.
 
+**Scope note**: real-time positions are Hernando-only for now -- this
+pass added Pasco/HART/Citrus to the offline SCHEDULE data and trip
+planner (see "Multi-agency architecture" above), not to the live map.
+PascoGo does publish its own GTFS-Realtime feed (unlike Hernando, which
+needed the Passio reverse-engineering below) and HART has 2 GTFS-RT
+feeds of its own -- wiring either in is a real, scoped-out next step,
+not a limitation of the architecture.
+
 Real-time positions come from **Passio GO**
 (`https://passiogo.com/?agency=5732`), the same tracker Hernando County
 itself embeds on its own transit page. There's no official public API
@@ -472,9 +657,54 @@ turn out not to align after all.
 ## Keeping the payload lean
 
 The full offline dataset (`transit_data.json`, downloaded on first sync
-and every schedule change after that) is 263KB for this feed, down from
-327KB before a deliberate pass to trim it -- meaningful on a phone that
-might be syncing over a weak connection:
+and every schedule change after that) was 263KB for Hernando alone, down
+from 327KB before a deliberate pass to trim it -- meaningful on a phone
+that might be syncing over a weak connection.
+
+**This got a lot less lean once HART joined the merge -- measured, not
+guessed**: running the real ETL against Hernando+Pasco+HART produced a
+**51MB** `transit_data.json`. Broken down by actually measuring
+`JSON.stringify` byte counts per field (not estimated): 97.1% of it was
+`stop.routes[].arrivals[]` -- 442,588 individual arrival rows, the
+natural consequence of HART being a full metro system (411,239 of those
+442,588 arrivals are HART's alone, vs. Hernando's original ~1,800).
+Route polylines, by contrast, stayed a rounding error at this scale
+(0.1% of the total) -- the Douglas-Peucker work below still matters at
+Hernando's own scale, just not at the merged one.
+
+**Fixed via wire-format compaction** (`backend/src/compact.js`,
+`frontend/www/js/sync.js`'s `expandDataset`) -- **51MB -> 14.9MB, a 71%
+reduction**, verified with a real re-run, not projected. Each arrival
+was a 4-key JSON object (`{tripId, serviceId, headsign, minutes}`)
+repeating largely non-unique strings verbatim: this feed has only ~22
+distinct `serviceId`s and a few hundred distinct headsigns shared across
+all 442,588 rows, and even `tripId` (unique per real trip) still repeats
+roughly once per stop that trip visits (~37x on average). `compactForWire()`
+interns every arrival's 3 strings into one shared `stringPool` and
+stores each arrival as a compact `[tripIdx, serviceIdx, headsignIdx,
+minutes]` array instead of a 4-key object -- which also eliminates the
+repeated JSON key-name bytes a plain string-interning pass alone
+wouldn't touch. This is a PURE transport-layer optimization: it runs
+only in `etl.js`'s `writeDataset()` (right before the bytes hit disk)
+and is reversed only in the client's `activateDataset()` (right after a
+dataset loads, from any source) via a matching `expandDataset()` --
+`transform.js`/`mergeAgencyData()` and `queryEngine.js` never see the
+compact shape at all, so none of their extensive existing tests needed
+to change. `etl.js`'s own `readPreviousData()` (used for the
+broken-feed-size guard and the per-agency fetch-failure fallback) mirrors
+this with a backend-side `expandFromWire()`, since that fallback path
+feeds data straight back into `mergeAgencyData()` as if it were fresh
+`transform()` output -- skipping this expansion would have silently
+double-compacted an already-compact fallback dataset.
+
+**Not addressed this round, real remaining opportunities if 14.9MB still
+needs trimming further**: HART's shapes could be simplified more
+aggressively than Hernando's tighter tolerance; the dataset could ship
+only a rolling window of arrivals (e.g. today + tomorrow) instead of a
+feed's entire multi-week schedule; or agencies could sync as separate,
+independently-cacheable chunks so a Hernando-only rider never downloads
+HART's share at all. All are bigger architectural changes than this
+pass's scope.
 
 - **Route polylines were 23% of the whole payload** (75KB) -- raw GTFS
   `shapes.txt` data at full resolution, up to ~870 points for a single

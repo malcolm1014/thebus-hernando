@@ -42,6 +42,18 @@
    * utterances.txt -- informal "gonna arrive"/"going to be at" phrasing).
    */
   const INTENT_CUES = {
+    // "from X to Y" is a very strong, distinctive signal on its own --
+    // weighted well above every other intent's cues so a trip-planning
+    // question never gets crowded out just because it also happens to
+    // contain "when"/"next"/etc. ("how do I get from X to Y and when's
+    // the next bus").
+    PLAN_TRIP: [
+      { pattern: /\bfrom\b[\s\S]*?\bto\b/i, weight: 4 },
+      { pattern: /\bhow do i get\b/i, weight: 2 },
+      { pattern: /\bdirections?\b/i, weight: 2 },
+      { pattern: /\btrip\b/i, weight: 1 },
+      { pattern: /\btransfers?\b/i, weight: 1 },
+    ],
     // Checked with top priority: "nearest STOP" would otherwise mostly
     // score toward LIST_ROUTE_STOPS's "stop" cue.
     FIND_NEAREST_STOP: [
@@ -69,6 +81,23 @@
       { pattern: /\bgonna (arrive|be)\b/i, weight: 1 }, // BusTracker: "gonna arrive"
       { pattern: /\bgoing to (arrive|be at)\b/i, weight: 1 }, // BusTracker: "going to be at"
       { pattern: /\bbus times?\b/i, weight: 1 },        // OneBusAway: bare noun-phrase queries, no verb at all
+      // A rider asking a genuinely BROAD, no-stop-named question ("any
+      // buses nearby", "is the bus close") is still asking the exact
+      // same underlying question as "when's the next bus" -- they just
+      // never named a stop because they expect the app to use their
+      // location instead. Without these, a query like "any buses
+      // nearby" scored 0 on every intent and fell to the generic
+      // "COMMAND NOT RECOGNIZED" help text instead of ever reaching
+      // FIND_NEXT_ARRIVAL's own existing no-stop-named GPS fallback
+      // (answerFindNextArrival, queryEngine.js) -- these cues exist
+      // purely to get such queries classified correctly, not to change
+      // what happens once they are.
+      { pattern: /\bnearby\b/i, weight: 1 },
+      { pattern: /\bnear me\b/i, weight: 1 },
+      { pattern: /\bclose\b/i, weight: 1 },
+      { pattern: /\bclose by\b/i, weight: 1 },
+      { pattern: /\bin the area\b/i, weight: 1 },
+      { pattern: /\baround (me|here)\b/i, weight: 1 },
     ],
     FIND_STOP_LOCATION: [
       { pattern: /\bwhere\b/i, weight: 2 },
@@ -86,7 +115,7 @@
   // Tie-break order when two intents land on the exact same score
   // (rare, since weights are hand-tuned to avoid it) -- most-specific
   // intent wins, same reasoning as the old first-match-wins list order.
-  const INTENT_PRIORITY = ['FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
+  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
 
   function classifyIntent(text) {
     let bestIntent = 'UNKNOWN';
@@ -439,6 +468,33 @@
     return null;
   }
 
+  /**
+   * Pulls origin/destination free text out of a PLAN_TRIP query --
+   * same philosophy as extractLandmark: NOT matched against known
+   * stop/route names here, since either end can be a real-world place
+   * (a business, a school) just as easily as a known stop. Runs against
+   * the ORIGINAL text (keeps capitalization/apostrophes for a nicer
+   * echoed-back label and for geocoding, same as extractLandmark).
+   * "from X to Y" is checked first (the overwhelmingly common phrasing,
+   * and what PLAN_TRIP's own strongest intent cue is keyed on); "to Y
+   * from X" is supported as a fallback for the reverse phrasing. Both
+   * are non-greedy on the origin capture, so the FIRST "to" after "from"
+   * wins -- correct for "I need to go from Publix to Kass Circle" (the
+   * earlier "to" inside "need to go" sits before "from", so it's never
+   * in scope) but, like every other regex-based extraction in this file,
+   * can be fooled by a place name that itself contains the word "to" or
+   * "from".
+   */
+  function extractTripEndpoints(rawText) {
+    let m = rawText.match(/\bfrom\s+(.+?)\s+to\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1].trim() && m[2].trim()) return { origin: m[1].trim(), destination: m[2].trim() };
+
+    m = rawText.match(/\bto\s+(.+?)\s+from\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1].trim() && m[2].trim()) return { origin: m[2].trim(), destination: m[1].trim() };
+
+    return null;
+  }
+
   /** For FIND_FIRST_LAST_BUS: which one is being asked about. Defaults to 'first' if the trigger somehow fired without either word literally present. */
   function extractFirstOrLast(rawText) {
     if (/\blast\b/i.test(rawText)) return 'last';
@@ -459,7 +515,13 @@
     const stop = extractStop(normalizedText, index.stops);
     const landmark = intent === 'FIND_NEAREST_STOP' ? extractLandmark(text) : null;
     const firstOrLast = intent === 'FIND_FIRST_LAST_BUS' ? extractFirstOrLast(text) : null;
-    return { intent, route, stop, landmark, firstOrLast, raw: text };
+    const tripEndpoints = intent === 'PLAN_TRIP' ? extractTripEndpoints(text) : null;
+    return {
+      intent, route, stop, landmark, firstOrLast,
+      origin: tripEndpoints ? tripEndpoints.origin : null,
+      destination: tripEndpoints ? tripEndpoints.destination : null,
+      raw: text,
+    };
   }
 
   global.TheBusIntentParser = { parseQuery, classifyIntent, normalize, fuzzyMatch, jaroWinkler };
