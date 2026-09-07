@@ -145,7 +145,21 @@
         console.error(err);
         answer = 'SYSTEM ERROR -- QUERY COULD NOT BE PROCESSED.';
       }
-      appendEntry('sys', answer.toUpperCase());
+
+      // The rule engine's own answer is always fully correct and always
+      // computed first, entirely offline -- this is a REPHRASING step
+      // only, never a source of transit facts. When online and
+      // configured server-side, this asks Grok to rewrite it in more
+      // natural language; any failure/timeout/missing-config resolves to
+      // null (see grokEnhance.js), and the original answer is shown
+      // completely unchanged, exactly as before this feature existed.
+      const enhanced = await TheBusGrokEnhance.enhance(text, answer);
+      if (enhanced) {
+        appendEntry('sys-ai', `[AI] ${enhanced}`.toUpperCase());
+      } else {
+        appendEntry('sys', answer.toUpperCase());
+      }
+
       if (navigator.onLine) {
         const loc = TheBusQueryEngine.getLastLocation();
         if (loc) appendMapImage(loc.lat, loc.lon, loc.label);

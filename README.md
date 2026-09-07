@@ -339,6 +339,43 @@ runtime and falls back to `localStorage` automatically.
    instead (a real gap: "any buses nearby" used to score 0 on every
    intent).
 
+## AI-assisted answer rephrasing (Grok, online only)
+
+The rule-based engine above always computes the real, correct answer
+first, entirely offline -- that never changes. When the device is
+online AND the backend has `XAI_API_KEY` configured (`backend/src/
+grokAnswer.js`, `backend/src/config.js`), `app.js` additionally sends
+the rider's query text and that already-correct answer to `POST
+/api/enhance-answer`, which asks xAI's Grok to rewrite it in friendlier
+language -- **rephrasing only**, never a source of transit facts: the
+prompt explicitly forbids adding or changing any stop name, route,
+time, or number not already present in the factual answer it's given.
+
+This is a DIFFERENT provider from the Groq-based stop-alias enrichment
+above (`enrich.js`/`GROQ_API_KEY`) -- xAI's own "Grok" model family via
+`api.x.ai`, easy to confuse by name with Groq's inference-hardware-
+hosted open models, kept as clearly separate config entries.
+
+Fails soft at every layer, the same pattern every other optional network
+feature in this app uses (Geoapify static maps, Nominatim geocoding):
+no key configured, offline, a slow/failed upstream call, or a malformed
+response all resolve to `null` (`grokEnhance.js`'s `enhance()`), and
+`app.js` just shows the rule engine's own answer completely unchanged --
+this step can never make an answer less correct, only (optionally) less
+robotic. When a rewrite DOES succeed, it's shown with a distinct color
+and an explicit `[AI]` text prefix (`terminal.css`'s `.sys-ai`, not
+color alone, so it's still clear without relying on a color a screen
+reader or colorblind rider wouldn't perceive) so a rider can always tell
+an AI-rephrased answer from the app's own offline-computed text.
+
+**Privacy**: only the query text and the app's own answer to it are ever
+sent -- never GPS coordinates, never search history, never anything
+about a different question. See `PRIVACY_POLICY.md`'s "AI-assisted
+answer rephrasing" section for the full, rider-facing disclosure this
+feature required adding (the app's blanket "your questions never leave
+the device" claim was true before this feature existed and needed to be
+corrected once it didn't apply universally).
+
 ## Making the search foolproof
 
 Every design decision in `intentParser.js` below is backed by research

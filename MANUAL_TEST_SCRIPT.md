@@ -92,9 +92,22 @@ There's no `[thebus:tier]` log for this one (it's a different code path,
 `liveMap.js`'s `matchRouteId`) — the visual check above (marker color vs.
 route line color, and the bus-list route names) is the real signal here.
 
+## Test 4: Grok answer rephrasing (requires `XAI_API_KEY` set on the backend)
+
+| Step | Action | Expected result |
+|---|---|---|
+| 1 | With network on, ask any normal question (e.g. "when's the next bus at [a real stop]") | Answer appears in amber text with an `[AI] ` prefix instead of the usual plain-white text |
+| 2 | Check the substance of that answer against what you'd expect from the same query with the AI feature off | Every stop name/route/time mentioned must match reality exactly -- this step may only reword, never invent or alter a transit fact |
+| 3 | Turn on Airplane Mode, ask the same kind of question again | Answer appears in the normal plain-white style (no `[AI]` prefix) -- confirms the offline fallback still works with zero network |
+| 4 | Back online, ask a question with no real answer (e.g. a nonsense phrase) | Still gets a short, sensible response either way -- the rewrite step doesn't hang or break on the "COMMAND NOT RECOGNIZED" case |
+
+If `XAI_API_KEY` isn't set on the backend at all, every answer should
+just look like before this feature existed (plain white, no `[AI]`
+prefix) -- that's the correct "not configured" behavior, not a failure.
+
 ## What to send back
 
-For each of the 3 tests: pass/fail, and for anything that fails, the
+For each of the 4 tests: pass/fail, and for anything that fails, the
 exact `[thebus:tier]` log lines (or a screenshot of the map/bus-list for
-Test 3) so the actual failure mode is visible rather than just "it didn't
-work."
+Test 3, or the exact wrong/invented fact for Test 4) so the actual
+failure mode is visible rather than just "it didn't work."

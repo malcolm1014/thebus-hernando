@@ -209,6 +209,8 @@ body {
 #history .you::before { content: "> "; color: var(--fg-dim); }
 #history .you { color: var(--fg-bright); }
 #history .sys { color: var(--fg); }
+/* Grok-rephrased answer (see app.js/grokEnhance.js) -- visually distinct from a plain rule-engine answer so a rider can tell an online AI rewrite from the offline factual text, without relying on color alone (the "[AI]" text prefix carries the same distinction for screen readers). */
+#history .sys-ai { color: #ffb000; text-shadow: 0 0 1px #ffb000, 0 0 4px #b37a00; }
 #history .processing { color: var(--fg-dim); }
 #history .err { color: #ff4444; text-shadow: 0 0 4px #ff4444; }
 

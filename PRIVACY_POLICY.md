@@ -15,8 +15,13 @@ than what the app's code actually does.
   identifier is ever collected or required.
 - No advertising, no ad SDKs, no ad identifiers.
 - No general-purpose analytics SDK is included in the app.
-- Your questions and search history stay on your device. They are never
-  transmitted to us or to anyone else.
+- Your search history is stored only on your device and never
+  transmitted to us or anyone else. The text of the question you're
+  actively asking right now is different: when your device is online,
+  it (and the app's own already-correct answer to it) may be sent to a
+  third-party AI service to be rephrased in friendlier language — see
+  "AI-assisted answer rephrasing" below for exactly what that does and
+  doesn't include.
 
 ## Location data
 
@@ -45,6 +50,33 @@ practices: https://osmfoundation.org/wiki/Privacy_Policy
 
 Results are cached, both on our server and on your device, so the exact
 same search doesn't need to be looked up again.
+
+## AI-assisted answer rephrasing (online only)
+
+The app answers every question using its own offline schedule-lookup
+engine first — that engine's answer is always completely correct and is
+always computed entirely on your device, with or without a network
+connection. When your device IS online, the app additionally sends the
+text you typed and that engine's own already-correct answer to our
+server, which forwards both to xAI's Grok AI service, asking it only to
+rewrite the wording in a friendlier, more natural style — never to add,
+change, or invent any stop name, route, time, or other transit fact.
+
+**What is sent:** the text of your question, and the app's own factual
+answer to it (which never contains your GPS coordinates, since your
+location itself is never included in what's asked). **What is never
+sent:** your GPS location, your search history, any other question you
+haven't just asked, or anything about your device.
+
+If this rewrite succeeds, the app shows it instead of the plain
+engine text, clearly marked with an "[AI]" label so you can always tell
+the AI-rephrased version from the app's own offline-computed answer. If
+you're offline, if this feature isn't available, or if the rewrite
+fails or times out for any reason, the app simply shows its own
+already-correct offline answer unchanged — this step never blocks or
+changes the accuracy of any answer, only (optionally) its wording. This
+request is subject to xAI's own privacy practices:
+https://x.ai/legal/privacy-policy
 
 ## Map images in answers
 

@@ -9,6 +9,7 @@ const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { fetchStaticMap } = require('./src/staticmap');
+const { enhanceAnswer } = require('./src/grokAnswer');
 const { createRateLimiter } = require('./src/rateLimit');
 
 const app = express();
@@ -31,6 +32,7 @@ const staticmapRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 const versionRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 const downloadRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 const crashReportRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 10 });
+const enhanceAnswerRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
 
 let etlRunning = false;
 
@@ -190,6 +192,33 @@ app.get('/api/staticmap', staticmapRateLimit, async (req, res) => {
     console.error('[server] static map fetch failed:', err);
     res.status(502).json({ error: 'static map unavailable', message: err.message });
   }
+});
+
+/**
+ * POST /api/enhance-answer
+ * Optionally rephrases the query engine's already-correct answer into
+ * more natural language via xAI's Grok (see src/grokAnswer.js) -- the
+ * rule engine on the CLIENT already computed `factualAnswer` entirely
+ * offline before this is ever called; this endpoint only asks Grok to
+ * rewrite tone, never to add or change any transit fact. Called by the
+ * client only when the device is online, and only for THIS one query's
+ * text plus its own already-computed answer -- never the rider's GPS
+ * location, and never anything from a query the rider hasn't already
+ * gotten a real, correct offline answer to. See PRIVACY_POLICY.md.
+ *
+ * Always responds 200 with `{ enhanced }` -- `enhanced` is `null` (not
+ * an error) whenever this feature isn't configured, the upstream call
+ * failed, or it timed out, so the client's fallback to the original
+ * factual answer is just "did I get a string back," not error-handling.
+ */
+app.post('/api/enhance-answer', express.json({ limit: '10kb' }), enhanceAnswerRateLimit, async (req, res) => {
+  const query = typeof req.body.query === 'string' ? req.body.query : '';
+  const factualAnswer = typeof req.body.factualAnswer === 'string' ? req.body.factualAnswer : '';
+  if (!query || !factualAnswer) {
+    return res.status(400).json({ error: 'missing required fields: query, factualAnswer' });
+  }
+  const enhanced = await enhanceAnswer(query, factualAnswer);
+  res.json({ enhanced });
 });
 
 /**
