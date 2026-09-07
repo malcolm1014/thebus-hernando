@@ -1,5 +1,5 @@
 {
-  "name": "TheBus Android build",
+  "name": "TriBus Android build",
   "image": "mcr.microsoft.com/devcontainers/java:17-bookworm",
   "hostRequirements": {
     "cpus": 4,

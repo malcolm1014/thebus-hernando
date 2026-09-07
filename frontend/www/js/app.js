@@ -230,6 +230,16 @@
     return dataset && dataset.agencies ? Object.keys(dataset.agencies) : [];
   }
 
+  // Sentinel for "show every county at once" -- deliberately the same
+  // falsy value drawStaticData()/refreshLiveTrackingForSelection()
+  // already treat as "no agency filter" (both check `agencyId &&
+  // ...`), so this needs no special-casing in either of them: it's
+  // just never filtering anything out, and live tracking still runs
+  // normally (Hernando's real buses are still worth showing on the
+  // combined view even though Pasco/HART have none yet).
+  const ALL_COUNTIES = null;
+  const ALL_COUNTIES_LABEL = 'TRI-COUNTY';
+
   /** (Re)builds the county buttons if the dataset's agency list has changed since the last build; otherwise just refreshes which one shows as active. */
   function buildCountySelector(dataset) {
     const ids = agencyIdsOf(dataset);
@@ -242,6 +252,13 @@
 
     if (countySelectorBuiltForVersion !== dataset.version) {
       countySelector.textContent = '';
+      const allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className = 'county-btn';
+      allBtn.dataset.agencyId = '';
+      allBtn.textContent = ALL_COUNTIES_LABEL;
+      allBtn.addEventListener('click', () => selectCounty(ALL_COUNTIES));
+      countySelector.appendChild(allBtn);
       for (const id of ids) {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -252,16 +269,19 @@
         countySelector.appendChild(btn);
       }
       countySelectorBuiltForVersion = dataset.version;
+      // Opening the map for a newly-loaded (or just-updated) dataset
+      // starts on the full regional view -- the individual county
+      // buttons are for narrowing in, not the default.
+      selectedAgencyId = ALL_COUNTIES;
     }
 
-    if (!selectedAgencyId || !ids.includes(selectedAgencyId)) selectedAgencyId = ids[0];
     countySelector.hidden = false;
     updateCountyButtonStates();
   }
 
   function updateCountyButtonStates() {
     for (const btn of countySelector.children) {
-      btn.classList.toggle('active', btn.dataset.agencyId === selectedAgencyId);
+      btn.classList.toggle('active', btn.dataset.agencyId === (selectedAgencyId || ''));
     }
   }
 

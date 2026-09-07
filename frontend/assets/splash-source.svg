@@ -24,5 +24,5 @@
 
   <!-- Wordmark -->
   <text x="512" y="660" font-family="'Courier New', Courier, monospace" font-weight="bold"
-        font-size="72" fill="#33ff00" text-anchor="middle" dominant-baseline="middle" letter-spacing="6">THEBUS</text>
+        font-size="72" fill="#33ff00" text-anchor="middle" dominant-baseline="middle" letter-spacing="6">TRIBUS</text>
 </svg>

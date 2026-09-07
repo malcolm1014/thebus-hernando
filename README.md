@@ -618,13 +618,40 @@ bus positions are the one part of this app that genuinely can't work
 offline (a cached bus position is actively misleading, not just stale),
 so those are only overlaid when the device has a connection.
 
+**County selector**: one button per agency in the current dataset
+(built from `dataset.agencies`, never hardcoded -- see "Multi-agency
+architecture" above), plus a "TRI-COUNTY" button showing every county
+at once. TRI-COUNTY is the default whenever a new/updated dataset
+loads; picking an individual county re-fits the map to just that
+region's stops/routes -- drawing all ~3,600 stops across 3 counties at
+once is both visually unreadable and unnecessary render cost when a
+rider only cares about one county. Real-time bus tracking is gated per
+selection (see below) -- switching to a county with no live feed says
+so honestly instead of leaving "CONNECTING..." up forever.
+
 **Scope note**: real-time positions are Hernando-only for now -- this
-pass added Pasco/HART/Citrus to the offline SCHEDULE data and trip
-planner (see "Multi-agency architecture" above), not to the live map.
-PascoGo does publish its own GTFS-Realtime feed (unlike Hernando, which
-needed the Passio reverse-engineering below) and HART has 2 GTFS-RT
-feeds of its own -- wiring either in is a real, scoped-out next step,
-not a limitation of the architecture.
+pass added Pasco/HART/Citrus to the offline SCHEDULE data, the trip
+planner, and the map's static routes/stops (see "Multi-agency
+architecture" above), not to live tracking. Checked properly, not
+assumed: **PascoGo does NOT use Passio** -- their real-time vendor is
+**myStop® by Avail Technologies** (confirmed via Pasco County's own
+real-time-transit page), served from the same `gopasco.rideralerts.com`
+domain as their static GTFS feed. No public API docs were found for it;
+getting it working would need the same reverse-engineering approach as
+Hernando's Passio integration below (inspect the InfoPoint map widget's
+own network traffic for the real request shape), just against a
+different vendor. **HART has an official, documented GTFS-Realtime
+feed via Swiftly** (`https://api.goswift.ly/real-time/tampa/gtfs-rt-
+vehicle-positions`, plus a separate trip-updates endpoint) -- the
+"correct" path rather than reverse-engineering, but it needs an API key
+(requested via a Google Form at `goswift.ly/realtime-api-key`, not
+instant self-service) and standard GTFS-RT is protobuf-encoded, not
+plain JSON like Passio, so consuming it needs a new
+`gtfs-realtime-bindings`-style dependency this backend doesn't have
+yet. Wiring either in is a real, scoped-out next step, not a limitation
+of the architecture -- HART's is better-documented and won't break
+unannounced, but needs the API key request done first; Pasco's needs
+live investigation with a real browser against their tracker page.
 
 Real-time positions come from **Passio GO**
 (`https://passiogo.com/?agency=5732`), the same tracker Hernando County
