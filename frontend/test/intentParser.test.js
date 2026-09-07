@@ -34,6 +34,15 @@ test('classifyIntent: "schedule" alone still resolves to LIST_ROUTE_STOPS, not F
   assert.equal(TheBusIntentParser.classifyIntent("what's the schedule for route 7"), 'LIST_ROUTE_STOPS');
 });
 
+test('classifyIntent: "timetable"/"all the times" resolves to SHOW_TIMETABLE, distinct from LIST_ROUTE_STOPS\' bare "schedule"', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('timetable for route 7'), 'SHOW_TIMETABLE');
+  assert.equal(TheBusIntentParser.classifyIntent('give me all the times for route 7'), 'SHOW_TIMETABLE');
+  assert.equal(TheBusIntentParser.classifyIntent("what's the full schedule for route 7"), 'SHOW_TIMETABLE');
+  // The exact regression-guarded phrase above must still go to LIST_ROUTE_STOPS -- SHOW_TIMETABLE's cues
+  // deliberately don't match bare "schedule" alone.
+  assert.equal(TheBusIntentParser.classifyIntent("what's the schedule for route 7"), 'LIST_ROUTE_STOPS');
+});
+
 test('normalize: expands real road-type and directional abbreviations both ways', () => {
   assert.equal(TheBusIntentParser.normalize('Forest Oaks Boulevard'), 'forest oaks blvd');
   assert.equal(TheBusIntentParser.normalize('Forest Oaks Blvd'), 'forest oaks blvd');

@@ -307,8 +307,27 @@ runtime and falls back to `localStorage` automatically.
    supported intents -- the former is the one query type that needs
    network (see "Nearest stop to anywhere" below), the latter answers
    from the stop's *entire* day's schedule rather than just what's
-   still upcoming.
-6. A genuinely **broad, no-stop-named question** ("when's the next
+   still upcoming, alongside a same-day average headway (see below).
+   `TIMETABLE FOR ROUTE <N>` (optionally `AT <stop>`) is a further
+   distinct intent (`SHOW_TIMETABLE`) -- every published time today for
+   one route at one stop, not just what's upcoming (`FIND_NEXT_ARRIVAL`)
+   or the bare list of stops with no times at all (`LIST_ROUTE_STOPS`);
+   defaults to the route's first stop with published times when none is
+   named, clearly labeled as a default rather than guessing silently.
+   Deliberately narrow trigger phrasing ("timetable", "all the times",
+   "full schedule") so it doesn't collide with the existing, already
+   regression-guarded bare "schedule" cue that resolves to
+   `LIST_ROUTE_STOPS` (see `intentParser.test.js`).
+6. **Headway summaries**: `computeHeadwayMinutes` (`queryEngine.js`)
+   buckets a route's published stop times into rough time-of-day windows
+   (early morning / morning rush / midday / evening rush / evening) and
+   reports the median gap between consecutive departures in whichever
+   window "now" falls into -- "ABOUT EVERY 20 MIN, MORNING RUSH" -- when
+   asking about a specific named route (a bare "next bus" listing across
+   every route at a stop doesn't show this, to avoid repeating it per
+   route). Needs at least 3 same-window departures to call it a real
+   pattern rather than a coincidence of 2 trips.
+7. A genuinely **broad, no-stop-named question** ("when's the next
    bus?", "when is the next stop?", "any buses nearby", "is the bus
    close") is treated as shorthand for "at my current location" rather
    than a failure to parse -- both `FIND_NEXT_ARRIVAL` and
@@ -515,6 +534,15 @@ Google's Geocoding/Places API in place of (or alongside) Nominatim in
 `geocode.js` -- but that needs a Google Cloud billing account and API
 key, a decision left to you rather than made here.
 
+`geocode.js`'s `VIEWBOX` (and the ", FL" appended to every search query)
+covers the whole tri-county service area, not just Hernando -- this was
+still hardcoded to Hernando County alone through the initial Pasco/HART
+expansion (a stale leftover from before this app covered more than one
+county), found and fixed during a later research/refinement pass. Left
+unwidened, a landmark search for a real Tampa or Pasco business would
+have been biased toward, or could have missed in favor of, an unrelated
+same-named result outside Hernando entirely.
+
 ## Planning a trip from A to B
 
 `PLAN_TRIP` ("I need to go from Publix Lakewood Plaza to Kass Circle",
@@ -636,13 +664,61 @@ so honestly instead of leaving "CONNECTING..." up forever.
 no live source wired in yet**. HART has an official, documented
 GTFS-Realtime feed via Swiftly (`https://api.goswift.ly/real-time/
 tampa/gtfs-rt-vehicle-positions`, plus a separate trip-updates
-endpoint) -- the "correct" path rather than reverse-engineering, but it
-needs an API key requested via a Google Form
-(`goswift.ly/realtime-api-key`, not instant self-service -- a real,
-scoped-out next step that needs that request done first) and standard
-GTFS-RT is protobuf-encoded, not plain JSON like Passio/Avail, so
-consuming it needs a new `gtfs-realtime-bindings`-style dependency this
-backend doesn't have yet.
+endpoint) -- the "correct" path rather than reverse-engineering. The
+API key request has been submitted via Swiftly's form
+(`goswift.ly/realtime-api-key`) -- Swiftly says to allow up to 5
+business days before following up at support@goswift.ly. Once the key
+arrives: standard GTFS-RT is protobuf-encoded, not plain JSON like
+Passio/Avail, so consuming it should use MobilityData's official
+`gtfs-realtime-bindings` npm package rather than a hand-rolled parser --
+unlike Passio/Avail, this is a real published spec, not an undocumented
+vendor shape needing defensive field-name guessing.
+
+### GPS refinement, vehicle allocation, and trajectory rendering
+
+A research pass across ~120 open-source transit/mapping projects (OSRM/
+Valhalla/FMM-style map-matchers, OneBusAway/Transitime's AVL trip
+matching, Leaflet-based live-transit-map viewers) surfaced techniques
+adopted here without adding any new runtime dependency -- all pure
+vanilla JS, matching this app's offline-first, no-bundler stack:
+
+- **`geoMath.js`**: nearest-point-on-polyline + bearing math. Used to
+  snap a raw vendor GPS fix onto its own route's shape before rendering
+  it (`MAX_SNAP_DISTANCE_METERS`, `liveMap.js`) -- Passio/Avail fixes
+  routinely land a lane-width or two off the real road, which reads as
+  much more precise once projected onto the route line, without ever
+  snapping an implausible/off-route fix somewhere nonsensical.
+- **`vehicleAllocation.js`**: Passio/Avail only ever report a `routeId`,
+  never a `trip_id`. This reconstructs each trip's own stop-to-stop
+  schedule from data already in the dataset (via `queryEngine.js`'s
+  `getTripsIndex()`) and scores which specific trip a live vehicle is
+  probably running, by comparing its actual position against where that
+  trip's own schedule says it should be right now -- disambiguating two
+  opposite-direction trips sharing the same stops via heading, and
+  sticky against ordinary GPS jitter between polls (`liveMap.js`'s
+  `pickTripWithStickiness`) so the match doesn't flap every ~10s poll.
+  Once a trip is confidently matched, `estimateScheduleDeviationMinutes`
+  gives a real "running ~6 min late/early" estimate in the map's bus
+  summaries -- something neither vendor's feed provides on its own.
+- **Trajectory rendering** (`liveMap.js`): marker movement is
+  interpolated between polls via `requestAnimationFrame` instead of
+  teleporting to each new position; the bus icon rotates by its reported
+  heading; clicking a route's line toggles a highlight (dims every other
+  route) via `setHighlightedRoute`; and markers fade progressively
+  during a failed/stale poll (`applyStaleFade`) instead of either
+  vanishing outright or looking falsely live forever.
+- **`geolocate.js`**: replaced the single one-shot `getCurrentPosition()`
+  read with `watchBestFix` -- watches for up to 10s, keeping whichever
+  fix reports the smallest accuracy radius, returning early once one is
+  "good enough" (20m). A real Kalman filter assumes a continuous stream
+  of readings to smooth between; this app only ever reads GPS once per
+  rider query, so a bounded best-of-several-samples approach fits the
+  actual usage pattern instead.
+- **`liveBusSanity.js`**: neither vendor's payload carries a
+  per-vehicle timestamp to check staleness against, but both have been
+  observed to report a raw `(0, 0)` "unset GPS" sentinel or coerce a bad
+  field to `NaN` -- filtered out once at `server.js`'s `/api/live-buses`
+  merge point rather than duplicated per vendor parser.
 
 `GET /api/live-buses` merges every agency with a working source via
 `Promise.allSettled` -- one vendor being down or changing its API

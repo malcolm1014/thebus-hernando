@@ -225,6 +225,7 @@
       agencyLabel: routeEntry.agencyLabel, // undefined on a single-agency dataset -- see routeLabel()
       headsign: arr.headsign,
       minutesUntil,
+      wallMinutes: wallMinutes % 1440, // raw agency-local minute-of-day (0-1439), for headway bucketing -- distinct from `clock`'s formatted string and from a past-midnight `wallMinutes` input that can be >= 1440
       clock: formatClock(wallMinutes),
       isTomorrow: !!isTomorrow, // rolled forward past midnight -- MUST be flagged, "AT 6:03 AM" bare reads as today's already-passed 6am, not tomorrow's first bus
     };
@@ -327,6 +328,59 @@
     }
     results.sort((a, b) => a.minutesUntil - b.minutesUntil);
     return results;
+  }
+
+  // Time-of-day windows for headway summaries -- a route's real
+  // cadence isn't one number all day (a route running every 15 min at
+  // rush hour might run every 45 midday), so "every ~22 min" without a
+  // window would be a misleading average of two very different
+  // realities. Boundaries are the common transit-industry rough-cut
+  // (rush/midday/evening), not this feed's own service pattern.
+  const HEADWAY_WINDOWS = [
+    { startMin: 0, endMin: 6 * 60, label: 'EARLY MORNING' },
+    { startMin: 6 * 60, endMin: 9 * 60, label: 'MORNING RUSH' },
+    { startMin: 9 * 60, endMin: 15 * 60, label: 'MIDDAY' },
+    { startMin: 15 * 60, endMin: 19 * 60, label: 'EVENING RUSH' },
+    { startMin: 19 * 60, endMin: 24 * 60, label: 'EVENING' },
+  ];
+  const MIN_ARRIVALS_FOR_HEADWAY = 3; // need at least 2 gaps to call it a real "every N min" pattern, not a coincidence of 2 trips
+
+  function median(numbers) {
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  }
+
+  /**
+   * "About every N min" for one route at one stop, for the time-of-day
+   * window containing `now` -- the median gap between consecutive
+   * TODAY's departures in that window. Returns null when there isn't
+   * enough same-window service to call it a real pattern (a route that
+   * only runs twice in a window has one gap, not a headway).
+   */
+  function computeHeadwayMinutes(stopId, routeId, now) {
+    const all = dayArrivals(stopId, routeId, now);
+    if (all.length < MIN_ARRIVALS_FOR_HEADWAY) return null;
+
+    const tz = agencyTz();
+    const nowMinutes = getAgencyClock(now, tz).minutes;
+    const window = HEADWAY_WINDOWS.find((w) => nowMinutes >= w.startMin && nowMinutes < w.endMin) || HEADWAY_WINDOWS[HEADWAY_WINDOWS.length - 1];
+
+    const inWindow = all
+      .filter((a) => a.wallMinutes >= window.startMin && a.wallMinutes < window.endMin)
+      .sort((a, b) => a.wallMinutes - b.wallMinutes);
+    if (inWindow.length < MIN_ARRIVALS_FOR_HEADWAY) return null;
+
+    const gaps = [];
+    for (let i = 1; i < inWindow.length; i++) gaps.push(inWindow[i].wallMinutes - inWindow[i - 1].wallMinutes);
+    return { minutes: Math.round(median(gaps)), windowLabel: window.label };
+  }
+
+  /** " (ABOUT EVERY N MIN, WINDOW)" or "" when there's no confident headway to report -- a small, reusable suffix so any answer can mention frequency without duplicating the wording. */
+  function headwaySuffix(stopId, routeId, now) {
+    const headway = computeHeadwayMinutes(stopId, routeId, now);
+    if (!headway) return '';
+    return ` (ABOUT EVERY ${headway.minutes} MIN, ${headway.windowLabel})`;
   }
 
   /**
@@ -608,6 +662,16 @@
       return `${routeLabel(a)} -- ${timing} TOWARD ${a.headsign.toUpperCase() || 'N/A'}`;
     });
 
+    // Only appended (once, to the first line) when the rider named a
+    // SPECIFIC route ("when's the 5 at Main St") -- a bare "next bus"
+    // listing already shows up to 3 arrivals across every route at this
+    // stop, so repeating a headway note on each one would be noise, not
+    // signal; asking about one named route is the "how often does the 5
+    // run here?" case the headway summary actually answers.
+    if (parsed.route && lines.length > 0) {
+      lines[0] += headwaySuffix(parsed.stop.id, parsed.route.id, now);
+    }
+
     // A multi-route stop shouldn't just silently drop a route the rider
     // might be waiting for -- call out routes with zero upcoming
     // arrivals by name instead of collapsing everything into one
@@ -660,6 +724,48 @@
     return `${label} STOPS:\n${names.map((n, i) => `${i + 1}. ${n.toUpperCase()}`).join('\n')}`;
   }
 
+  /**
+   * The WHOLE day's published departure times for one route at one
+   * stop -- distinct from FIND_NEXT_ARRIVAL (only what's still upcoming)
+   * and LIST_ROUTE_STOPS (every stop, no times at all). When no stop is
+   * named, defaults to the first stop on the route that actually has
+   * published times, clearly labeled as a default rather than silently
+   * guessing which stop the rider meant.
+   */
+  function answerShowTimetable(parsed, now) {
+    if (!parsed.route) {
+      return "I DIDN'T CATCH A ROUTE. TRY: TIMETABLE FOR ROUTE 10. OR: TIMETABLE FOR ROUTE 10 AT <STOP NAME>.";
+    }
+    if (parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
+    if (parsed.stop && parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
+    const route = dataset.routes[parsed.route.id];
+
+    let stop;
+    let defaulted = false;
+    if (parsed.stop) {
+      stop = dataset.stops[parsed.stop.id];
+      const servesStop = stop.routes.some((r) => r.routeId === route.id);
+      if (!servesStop) {
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+      }
+    } else {
+      stop = route.stopIds
+        .map((id) => dataset.stops[id])
+        .find((s) => s && s.routes.some((r) => r.routeId === route.id && r.arrivals.length > 0));
+      if (!stop) return `NO PUBLISHED TIMES ON FILE FOR ${routeLabel(route)}.`;
+      defaulted = true;
+    }
+
+    const all = dayArrivals(stop.id, route.id, now);
+    if (all.length === 0) {
+      return `NO SERVICE TODAY FOR ${routeLabel(route)} AT ${stop.name.toUpperCase()}.`;
+    }
+    const stopLabel = defaulted ? `${stop.name.toUpperCase()} (FIRST STOP ON THIS ROUTE)` : stop.name.toUpperCase();
+    const times = all.map((a) => a.clock).join(', ');
+    return `${routeLabel(route)} TIMETABLE AT ${stopLabel} (${all.length} TRIPS TODAY)${headwaySuffix(stop.id, route.id, now)}:\n${times}`;
+  }
+
   /** "FIRST BUS" / "LAST BUS" -- distinct from "next bus": needs the whole day's schedule (dayArrivals), not just what's still upcoming, so it still answers correctly even late at night after service has ended for the day. */
   function answerFindFirstLastBus(parsed, now) {
     if (!parsed.stop) {
@@ -693,7 +799,20 @@
     }
     const picked = parsed.firstOrLast === 'last' ? all[all.length - 1] : all[0];
     const label = parsed.firstOrLast === 'last' ? 'LAST BUS' : 'FIRST BUS';
-    return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}`;
+
+    // Same-route service span, first bus to last -- distinct from
+    // headwaySuffix's "right now" time-of-day window: a rider asking
+    // "first/last bus" is naturally asking about the WHOLE day's
+    // service, so the average across the full span is the more useful
+    // number here, not just whichever window "now" happens to fall in.
+    let spanNote = '';
+    if (all.length >= 2) {
+      const spanMinutes = all[all.length - 1].minutesUntil - all[0].minutesUntil;
+      const avgHeadway = Math.round(spanMinutes / (all.length - 1));
+      spanNote = `\n${all.length} TRIPS TODAY, AVG SERVICE ABOUT EVERY ${avgHeadway} MIN (${all[0].clock} - ${all[all.length - 1].clock})`;
+    }
+
+    return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}${spanNote}`;
   }
 
   // Recognizes the rider referring to their own position instead of a
@@ -1117,7 +1236,7 @@
   function answerBareLookup(parsed, now) {
     if (parsed.stop) return answerFindNextArrival(parsed, now);
     if (parsed.route) return answerListRouteStops(parsed);
-    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?";
+    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- TIMETABLE FOR ROUTE <N>?\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?";
   }
 
   /**
@@ -1137,6 +1256,7 @@
       case 'FIND_NEXT_ARRIVAL': return answerFindNextArrival(parsed, now);
       case 'FIND_STOP_LOCATION': return answerFindStopLocation(parsed);
       case 'LIST_ROUTE_STOPS': return answerListRouteStops(parsed);
+      case 'SHOW_TIMETABLE': return answerShowTimetable(parsed, now);
       default:
         return answerBareLookup(parsed, now);
     }

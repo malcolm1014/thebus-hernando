@@ -757,3 +757,88 @@ test('agencyMinutesNow: matches the agency-local minutes-past-midnight getAgency
   // TUESDAY_9AM_ET is 13:00 UTC == 9:00am America/New_York == 540 minutes past midnight.
   assert.equal(TheBusQueryEngine.agencyMinutesNow(TUESDAY_9AM_ET), 9 * 60);
 });
+
+// 7:00am Eastern -- inside the "MORNING RUSH" (6-9am) headway window.
+const TUESDAY_7AM_ET = new Date('2026-08-25T11:00:00Z');
+
+function datasetWithEvenHeadway() {
+  return buildMockDataset({
+    stops: {
+      S1: {
+        id: 'S1', name: 'Avalon Publix', lat: 28.50, lon: -82.60,
+        routes: [{
+          routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#ff0000',
+          // 6:00, 6:20, 6:40, 7:00, 7:20am -- every 20 min, all within the same MORNING RUSH window.
+          arrivals: [360, 380, 400, 420, 440].map((minutes, i) => ({ tripId: `T${i}`, serviceId: 'WEEKDAY', headsign: 'Downtown', minutes })),
+        }],
+      },
+    },
+  });
+}
+
+test('FIND_NEXT_ARRIVAL for a named route: reports a headway summary when there\'s a real same-window pattern', async () => {
+  TheBusQueryEngine.setDataset(datasetWithEvenHeadway());
+  const answer = await TheBusQueryEngine.answerQuery('when is route 1 at Avalon Publix', TUESDAY_7AM_ET);
+  assert.match(answer, /ABOUT EVERY 20 MIN, MORNING RUSH/);
+});
+
+test('FIND_NEXT_ARRIVAL: does not report a headway when asking about every route generally, not one named route', async () => {
+  TheBusQueryEngine.setDataset(datasetWithEvenHeadway());
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_7AM_ET);
+  assert.doesNotMatch(answer, /ABOUT EVERY/);
+});
+
+test('FIND_NEXT_ARRIVAL: no headway reported with too few same-window arrivals to call it a real pattern', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset()); // default fixture: only one R1 arrival (8am) falls in any single window
+  const answer = await TheBusQueryEngine.answerQuery('when is route 1 at Avalon Publix', TUESDAY_9AM_ET);
+  assert.doesNotMatch(answer, /ABOUT EVERY/);
+});
+
+test('FIND_FIRST_LAST_BUS: reports the day\'s trip count and average service span between first and last bus', async () => {
+  TheBusQueryEngine.setDataset(datasetWithEvenHeadway());
+  const answer = await TheBusQueryEngine.answerQuery('first bus at Avalon Publix', TUESDAY_7AM_ET);
+  assert.match(answer, /5 TRIPS TODAY, AVG SERVICE ABOUT EVERY 20 MIN \(6:00 AM - 7:20 AM\)/);
+});
+
+test('SHOW_TIMETABLE: lists every published time today for a named route at a named stop', async () => {
+  TheBusQueryEngine.setDataset(datasetWithEvenHeadway());
+  const answer = await TheBusQueryEngine.answerQuery('timetable for route 1 at Avalon Publix', TUESDAY_7AM_ET);
+  assert.match(answer, /ROUTE 1 RED TIMETABLE AT AVALON PUBLIX \(5 TRIPS TODAY\)/);
+  assert.match(answer, /ABOUT EVERY 20 MIN, MORNING RUSH/);
+  assert.match(answer, /6:00 AM, 6:20 AM, 6:40 AM, 7:00 AM, 7:20 AM/);
+});
+
+test('SHOW_TIMETABLE: defaults to the route\'s first stop with published times when no stop is named, and labels it as a default', async () => {
+  TheBusQueryEngine.setDataset(datasetWithEvenHeadway());
+  const answer = await TheBusQueryEngine.answerQuery('timetable for route 1', TUESDAY_7AM_ET);
+  assert.match(answer, /AVALON PUBLIX \(FIRST STOP ON THIS ROUTE\)/);
+});
+
+test('SHOW_TIMETABLE: asks for a route when none was named', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('show me the timetable', TUESDAY_9AM_ET);
+  assert.match(answer, /DIDN'T CATCH A ROUTE/);
+});
+
+test('SHOW_TIMETABLE: rejects a named stop that route doesn\'t actually serve', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('timetable for route 1 at Pine Island Park', TUESDAY_9AM_ET);
+  // Pine Island Park (S2) IS served by R1 in the default mock dataset -- use a route that genuinely doesn't serve it instead.
+  assert.doesNotMatch(answer, /DOES NOT SERVE/);
+  const answer2 = await TheBusQueryEngine.answerQuery('timetable for the blue route at Pine Island Park', TUESDAY_9AM_ET);
+  assert.match(answer2, /DOES NOT SERVE PINE ISLAND PARK/);
+});
+
+test('FIND_FIRST_LAST_BUS: no span note with only a single trip all day', async () => {
+  const dataset = buildMockDataset({
+    stops: {
+      S1: {
+        id: 'S1', name: 'Avalon Publix', lat: 28.50, lon: -82.60,
+        routes: [{ routeId: 'R1', shortName: '', longName: 'Route 1 Red', color: '#ff0000', arrivals: [{ tripId: 'T1', serviceId: 'WEEKDAY', headsign: 'Downtown', minutes: 480 }] }],
+      },
+    },
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  const answer = await TheBusQueryEngine.answerQuery('first bus at Avalon Publix', TUESDAY_9AM_ET);
+  assert.doesNotMatch(answer, /TRIPS TODAY/);
+});

@@ -123,12 +123,24 @@
       { pattern: /\broute\b/i, weight: 1 },
       { pattern: /\bschedule\b/i, weight: 1 },
     ],
+    // A genuinely distinct question from LIST_ROUTE_STOPS's bare
+    // "schedule" cue (kept deliberately narrow, not just "schedule"
+    // alone, to protect the existing regression guard: "what's the
+    // schedule for route 7" must keep resolving to LIST_ROUTE_STOPS,
+    // see intentParser.test.js) -- "timetable"/"all the times" asks for
+    // every published departure, not the route's stop list.
+    SHOW_TIMETABLE: [
+      { pattern: /\btimetable\b/i, weight: 3 },
+      { pattern: /\bfull schedule\b/i, weight: 3 },
+      { pattern: /\ball (the )?times\b/i, weight: 2 },
+      { pattern: /\bevery (departure|time|arrival)\b/i, weight: 2 },
+    ],
   };
 
   // Tie-break order when two intents land on the exact same score
   // (rare, since weights are hand-tuned to avoid it) -- most-specific
   // intent wins, same reasoning as the old first-match-wins list order.
-  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
+  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
 
   function classifyIntent(text) {
     let bestIntent = 'UNKNOWN';
