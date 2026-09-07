@@ -98,6 +98,19 @@
       { pattern: /\bclose by\b/i, weight: 1 },
       { pattern: /\bin the area\b/i, weight: 1 },
       { pattern: /\baround (me|here)\b/i, weight: 1 },
+      // "What about X?" is a real, common follow-up shape in an ongoing
+      // conversation ("what about route 5?", "what about the next one?")
+      // -- without this, "what about route 5?" alone scores 0 on this
+      // intent and 1 on LIST_ROUTE_STOPS (the bare word "route"), so it
+      // was answered as "list every stop on route 5" instead of "what's
+      // route 5's next arrival at the stop we were just discussing."
+      // Weighted to beat that 1-point LIST_ROUTE_STOPS collision but stay
+      // low enough that a genuinely unrelated "how about" phrase
+      // elsewhere doesn't hijack an otherwise-clear different intent.
+      // Consumed by queryEngine.js's conversational-context tracking
+      // (lastContext) -- see its own comment for how a bare follow-up
+      // like this actually gets answered once classified correctly here.
+      { pattern: /\b(what about|how about)\b/i, weight: 2 },
     ],
     FIND_STOP_LOCATION: [
       { pattern: /\bwhere\b/i, weight: 2 },

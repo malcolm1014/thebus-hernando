@@ -206,9 +206,71 @@
   const mapView = document.getElementById('map-view');
   const mapStatus = document.getElementById('map-status');
   const busListPanel = document.getElementById('bus-list-panel');
+  const countySelector = document.getElementById('county-selector');
   let mapInitialized = false;
   let lastDataset = null;
   let busListOpen = false;
+
+  // ---- County map selector: one button per agency in the current
+  // dataset, letting a rider narrow the Live Map to just one county
+  // instead of the whole (visually unreadable at HART's density) merged
+  // region at once. Hidden entirely for a single-agency dataset (no
+  // `dataset.agencies`, or exactly one entry) -- nothing to choose
+  // between, and this preserves the original single-county behavior
+  // unchanged. ----
+  let selectedAgencyId = null;
+  let countySelectorBuiltForVersion = null;
+
+  // Real-time bus positions (Passio) are Hernando-only today -- see
+  // README's "Live map" scope note. A single, easy-to-extend list here
+  // rather than baking that assumption into liveMap.js itself.
+  const LIVE_TRACKING_AGENCIES = new Set(['hernando']);
+
+  function agencyIdsOf(dataset) {
+    return dataset && dataset.agencies ? Object.keys(dataset.agencies) : [];
+  }
+
+  /** (Re)builds the county buttons if the dataset's agency list has changed since the last build; otherwise just refreshes which one shows as active. */
+  function buildCountySelector(dataset) {
+    const ids = agencyIdsOf(dataset);
+    if (ids.length < 2) {
+      countySelector.hidden = true;
+      countySelectorBuiltForVersion = null;
+      selectedAgencyId = null;
+      return;
+    }
+
+    if (countySelectorBuiltForVersion !== dataset.version) {
+      countySelector.textContent = '';
+      for (const id of ids) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'county-btn';
+        btn.dataset.agencyId = id;
+        btn.textContent = dataset.agencies[id].label.toUpperCase();
+        btn.addEventListener('click', () => selectCounty(id));
+        countySelector.appendChild(btn);
+      }
+      countySelectorBuiltForVersion = dataset.version;
+    }
+
+    if (!selectedAgencyId || !ids.includes(selectedAgencyId)) selectedAgencyId = ids[0];
+    countySelector.hidden = false;
+    updateCountyButtonStates();
+  }
+
+  function updateCountyButtonStates() {
+    for (const btn of countySelector.children) {
+      btn.classList.toggle('active', btn.dataset.agencyId === selectedAgencyId);
+    }
+  }
+
+  function selectCounty(agencyId) {
+    selectedAgencyId = agencyId;
+    updateCountyButtonStates();
+    TheBusLiveMap.drawStaticData(lastDataset, agencyId);
+    refreshLiveTrackingForSelection();
+  }
 
   /** Renders the "N BUSES ACTIVE" dropdown: one line per active bus, the stop it's nearest to right now, and that route's next scheduled arrival there. Uses real DOM nodes (not innerHTML) so stop/route names never need HTML-escaping. */
   function renderBusList() {
@@ -257,6 +319,57 @@
     commandInput.focus();
   }
 
+  /**
+   * Starts (or stops) live bus polling based on which county is
+   * currently selected -- real-time positions only exist for Hernando
+   * today (LIVE_TRACKING_AGENCIES), so switching to Pasco or HART says
+   * so plainly instead of leaving "CONNECTING TO LIVE TRACKER..." up
+   * forever for a county that will never actually connect. Pulled out
+   * of showMap() so selectCounty() can re-run it on every switch, not
+   * just once when the map tab first opens.
+   */
+  function refreshLiveTrackingForSelection() {
+    TheBusLiveMap.stopPolling();
+    closeBusList(); // don't leave a stale bus list open across a county switch
+
+    if (selectedAgencyId && !LIVE_TRACKING_AGENCIES.has(selectedAgencyId)) {
+      const label = lastDataset.agencies[selectedAgencyId].label.toUpperCase();
+      mapStatus.textContent = `REAL-TIME TRACKING NOT YET AVAILABLE FOR ${label} -- ROUTES/STOPS STILL SHOWN`;
+      return;
+    }
+
+    // Routes/stops (colored lines + dots) always draw from the offline
+    // dataset regardless of connectivity -- only the street-map
+    // background underneath them and live bus positions actually need a
+    // network. Said outright rather than left for the rider to notice a
+    // plain dark map on their own: the whole point of "works offline" is
+    // that the app is honest about the one part of this view that
+    // genuinely can't be.
+    if (!navigator.onLine) {
+      mapStatus.textContent = 'OFFLINE -- SHOWING ROUTES/STOPS ONLY (NO STREET MAP, NO LIVE BUSES)';
+      return;
+    }
+
+    mapStatus.textContent = 'CONNECTING TO LIVE TRACKER...';
+    TheBusLiveMap.startPolling(10000, (result) => {
+      // navigator.onLine only means the device has SOME network path,
+      // not that tile.openstreetmap.org specifically is reachable (a
+      // captive wifi portal or a firewall blocking just tile servers
+      // would leave this true while the basemap still never loads) --
+      // isBasemapHealthy() catches that case too, so the message stays
+      // honest either way.
+      const basemapNote = TheBusLiveMap.isBasemapHealthy() ? '' : ' (NO STREET MAP)';
+      if (!result.ok) {
+        mapStatus.textContent = `LIVE TRACKER UNAVAILABLE -- ROUTES/STOPS STILL SHOWN${basemapNote}`;
+      } else if (result.count === 0) {
+        mapStatus.textContent = `NO BUSES CURRENTLY RUNNING${basemapNote}`;
+      } else {
+        mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE${basemapNote}`;
+      }
+      if (busListOpen) renderBusList(); // keep it live while open, same cadence as the map markers
+    });
+  }
+
   function showMap() {
     tabMap.classList.add('active');
     tabMap.setAttribute('aria-selected', 'true');
@@ -272,37 +385,11 @@
     // Leaflet can't detect its container becoming visible on its own --
     // it was 0x0 (display:none) until just now.
     TheBusLiveMap.invalidateSize();
-    if (lastDataset) TheBusLiveMap.drawStaticData(lastDataset);
-
-    // Routes/stops (colored lines + dots) always draw from the offline
-    // dataset regardless of connectivity -- only the street-map
-    // background underneath them and live bus positions actually need a
-    // network. Said outright rather than left for the rider to notice a
-    // plain dark map on their own: the whole point of "works offline" is
-    // that the app is honest about the one part of this view that
-    // genuinely can't be.
-    if (!navigator.onLine) {
-      mapStatus.textContent = 'OFFLINE -- SHOWING ROUTES/STOPS ONLY (NO STREET MAP, NO LIVE BUSES)';
-    } else {
-      mapStatus.textContent = 'CONNECTING TO LIVE TRACKER...';
-      TheBusLiveMap.startPolling(10000, (result) => {
-        // navigator.onLine only means the device has SOME network path,
-        // not that tile.openstreetmap.org specifically is reachable (a
-        // captive wifi portal or a firewall blocking just tile servers
-        // would leave this true while the basemap still never loads) --
-        // isBasemapHealthy() catches that case too, so the message stays
-        // honest either way.
-        const basemapNote = TheBusLiveMap.isBasemapHealthy() ? '' : ' (NO STREET MAP)';
-        if (!result.ok) {
-          mapStatus.textContent = `LIVE TRACKER UNAVAILABLE -- ROUTES/STOPS STILL SHOWN${basemapNote}`;
-        } else if (result.count === 0) {
-          mapStatus.textContent = `NO BUSES CURRENTLY RUNNING${basemapNote}`;
-        } else {
-          mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE${basemapNote}`;
-        }
-        if (busListOpen) renderBusList(); // keep it live while open, same cadence as the map markers
-      });
+    if (lastDataset) {
+      buildCountySelector(lastDataset);
+      TheBusLiveMap.drawStaticData(lastDataset, selectedAgencyId);
     }
+    refreshLiveTrackingForSelection();
   }
 
   tabTerminal.addEventListener('click', showTerminal);
@@ -400,7 +487,10 @@
     lastDataset = data;
     // Covers the case where the rider switched to the map tab before this
     // ran -- the map would've drawn with no routes/stops yet otherwise.
-    if (mapInitialized && !mapView.hidden) TheBusLiveMap.drawStaticData(lastDataset);
+    if (mapInitialized && !mapView.hidden) {
+      buildCountySelector(lastDataset);
+      TheBusLiveMap.drawStaticData(lastDataset, selectedAgencyId);
+    }
   }
 
   async function boot() {

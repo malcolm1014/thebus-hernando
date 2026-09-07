@@ -28,11 +28,27 @@
     return lastLocation;
   }
 
+  let lastContext = { stop: null, route: null };
+  function setLastContextStop(stop) {
+    lastContext = stop ? { stop: { id: stop.id, name: stop.name }, route: null } : lastContext;
+  }
+  function updateContextFromParsed(parsed) {
+    if (parsed.stop && parsed.stop.alternatives.length === 0) {
+      lastContext = {
+        stop: { id: parsed.stop.id, name: parsed.stop.name },
+        route: (parsed.route && parsed.route.alternatives.length === 0) ? { id: parsed.route.id, name: parsed.route.name } : null,
+      };
+    } else if (parsed.route && parsed.route.alternatives.length === 0) {
+      lastContext = { stop: lastContext.stop, route: { id: parsed.route.id, name: parsed.route.name } };
+    }
+  }
+
   function setDataset(data) {
     dataset = data;
     tripsIndexCache = null;
     stopTripIndexCache = null;
     nearbyStopsIndexCache = null;
+    lastContext = { stop: null, route: null };
     // Each stop's own name is always a candidate; its `aliases` (informal
     // shorthand pre-generated server-side at ETL time -- see backend's
     // enrich.js -- absent on any dataset synced before that feature

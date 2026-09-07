@@ -273,6 +273,36 @@ body {
   filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
 }
 
+/* One button per agency in the current dataset -- top-right so it never
+   collides with Leaflet's own top-left zoom control. Hidden entirely
+   (via [hidden] below) for a single-agency dataset, where there's
+   nothing to choose between. */
+#county-selector {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+}
+#county-selector[hidden] { display: none; }
+
+.county-btn {
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 16px;
+  padding: 6px 10px;
+  min-height: 36px;
+  border: 1px solid var(--fg-dim);
+  cursor: pointer;
+}
+.county-btn.active { color: var(--fg-bright); border-color: var(--fg-bright); background: rgba(51, 255, 0, 0.15); }
+.county-btn:active { background: rgba(51, 255, 0, 0.15); }
+
 #map-status {
   position: absolute;
   bottom: 8px;

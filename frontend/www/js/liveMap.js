@@ -68,8 +68,24 @@
     return map;
   }
 
-  /** Draws routes + stops from the already-synced offline dataset. Call once the dataset is loaded, and again if it's ever re-synced. */
-  function drawStaticData(dataset) {
+  /**
+   * Draws routes + stops from the already-synced offline dataset. Call
+   * once the dataset is loaded, and again if it's ever re-synced (or the
+   * rider switches which county's map they're looking at).
+   *
+   * `agencyId` (optional): restricts drawing to one agency's own
+   * routes/stops and fits the view to just that region -- a merged
+   * multi-agency dataset (Hernando+Pasco+HART) covers a huge geographic
+   * area at wildly different densities (HART's 2,246 stops in urban
+   * Tampa vs. Hernando's 369 rural ones); drawing and fitting bounds to
+   * ALL of it at once was both visually unreadable (everything shrinks
+   * to indistinguishable dots) and a real render-cost concern on a
+   * phone. Omitted (the default), draws everything -- the exact
+   * original single-agency behavior, so a non-merged dataset (or a
+   * caller that genuinely wants the full regional overview) is
+   * unaffected.
+   */
+  function drawStaticData(dataset, agencyId) {
     if (!map) return;
     currentDataset = dataset;
     routeLayerGroup.clearLayers();
@@ -78,6 +94,7 @@
     const bounds = [];
 
     for (const route of Object.values(dataset.routes)) {
+      if (agencyId && route.agencyId !== agencyId) continue;
       if (!route.shapePoints || route.shapePoints.length === 0) continue;
       L.polyline(route.shapePoints, {
         color: route.color || '#33ff00',
@@ -88,6 +105,7 @@
     }
 
     for (const stop of Object.values(dataset.stops)) {
+      if (agencyId && stop.agencyId !== agencyId) continue;
       if (stop.lat == null || stop.lon == null) continue;
       const marker = L.circleMarker([stop.lat, stop.lon], {
         radius: 4,

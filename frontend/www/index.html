@@ -57,6 +57,13 @@
 
       <div id="map-view" hidden>
         <div id="map"></div>
+        <!-- Populated dynamically from the loaded dataset's agencies{}
+             metadata (see app.js's buildCountySelector) -- never
+             hardcoded to specific counties, so this scales to however
+             many agencies are actually merged into the current dataset
+             (today: Hernando/Pasco/HART; hidden entirely for a
+             single-agency dataset with nothing to choose between). -->
+        <div id="county-selector" hidden role="tablist" aria-label="Select county map"></div>
         <button type="button" id="map-status" aria-expanded="false" aria-controls="bus-list-panel">CONNECTING TO LIVE TRACKER...</button>
         <div id="bus-list-panel" hidden></div>
       </div>
