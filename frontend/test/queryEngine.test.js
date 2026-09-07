@@ -330,10 +330,15 @@ test('FIND_NEXT_ARRIVAL: broad "when is the next stop?" phrasing (not "bus") sti
 });
 
 test('FIND_NEXT_ARRIVAL: "any buses nearby" and "is the bus close" -- broad phrasings with no "when"/"next" at all -- still classify as FIND_NEXT_ARRIVAL and resolve via GPS instead of falling to the generic help text', async () => {
-  TheBusQueryEngine.setDataset(buildMockDataset());
   global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5001, lon: -82.6001 }) };
   try {
     for (const q of ['any buses nearby', 'is the bus close']) {
+      // Fresh dataset (and so fresh conversational context) per query --
+      // otherwise the second iteration would correctly pick up the first
+      // query's resolved stop as a follow-up (a real, separate feature;
+      // see queryEngine.test.js's own "SAME STOP AS BEFORE" tests) and
+      // never take the GPS path this test means to isolate.
+      TheBusQueryEngine.setDataset(buildMockDataset());
       const answer = await TheBusQueryEngine.answerQuery(q, TUESDAY_9AM_ET);
       assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(NEAREST TO YOU\)/, `for query: "${q}"`);
     }

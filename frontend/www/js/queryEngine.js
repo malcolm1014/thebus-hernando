@@ -559,18 +559,25 @@
 
   async function answerFindNextArrival(parsed, now) {
     let usedGps = false;
+    let usedContext = false;
     if (!parsed.stop) {
-      // No stop/landmark named at all -- fall back to the device's own
-      // GPS position instead of immediately giving up, same "pull my
-      // location" behavior requested for FIND_NEAREST_STOP.
-      const pos = await TheBusGeolocate.getCurrentPosition();
-      if (!pos) {
-        return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>? OR TURN ON LOCATION AND JUST ASK: WHEN IS THE NEXT BUS?";
+      if (lastContext.stop) {
+        parsed = { ...parsed, stop: { id: lastContext.stop.id, name: lastContext.stop.name, score: 1, alternatives: [] } };
+        if (!parsed.route && lastContext.route) {
+          parsed = { ...parsed, route: { id: lastContext.route.id, name: lastContext.route.name, score: 1, alternatives: [] } };
+        }
+        usedContext = true;
+      } else {
+        const pos = await TheBusGeolocate.getCurrentPosition();
+        if (!pos) {
+          return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>? OR TURN ON LOCATION AND JUST ASK: WHEN IS THE NEXT BUS?";
+        }
+        const nearest = nearestStopToPoint(pos.lat, pos.lon);
+        if (!nearest) return 'NO STOPS ON FILE.';
+        parsed = { ...parsed, stop: { id: nearest.stop.id, name: nearest.stop.name, score: 1, alternatives: [] } };
+        usedGps = true;
+        setLastContextStop(nearest.stop);
       }
-      const nearest = nearestStopToPoint(pos.lat, pos.lon);
-      if (!nearest) return 'NO STOPS ON FILE.';
-      parsed = { ...parsed, stop: { id: nearest.stop.id, name: nearest.stop.name, score: 1, alternatives: [] } };
-      usedGps = true;
     }
     if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
     if (parsed.route && parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
@@ -613,7 +620,9 @@
         : `${routeLabel(r)} -- NO MORE SERVICE TODAY`);
     }
 
-    const stopLabel = usedGps ? `${stop.name.toUpperCase()} (NEAREST TO YOU)` : stop.name.toUpperCase();
+    const stopLabel = usedGps ? `${stop.name.toUpperCase()} (NEAREST TO YOU)`
+      : usedContext ? `${stop.name.toUpperCase()} (SAME STOP AS BEFORE)`
+      : stop.name.toUpperCase();
     if (lines.length === 0) {
       return `NO SERVICE TODAY AT ${stopLabel}.`;
     }
