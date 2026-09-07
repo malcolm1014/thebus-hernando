@@ -658,7 +658,16 @@
   /** "FIRST BUS" / "LAST BUS" -- distinct from "next bus": needs the whole day's schedule (dayArrivals), not just what's still upcoming, so it still answers correctly even late at night after service has ended for the day. */
   function answerFindFirstLastBus(parsed, now) {
     if (!parsed.stop) {
-      return "I DIDN'T CATCH A STOP NAME. TRY: FIRST BUS AT <STOP NAME>? OR LAST BUS AT <STOP NAME>?";
+      if (!lastContext.stop) {
+        return "I DIDN'T CATCH A STOP NAME. TRY: FIRST BUS AT <STOP NAME>? OR LAST BUS AT <STOP NAME>?";
+      }
+      // Bare follow-up ("what about the last bus?") -- no GPS fallback
+      // here (this intent never had one), just the stop/route we were
+      // last discussing.
+      parsed = { ...parsed, stop: { id: lastContext.stop.id, name: lastContext.stop.name, score: 1, alternatives: [] } };
+      if (!parsed.route && lastContext.route) {
+        parsed = { ...parsed, route: { id: lastContext.route.id, name: lastContext.route.name, score: 1, alternatives: [] } };
+      }
     }
     if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
     if (parsed.route && parsed.route.alternatives.length > 0) return disambiguationMessage(parsed.route, 'ROUTES');
@@ -691,6 +700,7 @@
   function knownStopAnswer(landmarkLabel, stop, now) {
     const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
     setLastLocation(stop.lat, stop.lon, stop.name);
+    setLastContextStop(stop);
     return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(stop, now)}`;
   }
 
@@ -699,6 +709,7 @@
     if (!best) return 'NO STOPS ON FILE.';
     const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
     setLastLocation(best.stop.lat, best.stop.lon, best.stop.name);
+    setLastContextStop(best.stop);
     return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(best.stop, now)}`;
   }
 
@@ -1112,6 +1123,7 @@
     setLastLocation(null, null, null);
     if (!dataset) return 'DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.';
     const parsed = TheBusIntentParser.parseQuery(text, index);
+    updateContextFromParsed(parsed);
 
     switch (parsed.intent) {
       case 'PLAN_TRIP': return answerPlanTrip(parsed, now);

@@ -695,3 +695,47 @@ test('PLAN_TRIP: never proposes a cross-agency-style walking transfer between tw
   const answer = await TheBusQueryEngine.answerQuery('from Far Stop A to Far Stop B', TUESDAY_9AM_ET);
   assert.match(answer, /COULDN'T FIND A BUS CONNECTION/);
 });
+
+test('conversational context: "what about route 5?" with no stop named inherits the stop from the previous turn', async () => {
+  const dataset = buildMockDataset();
+  dataset.routes.R5 = { id: 'R5', shortName: '5', longName: 'Route 5', color: '#0f0', stopIds: ['S1'], shapePoints: [] };
+  dataset.stops.S1.routes.push({
+    routeId: 'R5', shortName: '5', longName: 'Route 5', color: '#0f0',
+    arrivals: [{ tripId: 'T5', serviceId: 'WEEKDAY', headsign: 'Somewhere', minutes: 9 * 60 + 20 }],
+  });
+  TheBusQueryEngine.setDataset(dataset);
+  await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_9AM_ET);
+  const answer = await TheBusQueryEngine.answerQuery('what about route 5?', TUESDAY_9AM_ET);
+  assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(SAME STOP AS BEFORE\)/);
+  assert.match(answer, /ROUTE 5/);
+  assert.doesNotMatch(answer, /ROUTE 1 RED/, 'should be filtered to route 5 only, not every route at the stop');
+});
+
+test('conversational context: "what about the next one?" with no stop or route named repeats the previous stop AND route', async () => {
+  const dataset = buildMockDataset();
+  TheBusQueryEngine.setDataset(dataset);
+  await TheBusQueryEngine.answerQuery('when is route 1 at Avalon Publix', TUESDAY_9AM_ET);
+  const answer = await TheBusQueryEngine.answerQuery('what about the next one?', TUESDAY_9AM_ET);
+  assert.match(answer, /NEXT ARRIVALS AT AVALON PUBLIX \(SAME STOP AS BEFORE\)/);
+  assert.match(answer, /ROUTE 1 RED/);
+});
+
+test('conversational context: a fresh, explicit stop clears any stale route filter from a previous turn', async () => {
+  const dataset = buildMockDataset();
+  TheBusQueryEngine.setDataset(dataset);
+  await TheBusQueryEngine.answerQuery('when is route 1 at Avalon Publix', TUESDAY_9AM_ET);
+  await TheBusQueryEngine.answerQuery('when is the next bus at Pine Island Park', TUESDAY_9AM_ET);
+  const answer = await TheBusQueryEngine.answerQuery('what about the next one?', TUESDAY_9AM_ET);
+  // Should still be talking about Pine Island Park (the most recent
+  // explicit stop), not silently jump back to Avalon Publix.
+  assert.match(answer, /PINE ISLAND PARK \(SAME STOP AS BEFORE\)/);
+});
+
+test('conversational context: never fires for a fresh query that already names its own stop', async () => {
+  const dataset = buildMockDataset();
+  TheBusQueryEngine.setDataset(dataset);
+  await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_9AM_ET);
+  const answer = await TheBusQueryEngine.answerQuery('when is the next bus at Pine Island Park', TUESDAY_9AM_ET);
+  assert.match(answer, /PINE ISLAND PARK/);
+  assert.doesNotMatch(answer, /SAME STOP AS BEFORE/);
+});
