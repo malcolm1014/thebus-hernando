@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
+const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
 const { geocode } = require('./src/geocode');
 const { fetchStaticMap } = require('./src/staticmap');
 const { createRateLimiter } = require('./src/rateLimit');
@@ -94,20 +95,39 @@ app.post('/api/refresh', express.json(), async (req, res) => {
 
 /**
  * GET /api/live-buses
- * Proxies Passio GO's real-time vehicle-position feed (see src/passio.js
- * for why this goes through our backend rather than being called
- * directly from the app). Requires network -- unlike the schedule data,
- * this is never cached client-side, since a stale bus position is
- * actively misleading rather than just outdated.
+ * Merges live vehicle positions from every agency with a working
+ * real-time source -- currently Hernando (Passio GO, src/passio.js) and
+ * PascoGo (Avail/myStop, src/pascoRealtime.js); HART has no source
+ * wired in yet (see README's "Live map" section). Each source is
+ * fetched independently via Promise.allSettled so one vendor being
+ * down/changed doesn't blank out the other's real buses -- the same
+ * "one bad source shouldn't break everything" approach etl.js already
+ * takes for a single agency's schedule feed failing. Requires network
+ * -- unlike the schedule data, this is never cached client-side, since
+ * a stale bus position is actively misleading rather than just outdated.
  */
 app.get('/api/live-buses', async (req, res) => {
-  try {
-    const result = await fetchLiveBuses();
-    res.json(result);
-  } catch (err) {
-    console.error('[server] live-buses fetch failed:', err);
-    res.status(502).json({ error: 'live bus data unavailable', message: err.message });
+  const sources = [
+    { agencyId: 'hernando', fetch: fetchLiveBuses },
+    { agencyId: 'pasco', fetch: fetchPascoLiveBuses },
+  ];
+  const results = await Promise.allSettled(sources.map((s) => s.fetch()));
+
+  const buses = [];
+  let anySucceeded = false;
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled') {
+      anySucceeded = true;
+      for (const bus of result.value.buses) buses.push({ ...bus, agencyId: sources[i].agencyId });
+    } else {
+      console.error(`[server] live-buses fetch failed for ${sources[i].agencyId}:`, result.reason);
+    }
+  });
+
+  if (!anySucceeded) {
+    return res.status(502).json({ error: 'live bus data unavailable' });
   }
+  res.json({ buses, fetchedAt: new Date().toISOString() });
 });
 
 /**

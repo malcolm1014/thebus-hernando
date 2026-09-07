@@ -159,13 +159,20 @@
 
   let onBusesUpdated = null;
   let lastBuses = [];
+  // Which agency's buses to show -- null/falsy means every agency the
+  // backend has a live source for (matches drawStaticData's own
+  // "falsy agencyId = no filter" convention). Set via startPolling()'s
+  // 3rd argument so switching the county selector also narrows which
+  // buses are drawn, not just which stops/routes.
+  let currentAgencyFilter = null;
 
   async function refreshBuses() {
     if (!map || !currentDataset) return;
     try {
       const res = await fetch(`${TheBusSync.API_BASE}/api/live-buses`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { buses } = await res.json();
+      const { buses: allBuses } = await res.json();
+      const buses = currentAgencyFilter ? allBuses.filter((b) => b.agencyId === currentAgencyFilter) : allBuses;
       lastBuses = buses;
 
       const seenIds = new Set();
@@ -209,10 +216,12 @@
    * visible; pair with stopPolling() when it's hidden.
    * @param {number} intervalMs
    * @param {(result: {ok: boolean, count: number}) => void} [onUpdate] -- called after each poll so the UI can show e.g. "7 buses active" / a connection problem
+   * @param {string|null} [agencyFilter] -- only show this agency's buses (falsy = every agency with a live source)
    */
-  function startPolling(intervalMs, onUpdate) {
+  function startPolling(intervalMs, onUpdate, agencyFilter) {
     stopPolling();
     onBusesUpdated = onUpdate || null;
+    currentAgencyFilter = agencyFilter || null;
     refreshBuses();
     pollTimer = setInterval(refreshBuses, intervalMs || 10000);
   }

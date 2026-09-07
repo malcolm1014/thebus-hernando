@@ -224,7 +224,7 @@
   // Real-time bus positions (Passio) are Hernando-only today -- see
   // README's "Live map" scope note. A single, easy-to-extend list here
   // rather than baking that assumption into liveMap.js itself.
-  const LIVE_TRACKING_AGENCIES = new Set(['hernando']);
+  const LIVE_TRACKING_AGENCIES = new Set(['hernando', 'pasco']);
 
   function agencyIdsOf(dataset) {
     return dataset && dataset.agencies ? Object.keys(dataset.agencies) : [];
@@ -341,12 +341,15 @@
 
   /**
    * Starts (or stops) live bus polling based on which county is
-   * currently selected -- real-time positions only exist for Hernando
-   * today (LIVE_TRACKING_AGENCIES), so switching to Pasco or HART says
-   * so plainly instead of leaving "CONNECTING TO LIVE TRACKER..." up
-   * forever for a county that will never actually connect. Pulled out
-   * of showMap() so selectCounty() can re-run it on every switch, not
-   * just once when the map tab first opens.
+   * currently selected -- real-time positions only exist for the
+   * agencies in LIVE_TRACKING_AGENCIES (Hernando + Pasco today; HART has
+   * no source wired in yet, see README), so switching to HART says so
+   * plainly instead of leaving "CONNECTING TO LIVE TRACKER..." up
+   * forever for a county that will never actually connect. Selecting
+   * TRI-COUNTY (selectedAgencyId === null) polls every source at once,
+   * unfiltered -- see startPolling()'s own agencyFilter param. Pulled
+   * out of showMap() so selectCounty() can re-run it on every switch,
+   * not just once when the map tab first opens.
    */
   function refreshLiveTrackingForSelection() {
     TheBusLiveMap.stopPolling();
@@ -387,7 +390,7 @@
         mapStatus.textContent = `${result.count} BUS${result.count === 1 ? '' : 'ES'} ACTIVE${basemapNote}`;
       }
       if (busListOpen) renderBusList(); // keep it live while open, same cadence as the map markers
-    });
+    }, selectedAgencyId);
   }
 
   function showMap() {

@@ -63,8 +63,11 @@ thebus-hernando/
                                writeDataset() below, right before bytes
                                hit disk -- see "Keeping the payload lean"
       passio.js                proxies Passio GO's real-time bus-position
-                               feed (see "Live map" below) -- unofficial,
-                               undocumented, reverse-engineered
+                               feed (Hernando only, see "Live map" below)
+                               -- unofficial, undocumented, reverse-engineered
+      pascoRealtime.js          same idea, PascoGo's own real-time vendor
+                               (Avail/myStop, a DIFFERENT vendor than
+                               Passio -- see "Live map" below)
       geocode.js                proxies OpenStreetMap Nominatim to resolve
                                a place name ("Springstead High School") to
                                coordinates for "nearest stop to X" queries
@@ -629,29 +632,27 @@ rider only cares about one county. Real-time bus tracking is gated per
 selection (see below) -- switching to a county with no live feed says
 so honestly instead of leaving "CONNECTING..." up forever.
 
-**Scope note**: real-time positions are Hernando-only for now -- this
-pass added Pasco/HART/Citrus to the offline SCHEDULE data, the trip
-planner, and the map's static routes/stops (see "Multi-agency
-architecture" above), not to live tracking. Checked properly, not
-assumed: **PascoGo does NOT use Passio** -- their real-time vendor is
-**myStop® by Avail Technologies** (confirmed via Pasco County's own
-real-time-transit page), served from the same `gopasco.rideralerts.com`
-domain as their static GTFS feed. No public API docs were found for it;
-getting it working would need the same reverse-engineering approach as
-Hernando's Passio integration below (inspect the InfoPoint map widget's
-own network traffic for the real request shape), just against a
-different vendor. **HART has an official, documented GTFS-Realtime
-feed via Swiftly** (`https://api.goswift.ly/real-time/tampa/gtfs-rt-
-vehicle-positions`, plus a separate trip-updates endpoint) -- the
-"correct" path rather than reverse-engineering, but it needs an API key
-(requested via a Google Form at `goswift.ly/realtime-api-key`, not
-instant self-service) and standard GTFS-RT is protobuf-encoded, not
-plain JSON like Passio, so consuming it needs a new
-`gtfs-realtime-bindings`-style dependency this backend doesn't have
-yet. Wiring either in is a real, scoped-out next step, not a limitation
-of the architecture -- HART's is better-documented and won't break
-unannounced, but needs the API key request done first; Pasco's needs
-live investigation with a real browser against their tracker page.
+**Scope note**: real-time positions cover Hernando + Pasco; **HART has
+no live source wired in yet**. HART has an official, documented
+GTFS-Realtime feed via Swiftly (`https://api.goswift.ly/real-time/
+tampa/gtfs-rt-vehicle-positions`, plus a separate trip-updates
+endpoint) -- the "correct" path rather than reverse-engineering, but it
+needs an API key requested via a Google Form
+(`goswift.ly/realtime-api-key`, not instant self-service -- a real,
+scoped-out next step that needs that request done first) and standard
+GTFS-RT is protobuf-encoded, not plain JSON like Passio/Avail, so
+consuming it needs a new `gtfs-realtime-bindings`-style dependency this
+backend doesn't have yet.
+
+`GET /api/live-buses` merges every agency with a working source via
+`Promise.allSettled` -- one vendor being down or changing its API
+doesn't blank out the other's real buses, the same "one bad source
+shouldn't break everything" approach `etl.js` already takes for a
+single agency's schedule feed failing. Each bus is tagged with its
+`agencyId` so the client can filter markers to match the Live Map's
+county selector (`liveMap.js`'s `startPolling(intervalMs, onUpdate,
+agencyFilter)`) -- picking a single county only shows that county's
+buses; TRI-COUNTY shows every agency's at once.
 
 Real-time positions come from **Passio GO**
 (`https://passiogo.com/?agency=5732`), the same tracker Hernando County
@@ -680,6 +681,29 @@ match anything in the dataset, the client falls back to Passio's own
 of the route's real color -- verify this once you've seen it during
 actual service hours, and adjust `liveMap.js`/`passio.js` if the IDs
 turn out not to align after all.
+
+PascoGo's real-time positions come from a **different vendor** --
+checked properly, not assumed to be the same as Hernando's: PascoGo's
+tracker (`https://gopasco.rideralerts.com/InfoPoint/`) is Avail
+Technologies' "InfoPoint"/**myStop®** product (confirmed by its own
+"Powered by avail" footer and `MyAvail.*` JS bundle names), unrelated
+to Passio. `backend/src/pascoRealtime.js` replicates its own request
+shape the same way `passio.js` does for Hernando -- found by inspecting
+the InfoPoint widget's real network traffic, not documented publicly:
+`GET rest/Routes/GetVisibleRoutes` for the route list (cached 10
+minutes -- it barely changes), then `GET
+rest/Vehicles/GetAllVehiclesForRoutes?routeIDs=<every route id, comma-
+separated>` for live positions, confirmed to accept every route in one
+call with no authentication needed for either endpoint. **The exact
+vehicle field names are unverified against a live payload** -- no buses
+were running at the hour this was built (confirmed via the page's own
+clock, well outside Pasco's daytime service hours) -- so
+`normalizeVehicle()` defensively checks several plausible Avail
+field-name casings (`Latitude`/`lat`, `Heading`/`CalculatedCourse`/
+`Direction`, etc.) rather than committing to one guess; confirm the
+real names against a live response during weekday daytime service and
+trim the fallback list down, the same verification MANUAL_TEST_SCRIPT.md
+already asks for on other unconfirmed-until-real-service-hours behavior.
 
 ## Keeping the payload lean
 
