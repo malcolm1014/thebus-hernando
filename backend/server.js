@@ -6,6 +6,7 @@ const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
 const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
+const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { fetchStaticMap } = require('./src/staticmap');
 const { createRateLimiter } = require('./src/rateLimit');
@@ -105,6 +106,16 @@ app.post('/api/refresh', express.json(), async (req, res) => {
  * takes for a single agency's schedule feed failing. Requires network
  * -- unlike the schedule data, this is never cached client-side, since
  * a stale bus position is actively misleading rather than just outdated.
+ *
+ * GTFS-refinement hardening: neither vendor's payload carries a
+ * per-vehicle timestamp to check staleness against (checked both --
+ * see passio.js/pascoRealtime.js), so the one garbage-data check that
+ * IS possible without new data is applied here, once, at the merge
+ * point -- see liveBusSanity.js -- rather than trusting either vendor's
+ * numeric fields blindly (a non-numeric string silently coerces to NaN
+ * upstream, and Passio/Avail have both been observed to report a raw
+ * (0, 0) "unset GPS" sentinel for a vehicle that hasn't gotten a real
+ * fix yet).
  */
 app.get('/api/live-buses', async (req, res) => {
   const sources = [
@@ -113,7 +124,7 @@ app.get('/api/live-buses', async (req, res) => {
   ];
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
 
-  const buses = [];
+  let buses = [];
   let anySucceeded = false;
   results.forEach((result, i) => {
     if (result.status === 'fulfilled') {
@@ -123,6 +134,7 @@ app.get('/api/live-buses', async (req, res) => {
       console.error(`[server] live-buses fetch failed for ${sources[i].agencyId}:`, result.reason);
     }
   });
+  buses = filterPlausibleBuses(buses);
 
   if (!anySucceeded) {
     return res.status(502).json({ error: 'live bus data unavailable' });

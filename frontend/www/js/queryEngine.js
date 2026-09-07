@@ -810,7 +810,7 @@
     }
     if (!place) {
       console.log('[thebus:tier] NETWORK -> not found', { query: normalizedLandmark });
-      return { type: 'unavailable', message: `COULDN'T FIND "${landmarkText.toUpperCase()}" NEAR HERNANDO COUNTY. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.` };
+      return { type: 'unavailable', message: `COULDN'T FIND "${landmarkText.toUpperCase()}" IN THE TRI-COUNTY AREA. TRY A NEARBY ROAD OR A BETTER-KNOWN LANDMARK -- VERY SMALL LOCAL BUSINESSES SOMETIMES AREN'T IN THE MAP DATA THIS APP USES.` };
     }
 
     console.log('[thebus:tier] NETWORK (geocoded, folded into tiers 2/3 for next time)', { query: normalizedLandmark, lat: place.lat, lon: place.lon });

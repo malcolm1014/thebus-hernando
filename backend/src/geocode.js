@@ -27,10 +27,16 @@
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 
-// Hernando County, FL bounding box (lon1,lat1,lon2,lat2) -- biases/
-// restricts results to the county so "Publix" resolves to a local one,
-// not the chain's headquarters or a same-named place in another state.
-const VIEWBOX = '-82.75,28.65,-82.35,28.25';
+// Tri-county service area bounding box (lon1,lat1,lon2,lat2): Hernando,
+// Pasco, and Hillsborough (HART/Tampa) combined -- biases/restricts
+// results to this region so "Publix" resolves to a local one, not the
+// chain's headquarters or a same-named place in another state. This
+// used to be Hernando County alone ('-82.75,28.65,-82.35,28.25'); left
+// unwidened through the Pasco/HART expansion, a landmark search for a
+// real Tampa or Pasco business would have been biased toward -- or
+// outright missed in favor of -- an unrelated same-named result outside
+// this region entirely.
+const VIEWBOX = '-82.75,28.65,-82.05,27.65';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 // Without a cap, a stream of distinct junk queries (abuse, or just an
@@ -72,7 +78,13 @@ async function geocode(query) {
   if (cached && Date.now() < cached.expiresAt) return cached.data;
 
   const url = new URL(`${NOMINATIM_BASE}/search`);
-  url.searchParams.set('q', `${query}, Hernando County, FL`);
+  // Just ", FL" -- not a specific county name -- since this now serves
+  // landmark lookups anywhere in the tri-county area (see VIEWBOX above,
+  // widened the same way); naming "Hernando County" here would actively
+  // steer Nominatim's own text match toward Hernando even for a Pasco or
+  // Tampa business, on top of the geographic viewbox bias already doing
+  // that job correctly.
+  url.searchParams.set('q', `${query}, FL`);
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('limit', '1');
   url.searchParams.set('viewbox', VIEWBOX);
