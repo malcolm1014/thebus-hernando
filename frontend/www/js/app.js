@@ -547,4 +547,28 @@
   }
 
   boot();
+
+  // ---- Android hardware back button ----
+  // A well-documented, recurring Capacitor gotcha (capacitorjs.com/docs/
+  // android/troubleshooting; ionic-team/capacitor #4317/#4300): with no
+  // handler at all, Android's default is to exit the app on ANY
+  // back-press, regardless of what's on screen -- an open onboarding
+  // modal, an open bus list, or the Live Map tab would all just quit the
+  // app instead of doing the obviously-expected thing (close the modal,
+  // go back to the terminal). Requires @capacitor/app (see package.json)
+  // -- NOT YET INSTALLED/BUILT OR VERIFIED ON A REAL DEVICE as of this
+  // commit (this sandbox has no Android runtime to test against); run
+  // `npm install` and confirm on-device before relying on this. Falls
+  // back to a no-op outside the Capacitor shell (plain browser dev
+  // server), same pattern storage.js already uses for its own optional
+  // native APIs.
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+    window.Capacitor.Plugins.App.addListener('backButton', () => {
+      if (!onboardLocation.hidden) { onboardLocation.hidden = true; return; }
+      if (!onboardHelp.hidden) { onboardHelp.hidden = true; return; }
+      if (busListOpen) { closeBusList(); return; }
+      if (!mapView.hidden) { showTerminal(); return; }
+      window.Capacitor.Plugins.App.exitApp();
+    });
+  }
 })();
