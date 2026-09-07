@@ -739,3 +739,21 @@ test('conversational context: never fires for a fresh query that already names i
   assert.match(answer, /PINE ISLAND PARK/);
   assert.doesNotMatch(answer, /SAME STOP AS BEFORE/);
 });
+
+test('getTripsIndex: reconstructs each trip\'s ordered stop sequence from the per-stop arrivals data', () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const trips = TheBusQueryEngine.getTripsIndex();
+  const t1 = trips.get('T1');
+  assert.equal(t1.routeId, 'R1');
+  assert.equal(t1.serviceId, 'WEEKDAY');
+  // T1 only has a published time at S1 (8am) in the mock dataset -- S2's
+  // entry for R1 carries no arrivals at all, so T1 is legitimately a
+  // single-stop trip from this data's point of view.
+  assert.deepEqual(t1.stops, [{ stopId: 'S1', minutes: 8 * 60 }]);
+});
+
+test('agencyMinutesNow: matches the agency-local minutes-past-midnight getAgencyClock derives internally', () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  // TUESDAY_9AM_ET is 13:00 UTC == 9:00am America/New_York == 540 minutes past midnight.
+  assert.equal(TheBusQueryEngine.agencyMinutesNow(TUESDAY_9AM_ET), 9 * 60);
+});

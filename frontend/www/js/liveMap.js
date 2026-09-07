@@ -8,6 +8,11 @@
  * Uses L.circleMarker / L.divIcon throughout instead of Leaflet's
  * default L.marker so the app never depends on the default marker
  * image assets -- one less thing to keep bundled/in sync.
+ *
+ * Depends on geoMath.js (polyline snapping/bearing) and
+ * vehicleAllocation.js (which trip is this vehicle probably running) --
+ * both must load before this file, same as its existing dependency on
+ * TheBusQueryEngine/TheBusSync being loaded first.
  */
 (function (global) {
   let map = null;
@@ -15,6 +20,7 @@
   let stopLayerGroup = null;
   let busLayerGroup = null;
   let pollTimer = null;
+  let currentPollIntervalMs = 10000;
   let currentDataset = null;
   const busMarkersById = new Map();
 
@@ -65,7 +71,34 @@
     stopLayerGroup = L.layerGroup().addTo(map);
     busLayerGroup = L.layerGroup().addTo(map);
 
+    // Trajectory rendering: clicking empty map background resets the
+    // "highlight one route" state set by clickRouteToHighlight below.
+    map.on('click', () => setHighlightedRoute(null));
+
     return map;
+  }
+
+  // --- Trajectory rendering: route highlight toggle ---------------------
+  // routeId -> its L.Polyline, so a click on one route can dim every
+  // OTHER route's opacity instead of redrawing the whole layer -- the
+  // same "show all vs. one highlighted route" pattern used by other open
+  // transit-map viewers (OneBusAway's, gtfspy-webviz) surveyed for this.
+  const routeLinesById = new Map();
+  let highlightedRouteId = null;
+  const ROUTE_DIM_OPACITY = 0.2;
+  const ROUTE_NORMAL_OPACITY = 0.85;
+  const ROUTE_HIGHLIGHT_WEIGHT = 6;
+  const ROUTE_NORMAL_WEIGHT = 4;
+
+  function setHighlightedRoute(routeId) {
+    highlightedRouteId = (highlightedRouteId === routeId) ? null : routeId;
+    for (const [id, line] of routeLinesById) {
+      if (!highlightedRouteId || id === highlightedRouteId) {
+        line.setStyle({ opacity: ROUTE_NORMAL_OPACITY, weight: ROUTE_HIGHLIGHT_WEIGHT * (id === highlightedRouteId ? 1 : ROUTE_NORMAL_WEIGHT / ROUTE_HIGHLIGHT_WEIGHT) });
+      } else {
+        line.setStyle({ opacity: ROUTE_DIM_OPACITY, weight: ROUTE_NORMAL_WEIGHT });
+      }
+    }
   }
 
   /**
@@ -90,17 +123,26 @@
     currentDataset = dataset;
     routeLayerGroup.clearLayers();
     stopLayerGroup.clearLayers();
+    routeLinesById.clear();
+    highlightedRouteId = null;
 
     const bounds = [];
 
     for (const route of Object.values(dataset.routes)) {
       if (agencyId && route.agencyId !== agencyId) continue;
       if (!route.shapePoints || route.shapePoints.length === 0) continue;
-      L.polyline(route.shapePoints, {
+      const line = L.polyline(route.shapePoints, {
         color: route.color || '#33ff00',
-        weight: 4,
-        opacity: 0.85,
+        weight: ROUTE_NORMAL_WEIGHT,
+        opacity: ROUTE_NORMAL_OPACITY,
       }).addTo(routeLayerGroup);
+      // Click a route's own line to highlight just that route (dim the
+      // rest); click it again, or empty map, to go back to showing all.
+      line.on('click', (e) => {
+        L.DomEvent.stopPropagation(e); // don't also trigger the map's own click handler (which resets the highlight)
+        setHighlightedRoute(route.id);
+      });
+      routeLinesById.set(route.id, line);
       for (const pt of route.shapePoints) bounds.push(pt);
     }
 
@@ -157,6 +199,111 @@
     return found ? found.id : null;
   }
 
+  // --- GPS refinement: snap a raw vendor fix onto the route's own shape -
+  // A bus's raw lat/lon from Passio/Avail routinely sits a lane-width or
+  // two off the actual road centerline (ordinary consumer GPS error) --
+  // visually distracting on a zoomed-in map where the route line is
+  // right there. Projects the fix onto route.shapePoints (see
+  // geoMath.js) and uses that instead, UNLESS the fix is implausibly far
+  // from its own supposed route (a bad vendor routeId match, or the bus
+  // genuinely off-route) -- in that case showing the raw fix is more
+  // honest than snapping it somewhere nonsensical.
+  const MAX_SNAP_DISTANCE_METERS = 300;
+
+  function snappedPosition(bus, route) {
+    if (!route || !route.shapePoints || route.shapePoints.length < 2) return null;
+    const proj = TheBusGeoMath.nearestPointOnPolyline(bus.lat, bus.lon, route.shapePoints);
+    if (!proj || proj.distMeters > MAX_SNAP_DISTANCE_METERS) return null;
+    return proj;
+  }
+
+  // --- Vehicle allocation: sticky trip assignment ------------------------
+  // busId -> { tripId, headsign, serviceId, distanceMiles, expected }.
+  // Re-matching from scratch every ~10s poll would flap between two
+  // similarly-plausible trips on ordinary GPS jitter; this keeps the
+  // previous poll's trip unless a fresh candidate is convincingly (not
+  // just marginally) closer to where its own schedule says it should be.
+  const tripAssignmentByBusId = new Map();
+  const STICKY_MARGIN_MILES = 0.15;
+
+  function pickTripWithStickiness(busId, fresh, trips, stopsById, lat, lon) {
+    const prev = tripAssignmentByBusId.get(busId);
+    if (!fresh) return prev || null; // a transient bad fix shouldn't blank out a known-good previous match
+    if (!prev || prev.tripId === fresh.tripId) return fresh;
+
+    const prevTrip = trips.get(prev.tripId);
+    if (prevTrip) {
+      const prevExpected = TheBusVehicleAllocation.expectedPositionAt(prevTrip, stopsById, prev.agencyMinutes);
+      if (prevExpected) {
+        const R = 3958.8;
+        const toRad = (d) => (d * Math.PI) / 180;
+        const dLat = toRad(prevExpected.lat - lat);
+        const dLon = toRad(prevExpected.lon - lon);
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat)) * Math.cos(toRad(prevExpected.lat)) * Math.sin(dLon / 2) ** 2;
+        const prevDistanceMiles = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        if (prevDistanceMiles <= fresh.distanceMiles + STICKY_MARGIN_MILES) {
+          return { ...prev, distanceMiles: prevDistanceMiles, expected: prevExpected };
+        }
+      }
+    }
+    return fresh;
+  }
+
+  // --- Trajectory rendering: smooth interpolation between polls ---------
+  // busId -> { from: [lat,lon], to: [lat,lon], startTime (performance.now()), durationMs }.
+  // Snapping a marker instantly to each new poll position makes movement
+  // look like a series of teleports at a 10s cadence; interpolating over
+  // a requestAnimationFrame loop between the previous and new position
+  // reads as continuous motion instead, the same trick every reviewed
+  // live-transit-map viewer uses (Leaflet.MovingMarker et al.) -- ~30
+  // lines of vanilla JS, not worth a dependency for.
+  const busAnimState = new Map();
+  let animFrameId = null;
+
+  function animationTick() {
+    animFrameId = null;
+    if (!map) return;
+    const now = performance.now();
+    for (const [busId, anim] of busAnimState) {
+      const marker = busMarkersById.get(busId);
+      if (!marker) { busAnimState.delete(busId); continue; }
+      const t = anim.durationMs > 0 ? Math.min(1, (now - anim.startTime) / anim.durationMs) : 1;
+      const lat = anim.from[0] + t * (anim.to[0] - anim.from[0]);
+      const lon = anim.from[1] + t * (anim.to[1] - anim.from[1]);
+      marker.setLatLng([lat, lon]);
+    }
+    if (pollTimer) animFrameId = requestAnimationFrame(animationTick); // keep animating only while the map view is actively polling
+  }
+
+  function ensureAnimationLoop() {
+    if (animFrameId == null && typeof requestAnimationFrame === 'function') animFrameId = requestAnimationFrame(animationTick);
+  }
+
+  // --- Trajectory rendering: fade markers during a stale/failed poll ----
+  // A failed fetch used to leave existing bus markers on screen looking
+  // exactly as "live" as a moment ago, with zero visual signal anything
+  // was wrong. Dims them progressively with how stale the last
+  // successful poll is instead of a binary show/hide.
+  let lastSuccessfulFetchAt = null;
+
+  function applyStaleFade() {
+    if (!lastSuccessfulFetchAt) return;
+    const ageMs = Date.now() - lastSuccessfulFetchAt;
+    const interval = currentPollIntervalMs || 10000;
+    let opacity = 1;
+    if (ageMs > interval * 4) opacity = 0.3;
+    else if (ageMs > interval * 1.5) opacity = 0.6;
+    for (const marker of busMarkersById.values()) marker.setOpacity(opacity);
+  }
+
+  // Real device time by default -- overridable ONLY for tests, since
+  // refreshBuses() is driven by its own setInterval rather than called
+  // with an externally-supplied `now` the way queryEngine.js's functions
+  // are, so trip-matching's schedule-window check would otherwise be
+  // coupled to whatever real wall-clock time a test happens to run at.
+  let nowFn = () => new Date();
+  function __setNowForTesting(fn) { nowFn = fn || (() => new Date()); }
+
   let onBusesUpdated = null;
   let lastBuses = [];
   // Which agency's buses to show -- null/falsy means every agency the
@@ -174,6 +321,11 @@
       const { buses: allBuses } = await res.json();
       const buses = currentAgencyFilter ? allBuses.filter((b) => b.agencyId === currentAgencyFilter) : allBuses;
       lastBuses = buses;
+      lastSuccessfulFetchAt = Date.now();
+
+      const now = nowFn();
+      const agencyMinutes = TheBusQueryEngine.agencyMinutesNow(now);
+      const trips = TheBusQueryEngine.getTripsIndex();
 
       const seenIds = new Set();
       for (const bus of buses) {
@@ -183,23 +335,50 @@
         const color = route ? (route.color || '#33ff00') : '#e0e0e0';
         const label = route ? (route.shortName || route.longName) : (bus.routeName || 'BUS');
 
+        const snapped = snappedPosition(bus, route);
+        const renderLat = snapped ? snapped.lat : bus.lat;
+        const renderLon = snapped ? snapped.lon : bus.lon;
+
+        if (matchedRouteId) {
+          const fresh = TheBusVehicleAllocation.findBestTrip({
+            trips, stopsById: currentDataset.stops, routeId: matchedRouteId,
+            lat: bus.lat, lon: bus.lon, course: bus.course,
+            agencyMinutes, now, isActiveFn: TheBusQueryEngine.isServiceActive,
+          });
+          const assignment = pickTripWithStickiness(bus.busId, fresh && { ...fresh, agencyMinutes }, trips, currentDataset.stops, bus.lat, bus.lon);
+          if (assignment) tripAssignmentByBusId.set(bus.busId, assignment);
+          else tripAssignmentByBusId.delete(bus.busId);
+        } else {
+          tripAssignmentByBusId.delete(bus.busId);
+        }
+
         let marker = busMarkersById.get(bus.busId);
         if (!marker) {
-          marker = L.marker([bus.lat, bus.lon], { icon: busDivIcon(color, bus.course) }).addTo(busLayerGroup);
+          marker = L.marker([renderLat, renderLon], { icon: busDivIcon(color, bus.course) }).addTo(busLayerGroup);
           busMarkersById.set(bus.busId, marker);
         } else {
-          marker.setLatLng([bus.lat, bus.lon]);
+          const current = marker.getLatLng();
+          busAnimState.set(bus.busId, {
+            from: [current.lat, current.lng],
+            to: [renderLat, renderLon],
+            startTime: (typeof performance !== 'undefined' ? performance.now() : Date.now()),
+            durationMs: Math.min(currentPollIntervalMs, 8000),
+          });
           marker.setIcon(busDivIcon(color, bus.course));
         }
+        marker.setOpacity(1); // a bus reporting again this poll is no longer stale, even if it was faded a moment ago
         const speedText = bus.speed != null ? `<br/>${Math.round(bus.speed)} MPH` : '';
         marker.bindPopup(`<strong>${escapeHtml(String(label).toUpperCase())}</strong>${speedText}`);
       }
+      ensureAnimationLoop();
 
       // Drop markers for buses that stopped reporting (went out of service, lost signal, etc).
       for (const [id, marker] of busMarkersById) {
         if (!seenIds.has(id)) {
           busLayerGroup.removeLayer(marker);
           busMarkersById.delete(id);
+          busAnimState.delete(id);
+          tripAssignmentByBusId.delete(id);
         }
       }
 
@@ -207,6 +386,7 @@
     } catch (err) {
       console.error('[liveMap] failed to refresh live bus positions', err);
       lastBuses = [];
+      applyStaleFade(); // a failed poll doesn't mean the buses vanished -- fade them rather than leaving them looking falsely live, or erasing them outright
       if (onBusesUpdated) onBusesUpdated({ ok: false, count: busMarkersById.size });
     }
   }
@@ -222,8 +402,9 @@
     stopPolling();
     onBusesUpdated = onUpdate || null;
     currentAgencyFilter = agencyFilter || null;
+    currentPollIntervalMs = intervalMs || 10000;
     refreshBuses();
-    pollTimer = setInterval(refreshBuses, intervalMs || 10000);
+    pollTimer = setInterval(refreshBuses, currentPollIntervalMs);
   }
 
   function stopPolling() {
@@ -231,6 +412,9 @@
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    if (animFrameId != null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+    busAnimState.clear();
     lastBuses = [];
   }
 
@@ -264,17 +448,34 @@
   }
 
   const SUMMARY_COUNTDOWN_THRESHOLD_MIN = 30;
+  const ADHERENCE_NOISE_FLOOR_MIN = 2; // don't bother reporting "1 min late" -- within normal GPS/schedule-interpolation noise
+
+  /** "" (nothing worth reporting), " -- RUNNING ~N MIN LATE", or " -- RUNNING ~N MIN EARLY", from vehicleAllocation.js's schedule-deviation estimate for this bus's currently-assigned trip. */
+  function adherenceText(bus, agencyMinutes) {
+    const assignment = tripAssignmentByBusId.get(bus.busId);
+    if (!assignment) return '';
+    const trip = TheBusQueryEngine.getTripsIndex().get(assignment.tripId);
+    if (!trip) return '';
+    const deviation = TheBusVehicleAllocation.estimateScheduleDeviationMinutes(trip, currentDataset.stops, bus.lat, bus.lon, agencyMinutes);
+    if (deviation == null || Math.abs(deviation) < ADHERENCE_NOISE_FLOOR_MIN) return '';
+    const rounded = Math.round(Math.abs(deviation));
+    return ` -- RUNNING ~${rounded} MIN ${deviation > 0 ? 'LATE' : 'EARLY'}`;
+  }
 
   /**
    * One entry per currently-active bus: which route, the stop it's
-   * nearest to right now, and that route's next SCHEDULED arrival there
-   * (from the same GTFS-derived timetable the terminal search uses --
-   * Passio's live feed has no per-trip link back to the schedule of its
-   * own, so this is the closest honest answer to "when's it getting
-   * here" without inventing a speed/distance ETA estimate).
+   * nearest to right now, that route's next SCHEDULED arrival there
+   * (from the same GTFS-derived timetable the terminal search uses), and
+   * -- when vehicle-allocation confidently matched a specific trip -- a
+   * schedule-adherence estimate for that trip. Passio/Avail's live feed
+   * has no per-trip link back to the schedule of its own, so trip
+   * matching (vehicleAllocation.js) is what makes the adherence estimate
+   * possible at all; without a confident match this still falls back to
+   * the route-level "next scheduled arrival" it always showed.
    */
   function activeBusSummaries(now) {
     if (!currentDataset) return [];
+    const agencyMinutes = TheBusQueryEngine.agencyMinutesNow(now);
     return lastBuses.map((bus) => {
       const matchedRouteId = matchRouteId(bus);
       const route = matchedRouteId ? currentDataset.routes[matchedRouteId] : null;
@@ -291,9 +492,9 @@
           : `AT ${next.clock}`)
         : 'NO MORE SCHEDULED ARRIVALS TODAY';
 
-      return { label, text: `NEAR ${nearest.stop.name.toUpperCase()} (${nearest.dist.toFixed(2)} MI) -- NEXT: ${arrivalText}` };
+      return { label, text: `NEAR ${nearest.stop.name.toUpperCase()} (${nearest.dist.toFixed(2)} MI) -- NEXT: ${arrivalText}${adherenceText(bus, agencyMinutes)}` };
     });
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy };
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, __setNowForTesting };
 })(window);

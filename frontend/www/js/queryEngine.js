@@ -132,6 +132,11 @@
     return (dataset && dataset.agencyTimezone) || 'America/New_York';
   }
 
+  /** Agency-local minutes-past-midnight for device instant `now` -- exposed so callers outside this module (liveMap.js's vehicle-allocation trip matching) can compare against the same minutes-past-midnight scale getTripsIndex()'s stop times already use, instead of re-deriving agency-local time themselves. */
+  function agencyMinutesNow(now) {
+    return getAgencyClock(now, agencyTz()).minutes;
+  }
+
   /** Is `serviceId` running on the given (already agency-local) weekday/date? */
   function isServiceActiveForClock(serviceId, dow, dateStr) {
     const svc = dataset.services[serviceId];
@@ -1137,5 +1142,5 @@
     }
   }
 
-  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive, getLastLocation };
+  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive, getLastLocation, getTripsIndex, agencyMinutesNow };
 })(window);
