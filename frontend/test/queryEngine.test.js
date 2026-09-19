@@ -603,6 +603,44 @@ test('FIND_WALKING_DIRECTIONS: GPS unavailable because the APP\'s own permission
   }
 });
 
+// Real bug: a rider hit this exact "no-fix" case indoors in a spot
+// where another app found their location fine -- neither the
+// services-disabled nor permission-denied message applies, so the only
+// way to actually diagnose it further was surfacing the real native
+// error text directly in the app's own answer.
+test('FIND_WALKING_DIRECTIONS: a genuine "no-fix" failure (neither services-disabled nor permission-denied) surfaces the real native error text so it can be diagnosed without remote-debugging tools', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = {
+    getCurrentPosition: async () => null,
+    getLastFailureReason: () => 'no-fix',
+    getLastFailureDetail: () => 'balanced-accuracy attempt: PERMISSION_DENIED: fine location required; high-accuracy attempt: TIMEOUT: no fix within deadline',
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION RIGHT NOW/);
+    assert.match(answer, /DETAIL: BALANCED-ACCURACY ATTEMPT: PERMISSION_DENIED/);
+    assert.match(answer, /HIGH-ACCURACY ATTEMPT: TIMEOUT/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: no detail available (e.g. a fake with no getLastFailureDetail at all) still answers plainly, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION RIGHT NOW/);
+    assert.doesNotMatch(answer, /DETAIL:/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
 test('FIND_WALKING_DIRECTIONS: a real route resolves the destination (via TIER 1 GTFS, same as any other landmark) and formats distance/time/steps from the plugin\'s response', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   TheBusSearchIndex.resetForTests();

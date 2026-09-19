@@ -57,6 +57,27 @@
   let lastFailureReason = null;
   function getLastFailureReason() { return lastFailureReason; }
 
+  /**
+   * The raw native error text behind the most recent 'no-fix' (or any
+   * otherwise-unexplained) failure -- surfaced all the way up into the
+   * rider-facing answer for exactly this reason (see queryEngine.js's
+   * locationFailureMessage()): a real rider hit "couldn't get your
+   * location" even indoors where another app (Google Maps) found their
+   * location fine, which means whatever's actually failing is a bug in
+   * how this app asks for a fix, not a real signal problem -- and
+   * that's only diagnosable with the ACTUAL underlying error text, not
+   * another guess. Showing it in the app itself means a rider can just
+   * relay it back verbatim, no remote-debugging tools required.
+   */
+  let lastFailureDetail = null;
+  function getLastFailureDetail() { return lastFailureDetail; }
+
+  function errorText(err) {
+    if (!err) return 'unknown error';
+    if (typeof err.message === 'string' && err.message) return err.message;
+    try { return JSON.stringify(err); } catch { return String(err); }
+  }
+
   function isServicesDisabledError(err) {
     return !!(err && typeof err.message === 'string' && /location services (are )?not enabled/i.test(err.message));
   }
@@ -93,6 +114,7 @@
 
   async function getCurrentPosition() {
     lastFailureReason = null;
+    lastFailureDetail = null;
     const Geolocation = plugin();
     if (!Geolocation) {
       lastFailureReason = 'unsupported';
@@ -132,7 +154,10 @@
         return { lat: lowAccuracyPos.coords.latitude, lon: lowAccuracyPos.coords.longitude };
       } catch (lowAccuracyErr) {
         // Not the real failure yet -- fall through to the last resort
-        // below, whose own error (if any) is what actually gets reported.
+        // below. Keep this error's text though: if the final attempt
+        // ALSO fails, both are worth showing -- the balanced-accuracy
+        // one is often the more informative of the two.
+        lastFailureDetail = `balanced-accuracy attempt: ${errorText(lowAccuracyErr)}`;
       }
 
       // watchPosition never delivered anything (some devices/emulators
@@ -143,9 +168,11 @@
     } catch (err) {
       console.error(err);
       lastFailureReason = isServicesDisabledError(err) ? 'services-disabled' : 'no-fix';
+      const highAccuracyDetail = `high-accuracy attempt: ${errorText(err)}`;
+      lastFailureDetail = lastFailureDetail ? `${lastFailureDetail}; ${highAccuracyDetail}` : highAccuracyDetail;
       return null;
     }
   }
 
-  global.TheBusGeolocate = { getCurrentPosition, getLastFailureReason, __setTimeoutMsForTesting };
+  global.TheBusGeolocate = { getCurrentPosition, getLastFailureReason, getLastFailureDetail, __setTimeoutMsForTesting };
 })(window);

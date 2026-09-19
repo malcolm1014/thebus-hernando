@@ -889,7 +889,16 @@
     } else if (reason === 'permission-denied') {
       base = "THIS APP DOESN'T HAVE PERMISSION TO USE YOUR LOCATION. GRANT LOCATION ACCESS TO THIS APP IN YOUR DEVICE SETTINGS AND TRY AGAIN.";
     } else {
-      base = "COULDN'T GET YOUR LOCATION RIGHT NOW.";
+      base = 'COULDN\'T GET YOUR LOCATION RIGHT NOW.';
+      // Neither "services off" nor "permission denied" explains a
+      // genuine fix failure -- e.g. a real rider hit this indoors where
+      // another app found their location fine, meaning this app's own
+      // request is what's actually failing. Surfacing the real native
+      // error text directly in the answer (rather than only in a
+      // console log nobody watching the phone can see) is what makes
+      // that diagnosable at all without a remote-debugging setup.
+      const detail = global.TheBusGeolocate && TheBusGeolocate.getLastFailureDetail && TheBusGeolocate.getLastFailureDetail();
+      if (detail) base += ` (DETAIL: ${detail.toUpperCase()})`;
     }
     return fallbackHint ? `${base} ${fallbackHint}` : base;
   }

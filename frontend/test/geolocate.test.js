@@ -184,3 +184,67 @@ test('getLastFailureReason: cleared back to null by a subsequent successful call
     assert.equal(TheBusGeolocate.getLastFailureReason(), null);
   });
 });
+
+// getLastFailureDetail(): a real rider hit "couldn't get your location"
+// indoors in a spot where another app (Google Maps) found their
+// location fine -- meaning the failure is a genuine bug in how this app
+// requests a fix, not a real signal problem, and only the actual native
+// error text can diagnose it further. Surfacing it directly in the
+// app's own answer (see queryEngine.js's locationFailureMessage) means
+// a rider can relay it back with no remote-debugging setup needed.
+
+test('getLastFailureDetail: null when there has been no failure at all (or none yet)', async () => {
+  await withFakeCapacitor(fakeGeolocation({ fixes: [] }), async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureDetail(), null);
+  });
+});
+
+test('getLastFailureDetail: captures the real error text when only the high-accuracy last resort fails (balanced-accuracy attempt succeeded, so it never even ran)', async () => {
+  const fake = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('no fix'); },
+    getCurrentPosition: async (opts) => {
+      if (opts.enableHighAccuracy === false) return fixedPosition(28.55, -82.65, 800);
+      throw new Error('should not be reached');
+    },
+  };
+  await withFakeCapacitor(fake, async () => {
+    const result = await TheBusGeolocate.getCurrentPosition();
+    assert.deepEqual(result, { lat: 28.55, lon: -82.65 });
+    assert.equal(TheBusGeolocate.getLastFailureDetail(), null); // no failure at all -- succeeded on the balanced-accuracy attempt
+  });
+});
+
+test('getLastFailureDetail: captures BOTH the balanced-accuracy and high-accuracy attempts\' real error text when both fail, so neither clue is lost', async () => {
+  const fake = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('no fix'); },
+    getCurrentPosition: async (opts) => {
+      if (opts.enableHighAccuracy === false) throw new Error('PERMISSION_DENIED: fine location required');
+      throw new Error('TIMEOUT: no fix within deadline');
+    },
+  };
+  await withFakeCapacitor(fake, async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    const detail = TheBusGeolocate.getLastFailureDetail();
+    assert.match(detail, /balanced-accuracy attempt: PERMISSION_DENIED: fine location required/);
+    assert.match(detail, /high-accuracy attempt: TIMEOUT: no fix within deadline/);
+  });
+});
+
+test('getLastFailureDetail: cleared back to null by a subsequent successful call', async () => {
+  const broken = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('no fix'); },
+    getCurrentPosition: async () => { throw new Error('genuinely no fix available'); },
+  };
+  await withFakeCapacitor(broken, async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.notEqual(TheBusGeolocate.getLastFailureDetail(), null);
+  });
+  await withFakeCapacitor(fakeGeolocation({ fixes: [] }), async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureDetail(), null);
+  });
+});
