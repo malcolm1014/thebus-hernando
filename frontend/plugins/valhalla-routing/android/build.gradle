@@ -9,7 +9,7 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.2.1'
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'
     }
 }
 
@@ -18,16 +18,16 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace "com.savvysecurity.thebus.valhalla"
-    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
     defaultConfig {
-        // valhalla-mobile (io.github.rallista:valhalla-mobile) itself
-        // requires minSdk 24 -- this plugin's own minSdk just mirrors
-        // that rather than silently allowing an incompatible lower
-        // value to reach the manifest merger as a confusing downstream
-        // error. See frontend's README section on this integration for
-        // why the app's own minSdk had to move to 24 too.
-        minSdkVersion 24
-        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+        // valhalla-mobile 0.6.3's own AAR manifest declares minSdk 26 --
+        // this plugin's own minSdk just mirrors that rather than
+        // silently allowing an incompatible lower value to reach the
+        // manifest merger as a confusing downstream error. See
+        // docs/valhalla-routing.md for why the app's own minSdk/
+        // compileSdk had to move too (scripts/patch-min-sdk.js).
+        minSdkVersion 26
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
         versionCode 1
         versionName "0.1.0"
     }
@@ -62,7 +62,7 @@ dependencies {
     // at all. See docs/valhalla-routing.md for the full integration
     // story (why this library, what it does/doesn't do yet, and how
     // routing tiles get onto the device).
-    implementation 'io.github.rallista:valhalla-mobile:0.6.1'
+    implementation 'io.github.rallista:valhalla-mobile:0.6.3'
     implementation 'io.github.rallista:valhalla-models:0.5.2'
     implementation 'io.github.rallista:valhalla-models-config:0.5.2'
 }

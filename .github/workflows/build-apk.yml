@@ -55,10 +55,11 @@ jobs:
         # build, same reasoning as the signing-config step below.
         run: node scripts/patch-android-manifest.js
 
-      - name: Bump minSdkVersion for valhalla-mobile (plugins/valhalla-routing)
+      - name: Bump min/compile/target SDK for valhalla-mobile (plugins/valhalla-routing)
         # `cap add android` regenerates android/variables.gradle from
-        # Capacitor's template (minSdk 22) every run -- reapplied every
-        # build, same reasoning as the manifest patch above.
+        # Capacitor's template (minSdk 22, compileSdk/targetSdk 34)
+        # every run -- reapplied every build, same reasoning as the
+        # manifest patch above.
         run: node scripts/patch-min-sdk.js
 
       - name: Generate icon/splash assets
@@ -102,6 +103,13 @@ jobs:
               }
           }
           EOF
+
+      - name: Accept Android SDK licenses (API 36, for valhalla-mobile)
+        # GitHub-hosted runners ship most licenses pre-accepted, but not
+        # necessarily for a brand-new API level Gradle needs to
+        # auto-download (compileSdk 36, bumped above) -- accepting again
+        # here is a no-op when already accepted, never destructive.
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
 
       - name: Build debug APK
         working-directory: frontend/android

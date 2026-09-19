@@ -11,6 +11,8 @@ backend/.env
 # Frontend / Capacitor
 frontend/android/
 frontend/ios/
+frontend/plugins/*/android/build/
+frontend/plugins/*/android/.gradle/
 frontend/www/data/transit_data.json
 frontend/.env
 
