@@ -73,6 +73,48 @@ test('getCurrentPosition: falls back to a one-shot read when watchPosition never
   });
 });
 
+// Real bug hit indoors on a real device: a high-accuracy GPS request
+// consistently failed to get any fix at all indoors, even though
+// @capacitor/geolocation runs on Google's Fused Location Provider,
+// which CAN resolve an approximate fix indoors via WiFi/cell -- but
+// only when asked for balanced accuracy instead of GPS-grade accuracy.
+test('getCurrentPosition: when watchPosition times out, tries a BALANCED-accuracy one-shot before the high-accuracy one-shot -- a coarser WiFi/cell fix indoors beats no fix at all', async () => {
+  const requestedAccuracy = [];
+  const fake = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('no fix'); }, // caught silently inside watchBestFix itself
+    getCurrentPosition: async (opts) => {
+      requestedAccuracy.push(opts.enableHighAccuracy);
+      if (opts.enableHighAccuracy === false) return fixedPosition(28.55, -82.65, 800); // coarse WiFi/cell fix -- exactly what's available indoors
+      throw new Error('no GPS fix available'); // a real high-accuracy request genuinely fails indoors
+    },
+  };
+  await withFakeCapacitor(fake, async () => {
+    const result = await TheBusGeolocate.getCurrentPosition();
+    assert.deepEqual(result, { lat: 28.55, lon: -82.65 });
+    // Resolved on the low-accuracy attempt -- the high-accuracy one-shot fallback was never even reached.
+    assert.deepEqual(requestedAccuracy, [false]);
+  });
+});
+
+test('getCurrentPosition: if the balanced-accuracy fallback ALSO fails, still tries the original high-accuracy one-shot as a last resort rather than giving up early', async () => {
+  const requestedAccuracy = [];
+  const fake = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('no fix'); },
+    getCurrentPosition: async (opts) => {
+      requestedAccuracy.push(opts.enableHighAccuracy);
+      if (opts.enableHighAccuracy === false) throw new Error('no network/WiFi fix available either');
+      return fixedPosition(28.5, -82.6, 15);
+    },
+  };
+  await withFakeCapacitor(fake, async () => {
+    const result = await TheBusGeolocate.getCurrentPosition();
+    assert.deepEqual(result, { lat: 28.5, lon: -82.6 });
+    assert.deepEqual(requestedAccuracy, [false, true]);
+  });
+});
+
 test('getCurrentPosition: an error thrown mid-flow resolves to null rather than rejecting', async () => {
   const broken = {
     checkPermissions: async () => { throw new Error('plugin not ready'); },

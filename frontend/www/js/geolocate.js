@@ -27,6 +27,7 @@
 (function (global) {
   let GPS_TIMEOUT_MS = 10000; // overridable ONLY for tests, via __setTimeoutMsForTesting -- so a "no fix ever arrives" test doesn't have to wait out a real 10s timer
   const GOOD_ENOUGH_ACCURACY_METERS = 20; // stop watching early once a fix reports at least this good
+  const LOW_ACCURACY_TIMEOUT_MS = 8000; // the balanced-accuracy indoor fallback below -- shorter than GPS_TIMEOUT_MS since a WiFi/cell-based fix either comes back quickly or not at all, no point waiting as long as a GPS-grade fix deserves
 
   function __setTimeoutMsForTesting(ms) { GPS_TIMEOUT_MS = ms == null ? 10000 : ms; }
 
@@ -112,6 +113,27 @@
 
       const best = await watchBestFix(Geolocation, GPS_TIMEOUT_MS);
       if (best) return { lat: best.lat, lon: best.lon };
+
+      // Real bug hit indoors on a real device: @capacitor/geolocation's
+      // Android implementation runs on Google's Fused Location Provider
+      // (confirmed by reading its actual Java source), which CAN return
+      // an approximate fix indoors via WiFi/cell triangulation -- but
+      // only when asked for it. enableHighAccuracy:true (used above and
+      // by every other call in this app) tells Fused to hold out for a
+      // GPS-grade fix, which usually means waiting on satellite
+      // visibility that simply isn't there indoors, until it times out
+      // with nothing. Before giving up, try once more asking for
+      // BALANCED accuracy instead -- Fused will settle for a coarser
+      // WiFi/cell-based fix, typically available indoors in a couple of
+      // seconds. Plenty good enough for "nearest stop"/"nearest place"/
+      // walking directions, none of which need sub-10m precision.
+      try {
+        const lowAccuracyPos = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: LOW_ACCURACY_TIMEOUT_MS });
+        return { lat: lowAccuracyPos.coords.latitude, lon: lowAccuracyPos.coords.longitude };
+      } catch (lowAccuracyErr) {
+        // Not the real failure yet -- fall through to the last resort
+        // below, whose own error (if any) is what actually gets reported.
+      }
 
       // watchPosition never delivered anything (some devices/emulators
       // don't implement it reliably) -- fall back to a single one-shot
