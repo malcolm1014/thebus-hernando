@@ -9,7 +9,9 @@
  * bundler. Returns null (never throws) on anything short of an actual
  * fix -- no native bridge (browser/test env), permission refused, GPS
  * timeout -- so callers can fall back to asking for a place name instead
- * of crashing the query.
+ * of crashing the query. See getLastFailureReason() for WHY the most
+ * recent call returned null, when a caller wants to say something more
+ * specific than "couldn't get your location."
  *
  * GPS refinement: a single getCurrentPosition() call can return a fix
  * with 50m+ of error on the very first callback, especially indoors or
@@ -30,6 +32,32 @@
 
   function plugin() {
     return (global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.Geolocation) || null;
+  }
+
+  /**
+   * WHY the most recent getCurrentPosition() call returned null:
+   *   'unsupported'        -- no native Geolocation plugin at all (browser/test env)
+   *   'permission-denied'  -- the app's own location permission was refused
+   *   'services-disabled'  -- the DEVICE's location services are off entirely --
+   *                           a real, confirmed distinct case: @capacitor/geolocation's
+   *                           own Android source rejects checkPermissions()/
+   *                           requestPermissions() with the literal message
+   *                           "Location services are not enabled" in this situation,
+   *                           which is NOT the same setting as the app's own permission
+   *                           grant (Android exposes these as two separate toggles,
+   *                           and a rider can easily have granted the app permission
+   *                           while the device-wide location toggle is still off) --
+   *                           confirmed by reading the plugin's actual Java source
+   *                           after a real rider reported exactly this confusion.
+   *   'no-fix'              -- permission + services are both fine, but no GPS fix
+   *                           arrived in time (weak signal, indoors, etc.)
+   *   null                  -- no failure on record yet, or the last call succeeded
+   */
+  let lastFailureReason = null;
+  function getLastFailureReason() { return lastFailureReason; }
+
+  function isServicesDisabledError(err) {
+    return !!(err && typeof err.message === 'string' && /location services (are )?not enabled/i.test(err.message));
   }
 
   /** Watches for up to `timeoutMs`, keeping the best (smallest-accuracy) fix seen; resolves early once one is "good enough". Never rejects -- resolves null if no fix arrives at all. */
@@ -63,8 +91,12 @@
   }
 
   async function getCurrentPosition() {
+    lastFailureReason = null;
     const Geolocation = plugin();
-    if (!Geolocation) return null;
+    if (!Geolocation) {
+      lastFailureReason = 'unsupported';
+      return null;
+    }
 
     try {
       const status = await Geolocation.checkPermissions();
@@ -73,7 +105,10 @@
         const requested = await Geolocation.requestPermissions();
         granted = requested.location === 'granted' || requested.coarseLocation === 'granted';
       }
-      if (!granted) return null;
+      if (!granted) {
+        lastFailureReason = 'permission-denied';
+        return null;
+      }
 
       const best = await watchBestFix(Geolocation, GPS_TIMEOUT_MS);
       if (best) return { lat: best.lat, lon: best.lon };
@@ -85,9 +120,10 @@
       return { lat: pos.coords.latitude, lon: pos.coords.longitude };
     } catch (err) {
       console.error(err);
+      lastFailureReason = isServicesDisabledError(err) ? 'services-disabled' : 'no-fix';
       return null;
     }
   }
 
-  global.TheBusGeolocate = { getCurrentPosition, __setTimeoutMsForTesting };
+  global.TheBusGeolocate = { getCurrentPosition, getLastFailureReason, __setTimeoutMsForTesting };
 })(window);

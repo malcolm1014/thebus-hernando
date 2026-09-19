@@ -81,3 +81,64 @@ test('getCurrentPosition: an error thrown mid-flow resolves to null rather than 
     assert.equal(await TheBusGeolocate.getCurrentPosition(), null);
   });
 });
+
+// getLastFailureReason(): a real rider reported being confused by a
+// generic "check that location is turned on" message when they'd
+// already granted the app's own location permission -- the actual
+// problem was the DEVICE's location services toggle, a separate Android
+// setting @capacitor/geolocation's own Android source rejects
+// checkPermissions()/requestPermissions() for with the literal message
+// "Location services are not enabled". These tests lock in that this
+// app can tell the two apart, so a caller can finally say which one.
+
+test('getLastFailureReason: "unsupported" when there is no native plugin at all', async () => {
+  const originalCapacitor = global.Capacitor;
+  delete global.Capacitor;
+  try {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureReason(), 'unsupported');
+  } finally {
+    global.Capacitor = originalCapacitor;
+  }
+});
+
+test('getLastFailureReason: "permission-denied" when the app\'s own permission is refused', async () => {
+  await withFakeCapacitor(fakeGeolocation({ permission: 'denied' }), async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureReason(), 'permission-denied');
+  });
+});
+
+test('getLastFailureReason: "services-disabled" -- distinct from "permission-denied" -- when the DEVICE\'s location services are off, matching the exact rejection message the real Android plugin throws for this', async () => {
+  const servicesDisabled = {
+    checkPermissions: async () => { throw new Error('Location services are not enabled'); },
+  };
+  await withFakeCapacitor(servicesDisabled, async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureReason(), 'services-disabled');
+  });
+});
+
+test('getLastFailureReason: "no-fix" for a genuine GPS timeout with permission and services both fine', async () => {
+  const broken = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: async () => { throw new Error('timeout'); },
+    getCurrentPosition: async () => { throw new Error('timeout'); },
+  };
+  await withFakeCapacitor(broken, async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureReason(), 'no-fix');
+  });
+});
+
+test('getLastFailureReason: cleared back to null by a subsequent successful call, never stays stuck on a stale failure', async () => {
+  await withFakeCapacitor(fakeGeolocation({ permission: 'denied' }), async () => {
+    await TheBusGeolocate.getCurrentPosition();
+    assert.equal(TheBusGeolocate.getLastFailureReason(), 'permission-denied');
+  });
+  await withFakeCapacitor(fakeGeolocation({ fixes: [] }), async () => {
+    const result = await TheBusGeolocate.getCurrentPosition();
+    assert.deepEqual(result, { lat: 28.5, lon: -82.6 });
+    assert.equal(TheBusGeolocate.getLastFailureReason(), null);
+  });
+});

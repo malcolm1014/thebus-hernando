@@ -657,7 +657,7 @@
       } else {
         const pos = await TheBusGeolocate.getCurrentPosition();
         if (!pos) {
-          return "I DIDN'T CATCH A STOP NAME. TRY: WHEN IS THE NEXT BUS AT <STOP NAME>? OR TURN ON LOCATION AND JUST ASK: WHEN IS THE NEXT BUS?";
+          return locationFailureMessage('OR TRY: WHEN IS THE NEXT BUS AT <STOP NAME>?');
         }
         const nearest = nearestStopToPoint(pos.lat, pos.lon);
         if (!nearest) return 'NO STOPS ON FILE.';
@@ -869,6 +869,31 @@
     return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}${spanNote}`;
   }
 
+  /**
+   * Turns TheBusGeolocate's own diagnostic reason for the most recent
+   * getCurrentPosition() failure into an ACCURATE message. Real bug hit
+   * by a real rider: the app's own location PERMISSION (an Android app
+   * setting) and the device's location SERVICES toggle (a separate,
+   * device-wide Android setting) are two different things a rider can
+   * easily have in different states -- a single generic "check that
+   * location is turned on" message left a rider stuck troubleshooting
+   * the wrong one. `fallbackHint`, when given, is appended in every
+   * case (a place name always works as a workaround regardless of which
+   * GPS problem this is).
+   */
+  function locationFailureMessage(fallbackHint) {
+    const reason = global.TheBusGeolocate && TheBusGeolocate.getLastFailureReason && TheBusGeolocate.getLastFailureReason();
+    let base;
+    if (reason === 'services-disabled') {
+      base = "YOUR DEVICE'S LOCATION SERVICES ARE TURNED OFF -- THIS IS A DIFFERENT SETTING FROM THIS APP'S OWN LOCATION PERMISSION. TURN ON LOCATION IN YOUR DEVICE SETTINGS AND TRY AGAIN.";
+    } else if (reason === 'permission-denied') {
+      base = "THIS APP DOESN'T HAVE PERMISSION TO USE YOUR LOCATION. GRANT LOCATION ACCESS TO THIS APP IN YOUR DEVICE SETTINGS AND TRY AGAIN.";
+    } else {
+      base = "COULDN'T GET YOUR LOCATION RIGHT NOW.";
+    }
+    return fallbackHint ? `${base} ${fallbackHint}` : base;
+  }
+
   // Recognizes the rider referring to their own position instead of a
   // named place ("nearest stop to me", "closest stop to here") -- routed
   // to GPS instead of ever being handed to the geocoder, which has no
@@ -955,7 +980,7 @@
       const pos = await TheBusGeolocate.getCurrentPosition();
       if (!pos) {
         console.log('[thebus:tier] GPS -> unavailable', { query: normalizedLandmark });
-        return { type: 'unavailable', message: "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN." };
+        return { type: 'unavailable', message: locationFailureMessage() };
       }
       console.log('[thebus:tier] GPS', { query: normalizedLandmark, lat: pos.lat, lon: pos.lon });
       return { type: 'point', lat: pos.lat, lon: pos.lon, label: 'you' };
@@ -1022,7 +1047,7 @@
       // same way regardless of which intent it happened to classify as.
       const pos = await TheBusGeolocate.getCurrentPosition();
       if (!pos) {
-        return "I DIDN'T CATCH A PLACE NAME. TRY: NEAREST STOP TO <PLACE>? OR TURN ON LOCATION AND JUST ASK: NEAREST STOP?";
+        return locationFailureMessage('OR TRY: NEAREST STOP TO <PLACE>?');
       }
       return nearestToPointAnswer('you', pos.lat, pos.lon, now);
     }
@@ -1052,7 +1077,7 @@
     if (!parsed.landmark) {
       const pos = await TheBusGeolocate.getCurrentPosition();
       if (!pos) {
-        return `I DIDN'T CATCH A PLACE NAME. TRY: NEAREST ${categoryLabel} TO <PLACE>? OR TURN ON LOCATION AND JUST ASK: NEAREST ${categoryLabel}?`;
+        return locationFailureMessage(`OR TRY: NEAREST ${categoryLabel} TO <PLACE>?`);
       }
       anchor = pos;
       anchorLabel = 'YOU';
@@ -1105,7 +1130,7 @@
 
     const pos = await TheBusGeolocate.getCurrentPosition();
     if (!pos) {
-      return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
+      return locationFailureMessage();
     }
 
     const resolved = await resolveLandmark(parsed.walkingDestination);

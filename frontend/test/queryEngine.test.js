@@ -394,7 +394,8 @@ test('FIND_NEAREST_STOP: a bare "nearest stop?" with GPS unavailable gets an hon
   global.TheBusGeolocate = { getCurrentPosition: async () => null };
   try {
     const answer = await TheBusQueryEngine.answerQuery('nearest stop?', TUESDAY_9AM_ET);
-    assert.match(answer, /DIDN'T CATCH A PLACE NAME/);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+    assert.match(answer, /NEAREST STOP TO <PLACE>/);
   } finally {
     delete global.TheBusGeolocate;
   }
@@ -515,7 +516,8 @@ test('FIND_NEAREST_PLACE: GPS unavailable and no landmark named gets an honest m
   global.TheBusGeolocate = { getCurrentPosition: async () => null };
   try {
     const answer = await TheBusQueryEngine.answerQuery('nearest pharmacy', TUESDAY_9AM_ET);
-    assert.match(answer, /DIDN'T CATCH A PLACE NAME/);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+    assert.match(answer, /NEAREST PHARMACY TO <PLACE>/);
   } finally {
     delete global.TheBusGeolocate;
   }
@@ -560,6 +562,41 @@ test('FIND_WALKING_DIRECTIONS: GPS unavailable gets an honest message, not a cra
   try {
     const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
     assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+// Real bug hit on a real device: a rider reported "check that location
+// is turned on for this app" as confusing, since they'd already granted
+// the app's own location permission -- the actual (separate, Android-
+// specific) problem was the device's location SERVICES toggle. These
+// two tests lock in that the message now tells the two apart, using
+// TheBusGeolocate's own getLastFailureReason() diagnostic.
+test('FIND_WALKING_DIRECTIONS: GPS unavailable because the DEVICE\'s location services are off names that specific setting, not the app permission', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = { getCurrentPosition: async () => null, getLastFailureReason: () => 'services-disabled' };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /LOCATION SERVICES ARE TURNED OFF/);
+    assert.match(answer, /DIFFERENT SETTING FROM THIS APP'S OWN LOCATION PERMISSION/);
+    assert.doesNotMatch(answer, /DOESN'T HAVE PERMISSION/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: GPS unavailable because the APP\'s own permission was refused names that specific setting, not device-wide services', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = { getCurrentPosition: async () => null, getLastFailureReason: () => 'permission-denied' };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /DOESN'T HAVE PERMISSION TO USE YOUR LOCATION/);
+    assert.doesNotMatch(answer, /LOCATION SERVICES ARE TURNED OFF/);
   } finally {
     delete global.Capacitor;
     delete global.TheBusGeolocate;
@@ -681,7 +718,8 @@ test('FIND_NEXT_ARRIVAL: no stop named and GPS unavailable asks for a stop name 
   global.TheBusGeolocate = { getCurrentPosition: async () => null };
   try {
     const answer = await TheBusQueryEngine.answerQuery('when is the next bus', TUESDAY_9AM_ET);
-    assert.match(answer, /DIDN'T CATCH A STOP NAME/);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+    assert.match(answer, /WHEN IS THE NEXT BUS AT <STOP NAME>/);
   } finally {
     delete global.TheBusGeolocate;
   }
