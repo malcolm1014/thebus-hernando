@@ -1,0 +1,68 @@
+ext {
+    capacitorVersion = System.getenv('CAPACITOR_VERSION')
+}
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace "com.savvysecurity.thebus.valhalla"
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    defaultConfig {
+        // valhalla-mobile (io.github.rallista:valhalla-mobile) itself
+        // requires minSdk 24 -- this plugin's own minSdk just mirrors
+        // that rather than silently allowing an incompatible lower
+        // value to reach the manifest merger as a confusing downstream
+        // error. See frontend's README section on this integration for
+        // why the app's own minSdk had to move to 24 too.
+        minSdkVersion 24
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    lintOptions {
+        abortOnError false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions {
+        jvmTarget = "21"
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+
+    // Rallista/valhalla-mobile: a maintained, MIT-licensed Kotlin
+    // wrapper around the native Valhalla C++ routing engine, published
+    // to Maven Central -- no NDK cross-compilation needed in this repo
+    // at all. See docs/valhalla-routing.md for the full integration
+    // story (why this library, what it does/doesn't do yet, and how
+    // routing tiles get onto the device).
+    implementation 'io.github.rallista:valhalla-mobile:0.6.1'
+    implementation 'io.github.rallista:valhalla-models:0.5.2'
+    implementation 'io.github.rallista:valhalla-models-config:0.5.2'
+}

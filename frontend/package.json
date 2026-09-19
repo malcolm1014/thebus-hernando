@@ -7,8 +7,9 @@
     "refresh:snapshot": "node scripts/refresh-snapshot.js",
     "sync": "cap sync android",
     "open:android": "cap open android",
-    "add:android": "cap add android && npm run fix:android-manifest",
+    "add:android": "cap add android && npm run fix:android-manifest && npm run fix:min-sdk",
     "fix:android-manifest": "node scripts/patch-android-manifest.js",
+    "fix:min-sdk": "node scripts/patch-min-sdk.js",
     "gen:assets": "capacitor-assets generate --android"
   },
   "dependencies": {
@@ -17,7 +18,8 @@
     "@capacitor/core": "^6.1.2",
     "@capacitor/filesystem": "^6.0.1",
     "@capacitor/geolocation": "^6.1.0",
-    "@capacitor/preferences": "^6.0.2"
+    "@capacitor/preferences": "^6.0.2",
+    "capacitor-valhalla-routing": "file:./plugins/valhalla-routing"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

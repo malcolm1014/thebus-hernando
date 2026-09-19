@@ -1,0 +1,26 @@
+{
+  "name": "capacitor-valhalla-routing",
+  "version": "0.1.0",
+  "description": "Local Capacitor plugin bridging TriBus to the on-device Valhalla routing engine (Rallista/valhalla-mobile) for offline walking directions. Not published -- referenced from frontend/package.json via a file: dependency, same as any other Capacitor plugin from the app's own point of view.",
+  "main": "index.js",
+  "files": [
+    "android",
+    "index.js"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "valhalla",
+    "routing",
+    "offline"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@capacitor/core": "^6.0.0"
+  }
+}

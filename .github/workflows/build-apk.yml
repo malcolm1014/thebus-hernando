@@ -31,7 +31,11 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          # 21, not 17: io.github.rallista:valhalla-mobile (the on-device
+          # routing engine, see plugins/valhalla-routing) ships Java 21
+          # class files -- a JDK 17 toolchain cannot even read them,
+          # let alone build the app that depends on them.
+          java-version: '21'
 
       - name: Install frontend dependencies
         run: npm install
@@ -50,6 +54,12 @@ jobs:
         # stock template every run, so this has to be re-applied every
         # build, same reasoning as the signing-config step below.
         run: node scripts/patch-android-manifest.js
+
+      - name: Bump minSdkVersion for valhalla-mobile (plugins/valhalla-routing)
+        # `cap add android` regenerates android/variables.gradle from
+        # Capacitor's template (minSdk 22) every run -- reapplied every
+        # build, same reasoning as the manifest patch above.
+        run: node scripts/patch-min-sdk.js
 
       - name: Generate icon/splash assets
         run: npx capacitor-assets generate --android
