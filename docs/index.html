@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TriBus — Free Offline Transit for the Nature Coast &amp; Tampa Bay</title>
+<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough County transit riders. No logging. No backend. Available now for Android.">
+<link rel="icon" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05080a;
+    --bg-panel: #0a1210;
+    --green: #4ffca0;
+    --green-dim: #2b8a63;
+    --green-glow: rgba(79, 252, 160, 0.55);
+    --amber: #ffd166;
+    --text: #d7ffe8;
+    --text-dim: #7fa895;
+    --border: #1e4a38;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  body {
+    font-family: 'VT323', 'Courier New', monospace;
+    font-size: 20px;
+    line-height: 1.5;
+    background-image:
+      radial-gradient(ellipse at top, rgba(79,252,160,0.08), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .glow-text { animation: flicker 6s infinite; }
+  }
+
+  @keyframes flicker {
+    0%, 96%, 100% { opacity: 1; }
+    97% { opacity: 0.85; }
+    98% { opacity: 1; }
+  }
+
+  a { color: var(--green); }
+
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  header.hero {
+    padding: 72px 0 48px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    width: 88px;
+    height: 88px;
+    border-radius: 20px;
+    box-shadow: 0 0 24px var(--green-glow), 0 0 0 1px var(--border);
+    margin-bottom: 20px;
+  }
+
+  h1.title {
+    font-size: 64px;
+    letter-spacing: 6px;
+    margin: 0 0 4px;
+    color: var(--green);
+    text-shadow: 0 0 10px var(--green-glow), 0 0 30px rgba(79,252,160,0.25);
+  }
+
+  .subtitle {
+    font-size: 22px;
+    color: var(--text-dim);
+    margin: 0 0 28px;
+    letter-spacing: 1px;
+  }
+
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 34px;
+  }
+
+  .badge {
+    border: 1px solid var(--green-dim);
+    color: var(--green);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 17px;
+    background: rgba(79,252,160,0.06);
+    white-space: nowrap;
+  }
+
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--green);
+    color: #04140c;
+    font-family: 'VT323', monospace;
+    font-size: 26px;
+    letter-spacing: 1px;
+    padding: 14px 32px;
+    border-radius: 10px;
+    text-decoration: none;
+    box-shadow: 0 0 20px var(--green-glow);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px var(--green-glow); }
+  .cta svg { width: 22px; height: 22px; fill: #04140c; }
+
+  .cta-note {
+    display: block;
+    margin-top: 14px;
+    font-size: 16px;
+    color: var(--text-dim);
+  }
+  .cta-note a { color: var(--text-dim); text-decoration: underline; }
+
+  section {
+    padding: 56px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  section:last-of-type { border-bottom: none; }
+
+  h2 {
+    color: var(--amber);
+    font-size: 34px;
+    letter-spacing: 2px;
+    margin: 0 0 6px;
+  }
+  h2::before { content: "> "; color: var(--green-dim); }
+
+  .section-lede {
+    color: var(--text-dim);
+    font-size: 19px;
+    margin: 0 0 30px;
+  }
+
+  .about p {
+    font-size: 21px;
+    color: var(--text);
+    max-width: 760px;
+  }
+
+  /* Route map */
+  .route-map {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 40px 24px 30px;
+  }
+
+  .route-line-wrap {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 0 10px;
+  }
+
+  .route-line-wrap::before {
+    content: "";
+    position: absolute;
+    top: 15px;
+    left: 8%;
+    right: 8%;
+    height: 4px;
+    background: repeating-linear-gradient(90deg, var(--green) 0, var(--green) 14px, transparent 14px, transparent 22px);
+    box-shadow: 0 0 8px var(--green-glow);
+  }
+
+  .stop {
+    position: relative;
+    flex: 1;
+    text-align: center;
+    padding: 0 6px;
+  }
+
+  .stop .dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg-panel);
+    border: 4px solid var(--green);
+    margin: 0 auto 14px;
+    box-shadow: 0 0 12px var(--green-glow);
+    position: relative;
+    z-index: 2;
+  }
+
+  .stop.upcoming .dot {
+    border-color: var(--green-dim);
+    border-style: dashed;
+    box-shadow: none;
+  }
+
+  .stop .county {
+    color: var(--green);
+    font-size: 26px;
+    letter-spacing: 1px;
+  }
+  .stop.upcoming .county { color: var(--text-dim); }
+
+  .stop .agency {
+    color: var(--text-dim);
+    font-size: 17px;
+    margin-top: 2px;
+  }
+
+  .stop .tag {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+  }
+  .stop .tag.live { background: rgba(79,252,160,0.15); color: var(--green); border: 1px solid var(--green-dim); }
+  .stop .tag.soon { background: rgba(255,209,102,0.1); color: var(--amber); border: 1px dashed var(--amber); }
+
+  .route-caption {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 17px;
+    margin-top: 34px;
+  }
+
+  /* Features */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+  }
+  @media (max-width: 640px) { .features { grid-template-columns: 1fr; } }
+
+  .feature {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .feature .icon { font-size: 28px; margin-bottom: 8px; }
+  .feature h3 {
+    color: var(--green);
+    font-size: 24px;
+    margin: 0 0 6px;
+    letter-spacing: 0.5px;
+  }
+  .feature p {
+    color: var(--text-dim);
+    font-size: 18px;
+    margin: 0;
+  }
+
+  /* Terminal preview */
+  .terminal-preview {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    color: var(--green);
+    font-size: 18px;
+    line-height: 1.6;
+    box-shadow: inset 0 0 40px rgba(79,252,160,0.06);
+    overflow-x: auto;
+  }
+  .terminal-preview .prompt { color: var(--text-dim); }
+  .terminal-preview .out { color: var(--green); }
+  .terminal-preview .cursor {
+    display: inline-block;
+    width: 9px;
+    height: 16px;
+    background: var(--green);
+    vertical-align: middle;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  footer {
+    padding: 40px 0 60px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 16px;
+  }
+  footer a { color: var(--text-dim); text-decoration: underline; }
+  footer .brand { color: var(--green-dim); margin-top: 6px; display: block; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="assets/icon.png" alt="TriBus app icon">
+    <h1 class="title glow-text">TRIBUS</h1>
+    <p class="subtitle">Nature Coast → Tampa Bay Transit Terminal</p>
+
+    <div class="badges">
+      <span class="badge">100% Free</span>
+      <span class="badge">No Logging</span>
+      <span class="badge">No Backend Required</span>
+      <span class="badge">Offline Ready</span>
+      <span class="badge">Android</span>
+    </div>
+
+    <a class="cta" href="https://github.com/malcolm1014/thebus-hernando/releases/latest/download/app-debug.apk">
+      <svg viewBox="0 0 24 24"><path d="M12 16l-6-6h4V4h4v6h4l-6 6zm-8 2h16v2H4v-2z"/></svg>
+      Download for Android
+    </a>
+    <span class="cta-note">
+      Direct APK download — not on the Play Store. You may need to allow "install from unknown sources."
+      <br>Free &amp; open source — <a href="https://github.com/malcolm1014/thebus-hernando">view the code</a> ·
+      <a href="https://raw.githubusercontent.com/malcolm1014/thebus-hernando/main/README.md">read the docs</a>
+    </span>
+  </div>
+</header>
+
+<section class="about">
+  <div class="wrap">
+    <h2>What is TriBus?</h2>
+    <p class="section-lede">A transit assistant that works even when your signal doesn't.</p>
+    <p>
+      TriBus is a free, offline-first transit assistant styled after a retro MS-DOS terminal.
+      It merges GTFS schedule data from multiple Florida transit agencies into a single
+      lightweight dataset that lives entirely on your phone — so once it's synced, checking a
+      schedule, finding the nearest stop, or planning a trip works with zero signal and zero
+      backend calls. Ask it plain-English questions like "next bus to Brooksville" or "how do I
+      get from Spring Hill to downtown Tampa," and it answers instantly from data already on
+      your device. A second tab adds a live map with real-time bus positions whenever you do
+      have a connection. There's no account, no tracking, and nothing phoning home in the
+      background — just a fast, private way to catch the bus.
+    </p>
+  </div>
+</section>
+
+<section class="coverage">
+  <div class="wrap">
+    <h2>Where It Runs</h2>
+    <p class="section-lede">One app, one search bar, three transit agencies stitched together — with a fourth on the way.</p>
+
+    <div class="route-map">
+      <div class="route-line-wrap">
+        <div class="stop">
+          <div class="dot"></div>
+          <div class="county">Hernando</div>
+          <div class="agency">Hernando County Transit (TheBus)</div>
+          <span class="tag live">Live</span>
+        </div>
+        <div class="stop">
+          <div class="dot"></div>
+          <div class="county">Pasco</div>
+          <div class="agency">PascoGo</div>
+          <span class="tag live">Live</span>
+        </div>
+        <div class="stop">
+          <div class="dot"></div>
+          <div class="county">Hillsborough</div>
+          <div class="agency">HART (Tampa)</div>
+          <span class="tag live">Live</span>
+        </div>
+        <div class="stop upcoming">
+          <div class="dot"></div>
+          <div class="county">Citrus</div>
+          <div class="agency">Citrus County Transit</div>
+          <span class="tag soon">Coming Soon</span>
+        </div>
+      </div>
+      <p class="route-caption">
+        Trip planning can cross agency boundaries automatically — TriBus will route you from a
+        Hernando stop all the way into Tampa on HART, transfers and all.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="features">
+  <div class="wrap">
+    <h2>Why Riders Use It</h2>
+    <p class="section-lede">Built to respect your data, your battery, and your commute.</p>
+
+    <div class="features">
+      <div class="feature">
+        <div class="icon">🔒</div>
+        <h3>No Logging</h3>
+        <p>No accounts, no analytics, no location history stored anywhere. Your trips are yours.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📡</div>
+        <h3>No Backend Needed</h3>
+        <p>Sync your regional schedule once, then every search, route, and trip plan runs entirely on-device.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🗺️</div>
+        <h3>Cross-County Trip Planning</h3>
+        <p>Ask "from A to B" and TriBus finds a route even if it means transferring between agencies.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🛰️</div>
+        <h3>Live Bus Map</h3>
+        <p>When you're online, watch real buses move on the map with real-time position data.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="preview">
+  <div class="wrap">
+    <h2>Terminal Style</h2>
+    <p class="section-lede">A green-on-black command line, not another cluttered map app.</p>
+    <div class="terminal-preview">
+      <div><span class="prompt">&gt;</span> next bus to brooksville</div>
+      <div class="out">Route 3 — Brooksville Connector<br>Departs Spring Hill Terminal 4:12 PM &middot; arrives 4:41 PM</div>
+      <div style="margin-top:10px;"><span class="prompt">&gt;</span> from spring hill to downtown tampa</div>
+      <div class="out">3 legs found via HART transfer at Wesley Chapel &middot; est. 1h 52m total</div>
+      <div style="margin-top:10px;"><span class="prompt">&gt;</span> <span class="cursor"></span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a href="https://github.com/malcolm1014/thebus-hernando">Source on GitHub</a>
+      &middot;
+      <a href="https://raw.githubusercontent.com/malcolm1014/thebus-hernando/main/PRIVACY_POLICY.md">Privacy Policy</a>
+      &middot;
+      <a href="https://github.com/malcolm1014/thebus-hernando/releases/latest/download/app-debug.apk">Download APK</a>
+    </div>
+    <span class="brand">A Savvy Security project</span>
+  </div>
+</footer>
+
+</body>
+</html>
