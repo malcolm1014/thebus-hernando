@@ -1070,6 +1070,93 @@
     return `NEAREST ${categoryLabel} TO ${anchorLabel}:\n${best.place.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)${addressLine}`;
   }
 
+  function valhallaRoutingPlugin() {
+    return (global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.ValhallaRouting) || null;
+  }
+
+  const NO_TILES_MESSAGE = "OFFLINE WALKING DIRECTIONS AREN'T DOWNLOADED YET. TYPE: DOWNLOAD WALKING DIRECTIONS (ONE-TIME ~164MB DOWNLOAD).";
+
+  /**
+   * Real on-device turn-by-turn walking directions, via the native
+   * Valhalla routing plugin (plugins/valhalla-routing) and its
+   * pre-downloaded tile extract (valhallaTiles.js) -- distinct from
+   * every other "nearest" answer in this file, which is always
+   * straight-line (great-circle) distance, never a routed path. Always
+   * anchored on the rider's OWN GPS position; there's no "walking
+   * directions from X to Y" yet, only "...to Y" from wherever they
+   * actually are.
+   */
+  async function answerFindWalkingDirections(parsed) {
+    const ValhallaRouting = valhallaRoutingPlugin();
+    if (!ValhallaRouting) {
+      return 'WALKING DIRECTIONS ARE ONLY AVAILABLE IN THE ANDROID APP.';
+    }
+    if (!parsed.walkingDestination) {
+      return "I DIDN'T CATCH A DESTINATION. TRY: WALKING DIRECTIONS TO <PLACE>?";
+    }
+
+    let tilesCheck;
+    try {
+      tilesCheck = await ValhallaRouting.tilesAvailable();
+    } catch (err) {
+      tilesCheck = { available: false };
+    }
+    if (!tilesCheck.available) return NO_TILES_MESSAGE;
+
+    const pos = await TheBusGeolocate.getCurrentPosition();
+    if (!pos) {
+      return "COULDN'T GET YOUR LOCATION. CHECK THAT LOCATION IS TURNED ON FOR THIS APP AND TRY AGAIN.";
+    }
+
+    const resolved = await resolveLandmark(parsed.walkingDestination);
+    if (resolved.type === 'unavailable') return resolved.message;
+    const dest = resolved.type === 'stop' ? { lat: resolved.stop.lat, lon: resolved.stop.lon } : resolved;
+
+    let route;
+    try {
+      route = await ValhallaRouting.route({
+        fromLat: pos.lat, fromLon: pos.lon,
+        toLat: dest.lat, toLon: dest.lon,
+        costing: 'pedestrian',
+      });
+    } catch (err) {
+      console.error(err);
+      return "COULDN'T CALCULATE A WALKING ROUTE THERE.";
+    }
+    if (!route || route.available === false) return NO_TILES_MESSAGE;
+
+    setLastLocation(dest.lat, dest.lon, parsed.walkingDestination);
+    const miles = (route.distanceMeters / 1609.34).toFixed(2);
+    const minutes = Math.round(route.durationSeconds / 60);
+    const steps = (route.instructions || [])
+      .map((step, i) => `${i + 1}. ${step.text.toUpperCase()}`)
+      .join('\n');
+    return `WALKING DIRECTIONS TO ${parsed.walkingDestination.toUpperCase()} (${miles} MI, ~${minutes} MIN):\n${steps || 'NO TURN-BY-TURN STEPS AVAILABLE.'}`;
+  }
+
+  /**
+   * Downloads and caches the routing tiles offline walking directions
+   * need (see valhallaTiles.js) -- a deliberate, explicit one-time
+   * action (~164MB), never triggered automatically, so a rider always
+   * chooses to spend that data themselves.
+   */
+  async function answerDownloadRoutingTiles() {
+    if (!global.TheBusValhallaTiles || !TheBusValhallaTiles.isSupported()) {
+      return 'OFFLINE WALKING DIRECTIONS ARE ONLY AVAILABLE IN THE ANDROID APP.';
+    }
+    if (await TheBusValhallaTiles.isDownloaded()) {
+      return 'OFFLINE WALKING DIRECTIONS ARE ALREADY DOWNLOADED.';
+    }
+    if (!navigator.onLine) {
+      return 'DOWNLOADING OFFLINE WALKING DIRECTIONS NEEDS A NETWORK CONNECTION. TRY AGAIN WHEN ONLINE.';
+    }
+    const result = await TheBusValhallaTiles.download();
+    if (!result.ok) {
+      return `COULDN'T DOWNLOAD OFFLINE WALKING DIRECTIONS: ${(result.error || '').toUpperCase()}`;
+    }
+    return 'OFFLINE WALKING DIRECTIONS DOWNLOADED. TRY: WALKING DIRECTIONS TO <PLACE>?';
+  }
+
   // Real transfers and boarding always cost a few real minutes, not zero
   // -- crossing the street or the length of a hub's platform. Also acts
   // as a floor so a same-trip "transfer" (getting off and immediately
@@ -1349,7 +1436,7 @@
   function answerBareLookup(parsed, now) {
     if (parsed.stop) return answerFindNextArrival(parsed, now);
     if (parsed.route) return answerListRouteStops(parsed);
-    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP, BUSINESS, OR STREET>?\n- LIST STOPS ON ROUTE <N>\n- TIMETABLE FOR ROUTE <N>?\n- NEAREST STOP TO <PLACE>?\n- NEAREST PHARMACY/GAS STATION/ETC?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?";
+    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP, BUSINESS, OR STREET>?\n- LIST STOPS ON ROUTE <N>\n- TIMETABLE FOR ROUTE <N>?\n- NEAREST STOP TO <PLACE>?\n- NEAREST PHARMACY/GAS STATION/ETC?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?\n- WALKING DIRECTIONS TO <PLACE>?";
   }
 
   /**
@@ -1364,6 +1451,8 @@
 
     switch (parsed.intent) {
       case 'PLAN_TRIP': return answerPlanTrip(parsed, now);
+      case 'DOWNLOAD_ROUTING_TILES': return answerDownloadRoutingTiles();
+      case 'FIND_WALKING_DIRECTIONS': return answerFindWalkingDirections(parsed);
       case 'FIND_NEAREST_PLACE': return answerFindNearestPlace(parsed, now);
       case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed, now);
       case 'FIND_FIRST_LAST_BUS': return answerFindFirstLastBus(parsed, now);

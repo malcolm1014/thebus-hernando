@@ -105,9 +105,26 @@ If `XAI_API_KEY` isn't set on the backend at all, every answer should
 just look like before this feature existed (plain white, no `[AI]`
 prefix) -- that's the correct "not configured" behavior, not a failure.
 
+## Test 5: Offline walking directions (Valhalla) -- never run on a real device yet
+
+See `docs/valhalla-routing.md` for the full story. This is the newest,
+least-verified feature in the app -- everything about it so far is
+Gradle-compile-verified and unit-tested only, never actually run on a
+phone.
+
+| Step | Action | Expected result |
+|---|---|---|
+| 1 | Before downloading anything, ask `walking directions to <a real nearby business>` | A clear message saying offline walking directions aren't downloaded yet, with the exact command to type to enable them -- not a crash or a silent wrong answer |
+| 2 | On real WiFi, type `download walking directions` | App shows a download is happening (this is a real ~164MB download -- expect it to take a real amount of time, not be instant); eventually reports success |
+| 3 | Ask `walking directions to <the same real nearby business>` again | Answers with a real distance (in miles) and a total time estimate, followed by a numbered list of turn-by-turn steps |
+| 4 | Compare the distance/steps against what you already know about that real route on foot | The distance should be in the right ballpark, and the steps should describe streets/turns that actually exist between you and the destination -- this is the first time this has ever been checked against reality |
+| 5 | Type `download walking directions` again (tiles already present) | Says they're already downloaded, does not re-download |
+| 6 | Turn on Airplane Mode, ask `walking directions to <place>` again | Still answers correctly with no network at all -- this is the whole point of the feature (routing runs entirely on-device against the downloaded tiles) |
+
 ## What to send back
 
-For each of the 4 tests: pass/fail, and for anything that fails, the
+For each of the 5 tests: pass/fail, and for anything that fails, the
 exact `[thebus:tier]` log lines (or a screenshot of the map/bus-list for
-Test 3, or the exact wrong/invented fact for Test 4) so the actual
-failure mode is visible rather than just "it didn't work."
+Test 3, the exact wrong/invented fact for Test 4, or the exact wrong
+distance/steps for Test 5) so the actual failure mode is visible rather
+than just "it didn't work."

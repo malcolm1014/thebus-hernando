@@ -521,6 +521,161 @@ test('FIND_NEAREST_PLACE: GPS unavailable and no landmark named gets an honest m
   }
 });
 
+test('FIND_WALKING_DIRECTIONS: outside the Android app (no ValhallaRouting plugin), says so plainly instead of crashing', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /ONLY AVAILABLE IN THE ANDROID APP/);
+});
+
+test('FIND_WALKING_DIRECTIONS: no destination named asks for one', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions', TUESDAY_9AM_ET);
+    assert.match(answer, /DIDN'T CATCH A DESTINATION/);
+  } finally {
+    delete global.Capacitor;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: tiles not downloaded yet tells the rider how to get them, without ever calling GPS or the geocoder', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: false }) } } };
+  // Deliberately no TheBusGeolocate mock -- if this fell through to
+  // requesting a GPS fix before checking tiles, it would throw instead
+  // of answering.
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /AREN'T DOWNLOADED YET/);
+    assert.match(answer, /DOWNLOAD WALKING DIRECTIONS/);
+  } finally {
+    delete global.Capacitor;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: GPS unavailable gets an honest message, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /COULDN'T GET YOUR LOCATION/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: a real route resolves the destination (via TIER 1 GTFS, same as any other landmark) and formats distance/time/steps from the plugin\'s response', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5, lon: -82.6 }) };
+  let calledWith = null;
+  global.Capacitor = {
+    Plugins: {
+      ValhallaRouting: {
+        tilesAvailable: async () => ({ available: true }),
+        route: async (opts) => {
+          calledWith = opts;
+          return {
+            available: true,
+            distanceMeters: 804.672, // 0.5 mi
+            durationSeconds: 600,
+            instructions: [{ text: 'head north on main st', distanceMeters: 400 }, { text: 'arrive at destination', distanceMeters: 0 }],
+          };
+        },
+      },
+    },
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Avalon Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /WALKING DIRECTIONS TO AVALON PUBLIX \(0\.50 MI, ~10 MIN\)/);
+    assert.match(answer, /1\. HEAD NORTH ON MAIN ST/);
+    assert.match(answer, /2\. ARRIVE AT DESTINATION/);
+    assert.equal(calledWith.costing, 'pedestrian');
+    assert.equal(calledWith.fromLat, 28.5);
+    assert.equal(calledWith.toLat, 28.50); // Avalon Publix's own coordinates (S1), resolved via TIER 1
+    assert.deepEqual(TheBusQueryEngine.getLastLocation(), { lat: 28.50, lon: -82.60, label: 'Avalon Publix' });
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_WALKING_DIRECTIONS: the plugin reporting tiles unavailable mid-route (a race with a deletion) gives the same download prompt, not a raw crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  TheBusSearchIndex.resetForTests();
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.5, lon: -82.6 }) };
+  global.Capacitor = {
+    Plugins: {
+      ValhallaRouting: {
+        tilesAvailable: async () => ({ available: true }),
+        route: async () => ({ available: false }),
+      },
+    },
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Avalon Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /AREN'T DOWNLOADED YET/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('DOWNLOAD_ROUTING_TILES: outside the Android app (no TheBusValhallaTiles support), says so plainly', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('download walking directions', TUESDAY_9AM_ET);
+  assert.match(answer, /ONLY AVAILABLE IN THE ANDROID APP/);
+});
+
+test('DOWNLOAD_ROUTING_TILES: already downloaded says so instead of downloading again', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusValhallaTiles = {
+    isSupported: () => true,
+    isDownloaded: async () => true,
+    download: async () => { throw new Error('should not be called -- already downloaded'); },
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('download walking directions', TUESDAY_9AM_ET);
+    assert.match(answer, /ALREADY DOWNLOADED/);
+  } finally {
+    delete global.TheBusValhallaTiles;
+  }
+});
+
+test('DOWNLOAD_ROUTING_TILES: a successful download reports success and points the rider at the new command', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusValhallaTiles = {
+    isSupported: () => true,
+    isDownloaded: async () => false,
+    download: async () => ({ ok: true }),
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('download walking directions', TUESDAY_9AM_ET);
+    assert.match(answer, /DOWNLOADED/);
+    assert.match(answer, /WALKING DIRECTIONS TO/);
+  } finally {
+    delete global.TheBusValhallaTiles;
+  }
+});
+
+test('DOWNLOAD_ROUTING_TILES: a failed download reports the real failure reason, not a silent success', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusValhallaTiles = {
+    isSupported: () => true,
+    isDownloaded: async () => false,
+    download: async () => ({ ok: false, error: 'network error' }),
+  };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('download walking directions', TUESDAY_9AM_ET);
+    assert.match(answer, /COULDN'T DOWNLOAD/);
+    assert.match(answer, /NETWORK ERROR/);
+  } finally {
+    delete global.TheBusValhallaTiles;
+  }
+});
+
 test('FIND_NEXT_ARRIVAL: no stop named and GPS unavailable asks for a stop name instead of crashing', async () => {
   TheBusQueryEngine.setDataset(buildMockDataset());
   global.TheBusGeolocate = { getCurrentPosition: async () => null };

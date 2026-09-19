@@ -214,12 +214,34 @@
       { pattern: buildCategoryCue('is there (a|an|any)'), weight: 4 },
       { pattern: buildCategoryCue('find (a|an|the|me a|me an)'), weight: 4 },
     ],
+    // On-device turn-by-turn walking directions (see
+    // plugins/valhalla-routing) -- a genuinely different question from
+    // PLAN_TRIP's bus-trip planning ("how do I get from X to Y" already
+    // means "plan a bus trip"), so this only fires on an explicit
+    // "walking" mention, never a bare "directions" alone (which would
+    // otherwise collide with PLAN_TRIP's "directions" cue).
+    FIND_WALKING_DIRECTIONS: [
+      { pattern: /\bwalking directions?\b/i, weight: 5 },
+      { pattern: /\bwalk(?:ing)?\s+to\b/i, weight: 4 },
+      { pattern: /\bhow (?:do|can) i walk\b/i, weight: 4 },
+    ],
+    // The one-time opt-in download this feature needs (~164MB, see
+    // valhallaTiles.js) -- deliberately its own explicit command rather
+    // than an automatic background fetch, so a rider always chooses to
+    // spend that data. Scored well above every other intent's cues
+    // since "download"/"enable" essentially never appear in an
+    // ordinary transit query.
+    DOWNLOAD_ROUTING_TILES: [
+      { pattern: /\bdownload\b[\s\S]*\b(walking )?directions?\b/i, weight: 6 },
+      { pattern: /\benable\b[\s\S]*\b(walking )?directions?\b/i, weight: 6 },
+      { pattern: /\bdownload\b[\s\S]*\brouting\b/i, weight: 6 },
+    ],
   };
 
   // Tie-break order when two intents land on the exact same score
   // (rare, since weights are hand-tuned to avoid it) -- most-specific
   // intent wins, same reasoning as the old first-match-wins list order.
-  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_PLACE', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
+  const INTENT_PRIORITY = ['DOWNLOAD_ROUTING_TILES', 'PLAN_TRIP', 'FIND_WALKING_DIRECTIONS', 'FIND_NEAREST_PLACE', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
 
   function classifyIntent(text) {
     let bestIntent = 'UNKNOWN';
@@ -609,6 +631,28 @@
     return null;
   }
 
+  /**
+   * Pulls the free-text destination out of a FIND_WALKING_DIRECTIONS
+   * query -- same philosophy as extractLandmark: NOT matched against
+   * known stop/route names here, since the destination is just as
+   * likely a business as a bus stop. Always GPS-anchored on the origin
+   * side (see queryEngine.js's answerFindWalkingDirections) -- this app
+   * doesn't yet support an explicit "walking directions from X to Y",
+   * only "...to Y" from wherever the rider actually is.
+   */
+  function extractWalkingDestination(rawText) {
+    let m = rawText.match(/\bwalking directions?\s+(?:to|for)\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    m = rawText.match(/\bwalk(?:ing)?\s+to\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    m = rawText.match(/\bhow (?:do|can) i walk to\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    return null;
+  }
+
   /** For FIND_FIRST_LAST_BUS: which one is being asked about. Defaults to 'first' if the trigger somehow fired without either word literally present. */
   function extractFirstOrLast(rawText) {
     if (/\blast\b/i.test(rawText)) return 'last';
@@ -638,10 +682,11 @@
     const road = extractRoad(normalizedText, index.roads || []);
     const placeCategory = intent === 'FIND_NEAREST_PLACE' ? extractPlaceCategory(normalizedText) : null;
     const landmark = (intent === 'FIND_NEAREST_STOP' || intent === 'FIND_NEAREST_PLACE') ? extractLandmark(text) : null;
+    const walkingDestination = intent === 'FIND_WALKING_DIRECTIONS' ? extractWalkingDestination(text) : null;
     const firstOrLast = intent === 'FIND_FIRST_LAST_BUS' ? extractFirstOrLast(text) : null;
     const tripEndpoints = intent === 'PLAN_TRIP' ? extractTripEndpoints(text) : null;
     return {
-      intent, route, stop, place, road, placeCategory, landmark, firstOrLast,
+      intent, route, stop, place, road, placeCategory, landmark, walkingDestination, firstOrLast,
       origin: tripEndpoints ? tripEndpoints.origin : null,
       destination: tripEndpoints ? tripEndpoints.destination : null,
       raw: text,

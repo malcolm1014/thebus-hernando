@@ -202,3 +202,29 @@ test('parseQuery: a PLAN_TRIP-classified query with no extractable "from X to Y"
   assert.equal(parsed.origin, null);
   assert.equal(parsed.destination, null);
 });
+
+test('classifyIntent: "walking directions" / "walk to" resolve to FIND_WALKING_DIRECTIONS, distinct from PLAN_TRIP\'s bus-trip planning', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('walking directions to Publix'), 'FIND_WALKING_DIRECTIONS');
+  assert.equal(TheBusIntentParser.classifyIntent('walk to the pharmacy'), 'FIND_WALKING_DIRECTIONS');
+  assert.equal(TheBusIntentParser.classifyIntent('how do i walk to the school'), 'FIND_WALKING_DIRECTIONS');
+  // Regression guard: an ordinary bus-trip question must NOT be hijacked.
+  assert.equal(TheBusIntentParser.classifyIntent('from Publix to Kass Circle'), 'PLAN_TRIP');
+});
+
+test('classifyIntent: "download/enable ... directions" resolves to DOWNLOAD_ROUTING_TILES, and outscores FIND_WALKING_DIRECTIONS on the same phrase', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('download walking directions'), 'DOWNLOAD_ROUTING_TILES');
+  assert.equal(TheBusIntentParser.classifyIntent('enable walking directions'), 'DOWNLOAD_ROUTING_TILES');
+  assert.equal(TheBusIntentParser.classifyIntent('download routing tiles'), 'DOWNLOAD_ROUTING_TILES');
+});
+
+test('parseQuery: FIND_WALKING_DIRECTIONS extracts the free-text destination from each supported phrasing', () => {
+  assert.equal(TheBusIntentParser.parseQuery('walking directions to Publix', index).walkingDestination, 'Publix');
+  assert.equal(TheBusIntentParser.parseQuery('walk to the pharmacy', index).walkingDestination, 'the pharmacy');
+  assert.equal(TheBusIntentParser.parseQuery('how do i walk to the school', index).walkingDestination, 'the school');
+});
+
+test('parseQuery: FIND_WALKING_DIRECTIONS with no extractable destination yields null instead of throwing', () => {
+  const parsed = TheBusIntentParser.parseQuery('walking directions', index);
+  assert.equal(parsed.intent, 'FIND_WALKING_DIRECTIONS');
+  assert.equal(parsed.walkingDestination, null);
+});
