@@ -24,6 +24,16 @@ function withCapacitor(capacitor, fn) {
     });
 }
 
+/** A working Filesystem fake: mkdir succeeds once, then "throws exists" like the real plugin would on a second call -- most tests don't care about mkdir specifically and just need it to not blow up. */
+function fakeFilesystem(overrides = {}) {
+  return {
+    mkdir: async () => {},
+    downloadFile: async () => {},
+    addListener: async () => ({ remove: async () => {} }),
+    ...overrides,
+  };
+}
+
 test('isSupported/isDownloaded: false outside the Android app (no ValhallaRouting plugin) -- never throws', async () => {
   const original = global.Capacitor;
   delete global.Capacitor;
@@ -72,10 +82,7 @@ test('download: a successful native download reports ok:true, using Directory.Da
   await withCapacitor({
     Plugins: {
       ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
-      Filesystem: {
-        downloadFile: async (opts) => { calledWith = opts; },
-        addListener: async () => ({ remove: async () => {} }),
-      },
+      Filesystem: fakeFilesystem({ downloadFile: async (opts) => { calledWith = opts; } }),
     },
   }, async () => {
     const result = await TheBusValhallaTiles.download();
@@ -90,10 +97,10 @@ test('download: a failed native download reports ok:false with the real error me
   await withCapacitor({
     Plugins: {
       ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
-      Filesystem: {
+      Filesystem: fakeFilesystem({
         downloadFile: async () => { throw new Error('disk full'); },
         addListener: async () => ({ remove: async () => { listenerRemoved = true; } }),
-      },
+      }),
     },
   }, async () => {
     const result = await TheBusValhallaTiles.download(() => {});
@@ -109,7 +116,7 @@ test('download: progress callback receives a 0-100 percent derived from the nati
   await withCapacitor({
     Plugins: {
       ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
-      Filesystem: {
+      Filesystem: fakeFilesystem({
         downloadFile: async () => {
           // Simulate two progress events arriving mid-download before the download itself resolves.
           progressHandler({ bytes: 50, contentLength: 200 });
@@ -120,10 +127,69 @@ test('download: progress callback receives a 0-100 percent derived from the nati
           progressHandler = handler;
           return { remove: async () => {} };
         },
-      },
+      }),
     },
   }, async () => {
     await TheBusValhallaTiles.download((pct) => percents.push(pct));
     assert.deepEqual(percents, [25, 100]);
+  });
+});
+
+// Regression coverage for a REAL bug hit on a real device: @capacitor/
+// filesystem 6.0.4's Android downloadFile() never creates missing
+// parent directories despite accepting a `recursive` option in its
+// TypeScript surface (confirmed by reading its actual Java source --
+// doDownloadInBackground never reads that option at all). Without an
+// explicit mkdir() first, the very first download on a fresh install
+// fails with a raw "open failed: ENOENT" trying to write into a
+// directory that was never made.
+
+test('download: creates the valhalla/ directory before downloading, on the correct Directory.Data, so a fresh install\'s first-ever download doesn\'t hit ENOENT', async () => {
+  let mkdirCalledWith = null;
+  let downloadCalledAfterMkdir = false;
+  await withCapacitor({
+    Plugins: {
+      ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
+      Filesystem: fakeFilesystem({
+        mkdir: async (opts) => { mkdirCalledWith = opts; },
+        downloadFile: async () => { downloadCalledAfterMkdir = mkdirCalledWith !== null; },
+      }),
+    },
+  }, async () => {
+    const result = await TheBusValhallaTiles.download();
+    assert.equal(result.ok, true);
+    assert.equal(mkdirCalledWith.path, 'valhalla');
+    assert.equal(mkdirCalledWith.recursive, true);
+    assert.equal(downloadCalledAfterMkdir, true);
+  });
+});
+
+test('download: mkdir reporting the directory already exists (every download after the first) is treated as success, not an error', async () => {
+  await withCapacitor({
+    Plugins: {
+      ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
+      Filesystem: fakeFilesystem({
+        mkdir: async () => { throw new Error('Directory exists'); },
+      }),
+    },
+  }, async () => {
+    const result = await TheBusValhallaTiles.download();
+    assert.equal(result.ok, true);
+  });
+});
+
+test('download: a genuine mkdir failure (not "already exists") is reported as a real error, not silently swallowed', async () => {
+  await withCapacitor({
+    Plugins: {
+      ValhallaRouting: { tilesAvailable: async () => ({ available: false }) },
+      Filesystem: fakeFilesystem({
+        mkdir: async () => { throw new Error('Permission denied'); },
+        downloadFile: async () => { throw new Error('should not be called -- mkdir failed for real'); },
+      }),
+    },
+  }, async () => {
+    const result = await TheBusValhallaTiles.download();
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Permission denied/);
   });
 });

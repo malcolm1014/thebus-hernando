@@ -42,6 +42,34 @@
     }
   }
 
+  const TILES_DIR = 'valhalla';
+
+  /**
+   * Ensures TILES_DIR exists before a download ever tries to write into
+   * it. Real, confirmed bug in @capacitor/filesystem 6.0.4's Android
+   * implementation, not a hypothetical: downloadFile's TypeScript API
+   * accepts a `recursive` option, but its native `doDownloadInBackground`
+   * never reads that option at all -- `getFileObject()` only ever
+   * creates the DATA root itself (already exists) and hands back a File
+   * pointing at a parent directory it never created, so the very first
+   * download on a fresh install fails with a raw
+   * "open failed: ENOENT (No such file or directory)" trying to write
+   * into a directory that was never made. Confirmed by reading the
+   * actual Java source, not by guessing from the symptom.
+   *
+   * mkdir() itself throws if the directory already exists (true on
+   * every download after the very first, and always true if a prior
+   * attempt got this far but failed later) -- that failure is expected
+   * and swallowed; anything else is a real problem and surfaces.
+   */
+  async function ensureTilesDirExists() {
+    try {
+      await Filesystem.mkdir({ path: TILES_DIR, directory: Directory.Data, recursive: true });
+    } catch (err) {
+      if (!/exist/i.test((err && err.message) || '')) throw err;
+    }
+  }
+
   /**
    * Streams the tile tarball straight to disk via Filesystem.downloadFile
    * (native download, never round-tripped through JS as a base64 string --
@@ -57,6 +85,8 @@
 
     let listenerHandle = null;
     try {
+      await ensureTilesDirExists();
+
       if (onProgress) {
         listenerHandle = await Filesystem.addListener('progress', (event) => {
           if (event.contentLength > 0) {
@@ -69,7 +99,6 @@
         path: TILES_PATH,
         directory: Directory.Data,
         progress: true,
-        recursive: true,
       });
       return { ok: true };
     } catch (err) {
