@@ -56,7 +56,28 @@ function compactForWire(data) {
     };
   }
 
-  return { ...data, stops, stringPool: pool };
+  const result = { ...data, stops, stringPool: pool };
+
+  // Same string-repetition shape as arrivals' serviceId/headsign, at
+  // smaller scale: OSM `category` ("shop:pharmacy") and `highway`
+  // ("residential") each only take a few dozen distinct values across
+  // thousands of places/roads (see backend/scripts/osm-transform.js).
+  // Guarded on data.places/data.roads actually being present so a
+  // dataset from before the OSM merge existed (or one with the feature
+  // simply unconfigured) round-trips with no places/roads key at all,
+  // rather than gaining an empty one.
+  if (data.places) {
+    result.places = Object.fromEntries(
+      Object.entries(data.places).map(([id, p]) => [id, { ...p, category: intern(p.category) }])
+    );
+  }
+  if (data.roads) {
+    result.roads = Object.fromEntries(
+      Object.entries(data.roads).map(([id, r]) => [id, { ...r, highway: intern(r.highway) }])
+    );
+  }
+
+  return result;
 }
 
 /**
@@ -92,7 +113,20 @@ function expandFromWire(data) {
     };
   }
   const { stringPool, ...rest } = data;
-  return { ...rest, stops };
+  const result = { ...rest, stops };
+
+  if (data.places) {
+    result.places = Object.fromEntries(
+      Object.entries(data.places).map(([id, p]) => [id, { ...p, category: pool[p.category] }])
+    );
+  }
+  if (data.roads) {
+    result.roads = Object.fromEntries(
+      Object.entries(data.roads).map(([id, r]) => [id, { ...r, highway: pool[r.highway] }])
+    );
+  }
+
+  return result;
 }
 
 module.exports = { compactForWire, expandFromWire };

@@ -100,6 +100,35 @@ test('FIND_STOP_LOCATION: returns coordinates and served routes', async () => {
   assert.match(answer, /28\.50000, -82\.60000/);
 });
 
+test('FIND_STOP_LOCATION: a name that is not a known stop falls back to the bundled OSM business corpus instead of dead-ending', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    places: {
+      'osm:node:1': { id: 'osm:node:1', name: 'Walgreens', category: 'shop:chemist', lat: 28.52, lon: -82.62, address: '123 Main St, Brooksville', aliases: [] },
+    },
+  }));
+  const answer = await TheBusQueryEngine.answerQuery('where is walgreens', TUESDAY_9AM_ET);
+  assert.match(answer, /CHEMIST: WALGREENS/);
+  assert.match(answer, /28\.52000, -82\.62000/);
+  assert.match(answer, /ADDRESS: 123 MAIN ST, BROOKSVILLE/);
+});
+
+test('FIND_STOP_LOCATION: a name that is not a stop OR a place falls back to the bundled OSM named-road corpus', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    roads: {
+      'osm:road:0': { id: 'osm:road:0', name: 'Elm Street', highway: 'residential', lat: 28.53, lon: -82.63, segments: 2 },
+    },
+  }));
+  const answer = await TheBusQueryEngine.answerQuery('where is elm street', TUESDAY_9AM_ET);
+  assert.match(answer, /ROAD: ELM STREET/);
+  assert.match(answer, /28\.53000, -82\.63000/);
+});
+
+test('FIND_STOP_LOCATION: nothing matches at all (no stop, no OSM place/road) gives an honest answer, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  const answer = await TheBusQueryEngine.answerQuery('where is nowhere in particular xyz', TUESDAY_9AM_ET);
+  assert.match(answer, /DIDN'T CATCH A STOP, BUSINESS, OR STREET NAME/);
+});
+
 // getLastLocation() is a side channel, not part of answerQuery()'s own
 // return value -- app.js reads it right after awaiting answerQuery() to
 // optionally show a small static map image alongside a location-bearing
@@ -408,6 +437,88 @@ test('FIND_NEAREST_STOP: when NO nearby stop on the route has published times ei
   const answer = await TheBusQueryEngine.answerQuery('nearest stop to Avalon Publix', TUESDAY_9AM_ET);
   assert.match(answer, /BLUE.*SERVES THIS STOP, BUT NO PUBLISHED TIMES ARE AVAILABLE/);
   assert.doesNotMatch(answer, /VIA/);
+});
+
+test('FIND_NEAREST_STOP: "nearest stop to <business>" resolves via the bundled OSM place corpus (TIER 1.5), never touching the geocoder', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    places: {
+      'osm:node:1': { id: 'osm:node:1', name: 'Walgreens', category: 'shop:chemist', lat: 28.5001, lon: -82.6001, address: null, aliases: [] },
+    },
+  }));
+  TheBusSearchIndex.resetForTests();
+  // global.TheBusGeocode deliberately left undefined -- if this fell
+  // through to the network geocoder instead of the bundled OSM data,
+  // this would throw a ReferenceError instead of answering.
+  const answer = await TheBusQueryEngine.answerQuery('nearest stop to walgreens', TUESDAY_9AM_ET);
+  assert.match(answer, /NEAREST STOP TO WALGREENS/);
+  assert.match(answer, /AVALON PUBLIX/); // S1 is at 28.50,-82.60 -- unambiguously closest
+});
+
+test('FIND_NEAREST_STOP: "nearest stop to <street>" resolves via the bundled OSM road corpus (TIER 1.6) when no place matches', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    roads: {
+      'osm:road:0': { id: 'osm:road:0', name: 'Elm Street', highway: 'residential', lat: 28.5001, lon: -82.6001, segments: 1 },
+    },
+  }));
+  TheBusSearchIndex.resetForTests();
+  const answer = await TheBusQueryEngine.answerQuery('nearest stop to elm street', TUESDAY_9AM_ET);
+  assert.match(answer, /AVALON PUBLIX/);
+});
+
+test('FIND_NEAREST_PLACE: "nearest <category>" answers from the bundled OSM place corpus, using the rider\'s GPS when no landmark is named', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    places: {
+      'osm:node:1': { id: 'osm:node:1', name: 'CVS Pharmacy', category: 'shop:chemist', lat: 28.5005, lon: -82.6005, address: '100 Main St', aliases: [] },
+      'osm:node:2': { id: 'osm:node:2', name: 'Publix Supermarket', category: 'shop:supermarket', lat: 28.9, lon: -82.9, address: null, aliases: [] },
+    },
+  }));
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.50, lon: -82.60 }) };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest pharmacy', TUESDAY_9AM_ET);
+    assert.match(answer, /NEAREST PHARMACY TO YOU/);
+    assert.match(answer, /CVS PHARMACY/);
+    assert.match(answer, /ADDRESS: 100 MAIN ST/);
+    assert.doesNotMatch(answer, /PUBLIX SUPERMARKET/); // wrong category AND much farther -- must not appear
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_PLACE: "nearest <category> to <landmark>" anchors on the named landmark instead of GPS', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset({
+    places: {
+      'osm:node:1': { id: 'osm:node:1', name: 'CVS Pharmacy', category: 'shop:chemist', lat: 28.61, lon: -82.71, address: null, aliases: [] },
+    },
+  }));
+  TheBusSearchIndex.resetForTests();
+  // Avalon Publix (S1, a known GTFS stop) used as the anchor landmark --
+  // resolved via TIER 1 (GTFS) inside resolveLandmark(), same as any
+  // other FIND_NEAREST_STOP landmark.
+  const answer = await TheBusQueryEngine.answerQuery('nearest pharmacy to Avalon Publix', TUESDAY_9AM_ET);
+  assert.match(answer, /NEAREST PHARMACY TO AVALON PUBLIX/);
+  assert.match(answer, /CVS PHARMACY/);
+});
+
+test('FIND_NEAREST_PLACE: no place of that category on file gives an honest answer, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset()); // no places at all
+  global.TheBusGeolocate = { getCurrentPosition: async () => ({ lat: 28.50, lon: -82.60 }) };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest pharmacy', TUESDAY_9AM_ET);
+    assert.match(answer, /NO PHARMACY ON FILE/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
+});
+
+test('FIND_NEAREST_PLACE: GPS unavailable and no landmark named gets an honest message, not a crash', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.TheBusGeolocate = { getCurrentPosition: async () => null };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('nearest pharmacy', TUESDAY_9AM_ET);
+    assert.match(answer, /DIDN'T CATCH A PLACE NAME/);
+  } finally {
+    delete global.TheBusGeolocate;
+  }
 });
 
 test('FIND_NEXT_ARRIVAL: no stop named and GPS unavailable asks for a stop name instead of crashing', async () => {

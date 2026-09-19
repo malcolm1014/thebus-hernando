@@ -58,7 +58,24 @@
       };
     }
     const { stringPool, ...rest } = data;
-    return { ...rest, stops };
+    const result = { ...rest, stops };
+
+    // Mirrors backend/src/compact.js's own places/roads interning --
+    // see that file's doc comment. Guarded the same way: a dataset from
+    // before the OSM merge existed has no places/roads key at all, and
+    // should stay that way rather than gaining an empty one.
+    if (data.places) {
+      result.places = Object.fromEntries(
+        Object.entries(data.places).map(([id, p]) => [id, { ...p, category: pool[p.category] }])
+      );
+    }
+    if (data.roads) {
+      result.roads = Object.fromEntries(
+        Object.entries(data.roads).map(([id, r]) => [id, { ...r, highway: pool[r.highway] }])
+      );
+    }
+
+    return result;
   }
 
   async function fetchWithTimeout(url, ms) {

@@ -51,6 +51,14 @@ practices: https://osmfoundation.org/wiki/Privacy_Policy
 Results are cached, both on our server and on your device, so the exact
 same search doesn't need to be looked up again.
 
+The app also ships a bundled, offline dataset of tri-county roads and
+businesses (also sourced from OpenStreetMap, © OpenStreetMap
+contributors, ODbL-licensed) so many of these lookups resolve entirely
+on your device, with no network request or geocoder involved at all.
+This bundled data never changes based on anything you type or do — it's
+periodically regenerated from OpenStreetMap's public data and shipped in
+an app update, exactly like the bus schedule data itself.
+
 ## AI-assisted answer rephrasing (online only)
 
 The app answers every question using its own offline schedule-lookup

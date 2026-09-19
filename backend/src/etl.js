@@ -4,6 +4,7 @@ const { fetchGtfs } = require('./gtfsFetch');
 const { parseAllGtfs } = require('./gtfsParse');
 const { transform, mergeAgencyData } = require('./transform');
 const { enrichAliases } = require('./enrich');
+const { loadOsmExtract } = require('./osm');
 const { hashContent } = require('./hash');
 const { compactForWire, expandFromWire } = require('./compact');
 
@@ -144,6 +145,17 @@ async function runEtl() {
   }
 
   const data = mergeAgencyData(agencyResults);
+
+  // Separate from the per-agency GTFS merge above on purpose: this is
+  // NOT re-fetched from a live upstream every run (see osm.js's own doc
+  // comment on why), just read back from whatever
+  // scripts/refresh-osm-data.sh last committed. Never blocks a transit
+  // update -- an empty/missing OSM extract just means data.places and
+  // data.roads are both {}, exactly like a fresh checkout before that
+  // script has ever been run.
+  const osm = loadOsmExtract();
+  data.places = osm.places;
+  data.roads = osm.roads;
 
   if (isSuspiciouslySmaller(previous, data)) {
     const prevStops = Object.keys(previous.stops).length;

@@ -534,11 +534,20 @@ X") resolves `X` by walking the tiers above, in order:
    geocoder, which has no way to resolve "me" to anything. Deliberately
    never cached in Tiers 2/3, since "me" means a different point every
    single time.
-4. **TIER 2 (PLACES)** -- `X` matches a real place this device has
+4. **TIER 1.5 (OSM PLACES)** / **TIER 1.6 (OSM ROADS)** -- `X` matches a
+   business/POI or a named road in the bundled OSM corpus (see
+   "OpenStreetMap corpus" below) -- fuzzy-matched the same way Tier 1
+   stop names are, entirely offline. Checked before Tier 2 on purpose:
+   it's broader (thousands of real, pre-shipped businesses across the
+   whole tri-county area, not just whatever this one device has
+   personally geocoded before) and just as instant, so a landmark this
+   app has never been asked about before ("nearest stop to Walgreens")
+   can still resolve without ever touching the network.
+5. **TIER 2 (PLACES)** -- `X` matches a real place this device has
    geocoded before, even under different wording than what originally
    found it (fuzzy-matched the same way Tier 1 stop names are).
    Offline, no network needed a second time.
-5. **NETWORK** -- `X` is a genuine external place never seen before --
+6. **NETWORK** -- `X` is a genuine external place never seen before --
    resolved to real coordinates via a geocoder, then matched to the
    actual closest stop by great-circle distance. This is deliberately
    NOT a hand-maintained landmarks database: any such list would
@@ -579,6 +588,85 @@ county), found and fixed during a later research/refinement pass. Left
 unwidened, a landmark search for a real Tampa or Pasco business would
 have been biased toward, or could have missed in favor of, an unrelated
 same-named result outside Hernando entirely.
+
+## OpenStreetMap corpus: bundled roads and businesses
+
+Beyond GTFS transit data, the app also ships a bundled, offline corpus of
+**named roads and businesses/POIs** for the tri-county area (Hernando,
+Pasco, Hillsborough, and Citrus), sourced from OpenStreetMap and merged
+into the same `transit_data.json` the app already syncs
+(`data.places`/`data.roads`, keyed by id exactly like `data.stops`/
+`data.routes`). This is what powers the TIER 1.5/1.6 landmark resolution
+above and a new query type:
+
+- `where is Walgreens?` / `where is Main Street?` -- `FIND_STOP_LOCATION`
+  falls back from "known stop" to "known OSM business" to "known OSM
+  road" when the name isn't a bus stop (`answerFindStopLocation`,
+  `frontend/www/js/queryEngine.js`).
+- `nearest pharmacy?` / `nearest gas station to Publix?` -- a new
+  `FIND_NEAREST_PLACE` intent (`intentParser.js`'s `CATEGORY_ALIASES`
+  maps ~25 common spoken categories -- pharmacy, gas station, grocery
+  store, bank, restaurant, etc. -- to their real OSM tag values),
+  answered the same anchor-resolution way as "nearest stop to X" (a
+  named landmark, or the rider's own GPS when none is named).
+
+**Unlike GTFS, this is NOT re-fetched on every ETL run.** The source is
+a full-state OSM extract (~600MB from Geofabrik) -- far too heavy to
+pull on a cron schedule for data (roads, business names/addresses) that
+changes on the order of months, not daily. Instead
+`backend/scripts/refresh-osm-data.sh` is a periodic MANUAL job (needs
+`osmium-tool`, not installed on Render's Node buildpack, so it's run
+wherever it's available -- a dev machine or this repo's Codespace) that:
+
+1. Downloads Geofabrik's `florida-latest.osm.pbf`.
+2. `osmium extract`s a bounding box covering all 4 counties (a simple
+   bbox, not exact county polygons -- a pragmatic tradeoff, not a
+   precision requirement for this use case).
+3. `osmium tags-filter`s down to named roads (`w/highway`) and
+   business/POI nodes (`n/shop`, `n/amenity`, `n/office`, `n/tourism`,
+   `n/leisure`).
+4. `osmium export`s to GeoJSON Sequence, then `scripts/osm-transform.js`
+   flattens it to two small JSON tables (`backend/data/osm-source/
+   places.json`/`roads.json`, committed to the repo like any other data
+   update) -- dropping anything with no `name` tag (the bulk of a raw
+   OSM export is unnamed junction/signal/barrier nodes, useless for a
+   "where is X" search) and reducing each POI to `{name, category, lat,
+   lon, address, aliases}`.
+   Same-named roads are clustered by geographic proximity (single-
+   linkage, 2-mile radius) rather than averaged by name alone -- two
+   different towns' "Oak Court" a real distance apart must NOT collapse
+   into one bogus midpoint between them; a real contiguous street
+   (however long) still merges into one entry.
+5. `backend/src/osm.js` reads those two committed files back in at ETL
+   time and merges them into the dataset -- missing/absent files are
+   treated as "no OSM data configured yet," never a fatal error, exactly
+   like every other optional enrichment in this backend (Groq aliases,
+   Geoapify maps, Grok rephrasing).
+
+**Real numbers from the current tri-county extract** (regenerate via the
+script above to refresh): 10,900 named businesses/POIs and 68,512 named
+roads (57,914 distinct names, some split into multiple geographically-
+separate entries by the clustering above). `category`
+(places)/`highway` (roads) values are interned into the same shared
+`stringPool` `compact.js` already uses for GTFS arrivals (see "Keeping
+the payload lean" below) -- both highly repeated, small vocabularies.
+Combined with the 3-agency GTFS data, the full synced dataset is
+currently **~19.5MB** uncompressed JSON (gzips substantially smaller
+over the wire, same as the GTFS portion always has).
+
+**Not attempted (a real, disclosed scope decision, not an oversight):**
+turn-by-turn walking/road routing. OSM's road geometry alone doesn't
+provide routing -- that needs a routing engine (Valhalla is the
+realistic on-device option), which means a native Android/Capacitor
+plugin, not something that runs in a WebView via JS/WASM. "Nearest
+stop/place" answers here are straight-line (great-circle) distance, same
+as the app's existing nearest-stop logic -- a real, honest limitation,
+not routed walking distance.
+
+**Attribution**: this data is © OpenStreetMap contributors, ODbL-
+licensed -- credited in the app's onboarding help text and
+`PRIVACY_POLICY.md`. Keep that credit if you fork this or regenerate the
+extract.
 
 ## Planning a trip from A to B
 

@@ -160,6 +160,42 @@ test('parseQuery: extracts origin/destination for the reverse "to Y from X" phra
   assert.equal(parsed.destination, 'Kass Circle');
 });
 
+test('classifyIntent: "nearest <category>" resolves to FIND_NEAREST_PLACE, distinct from FIND_NEAREST_STOP\'s bare "nearest stop"', () => {
+  assert.equal(TheBusIntentParser.classifyIntent('nearest pharmacy'), 'FIND_NEAREST_PLACE');
+  assert.equal(TheBusIntentParser.classifyIntent('closest gas station to Publix'), 'FIND_NEAREST_PLACE');
+  assert.equal(TheBusIntentParser.classifyIntent('is there a grocery store nearby'), 'FIND_NEAREST_PLACE');
+  // Regression guard: a bare "nearest stop" (no category word) must NOT be hijacked by the new intent.
+  assert.equal(TheBusIntentParser.classifyIntent('nearest stop'), 'FIND_NEAREST_STOP');
+  assert.equal(TheBusIntentParser.classifyIntent('nearest stop to the school'), 'FIND_NEAREST_STOP');
+});
+
+test('extractPlaceCategory: maps a spoken category phrase to its OSM tag value(s), preferring the longest matching phrase', () => {
+  assert.deepEqual(TheBusIntentParser.extractPlaceCategory('nearest gas station'), ['amenity:fuel']);
+  assert.deepEqual(TheBusIntentParser.extractPlaceCategory('nearest grocery store'), ['shop:supermarket', 'shop:grocery']);
+  assert.equal(TheBusIntentParser.extractPlaceCategory('nearest bus stop'), null);
+});
+
+test('parseQuery: FIND_NEAREST_PLACE populates placeCategory and, when a connector is present, landmark -- same extractLandmark() shape FIND_NEAREST_STOP already uses', () => {
+  const parsed = TheBusIntentParser.parseQuery('nearest pharmacy to Publix', index);
+  assert.equal(parsed.intent, 'FIND_NEAREST_PLACE');
+  assert.deepEqual(parsed.placeCategory, ['amenity:pharmacy', 'shop:chemist']);
+  assert.equal(parsed.landmark, 'Publix');
+});
+
+test('parseQuery: a bare "nearest pharmacy" (no connector) has no landmark -- callers fall back to GPS, same as FIND_NEAREST_STOP\'s own bare "nearest stop"', () => {
+  const parsed = TheBusIntentParser.parseQuery('nearest pharmacy', index);
+  assert.equal(parsed.intent, 'FIND_NEAREST_PLACE');
+  assert.equal(parsed.landmark, null);
+});
+
+test('parseQuery: extracts a bundled OSM place/road match when the index carries them, independent of which intent the query classified as', () => {
+  const indexWithOsm = { ...index, places: [{ id: 'osm:node:1', name: 'Walgreens' }], roads: [{ id: 'osm:road:0', name: 'Main St' }] };
+  const placeParsed = TheBusIntentParser.parseQuery('where is walgreens', indexWithOsm);
+  assert.equal(placeParsed.place && placeParsed.place.id, 'osm:node:1');
+  const roadParsed = TheBusIntentParser.parseQuery('where is main st', indexWithOsm);
+  assert.equal(roadParsed.road && roadParsed.road.id, 'osm:road:0');
+});
+
 test('parseQuery: a PLAN_TRIP-classified query with no extractable "from X to Y" shape yields null origin/destination instead of throwing', () => {
   const parsed = TheBusIntentParser.parseQuery('plan my trip', index);
   assert.equal(parsed.intent, 'PLAN_TRIP');

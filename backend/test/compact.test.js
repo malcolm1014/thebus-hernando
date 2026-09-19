@@ -67,3 +67,31 @@ test('compactForWire: an empty headsign (falsy) still round-trips correctly rath
   const roundTripped = expandFromWire(compactForWire(data));
   assert.equal(roundTripped.stops.S1.routes[0].arrivals[0].headsign, '');
 });
+
+test('compactForWire: a dataset with no places/roads (pre-OSM-merge, or the feature just unconfigured) round-trips with no places/roads key at all -- never gains an empty one', () => {
+  const original = sampleData();
+  assert.ok(!('places' in original) && !('roads' in original));
+  const roundTripped = expandFromWire(compactForWire(original));
+  assert.deepEqual(roundTripped, original);
+  assert.ok(!('places' in roundTripped) && !('roads' in roundTripped));
+});
+
+test('compactForWire: interns OSM places.category and roads.highway into the SAME shared stringPool as GTFS arrivals, and round-trips exactly', () => {
+  const data = sampleData();
+  data.places = {
+    'osm:node:1': { id: 'osm:node:1', name: 'Publix', category: 'shop:supermarket', lat: 28.5, lon: -82.6, address: '123 Main St', aliases: [] },
+    'osm:node:2': { id: 'osm:node:2', name: 'CVS', category: 'shop:chemist', lat: 28.51, lon: -82.61, address: null, aliases: ['CVS Pharmacy'] },
+  };
+  data.roads = {
+    'osm:road:0': { id: 'osm:road:0', name: 'Main St', highway: 'residential', lat: 28.5, lon: -82.6, segments: 3 },
+  };
+
+  const compact = compactForWire(data);
+  assert.equal(typeof compact.places['osm:node:1'].category, 'number');
+  assert.equal(typeof compact.roads['osm:road:0'].highway, 'number');
+  assert.ok(compact.stringPool.includes('shop:supermarket'));
+  assert.ok(compact.stringPool.includes('residential'));
+
+  const roundTripped = expandFromWire(compact);
+  assert.deepEqual(roundTripped, data);
+});

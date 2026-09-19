@@ -62,9 +62,25 @@
         stopCandidates.push({ id: s.id, name: alias });
       }
     }
+    // Bundled OSM businesses/POIs and named roads (data.places/data.roads
+    // -- absent, or {}, on a dataset synced before this feature existed,
+    // or a fresh checkout before scripts/refresh-osm-data.sh has ever
+    // been run; see osm.js). Same alias-as-extra-candidate shape as
+    // stops above -- a place's alt_name/brand tags (osm-transform.js)
+    // let "cvs" resolve a node officially named "CVS Pharmacy #1234".
+    const placeCandidates = [];
+    for (const p of Object.values(data.places || {})) {
+      placeCandidates.push({ id: p.id, name: p.name });
+      for (const alias of p.aliases || []) {
+        placeCandidates.push({ id: p.id, name: alias });
+      }
+    }
+    const roadCandidates = Object.values(data.roads || {}).map((r) => ({ id: r.id, name: r.name }));
     index = {
       routes: Object.values(data.routes).map((r) => ({ id: r.id, shortName: r.shortName, longName: r.longName })),
       stops: stopCandidates,
+      places: placeCandidates,
+      roads: roadCandidates,
     };
   }
 
@@ -438,6 +454,18 @@
     return best;
   }
 
+  /** Same shape as nearestStopToPoint, over the bundled OSM places restricted to whichever category value(s) (see intentParser's CATEGORY_ALIASES) the rider actually asked for. */
+  function nearestPlaceByCategory(lat, lon, categories) {
+    let best = null;
+    for (const place of Object.values(dataset.places || {})) {
+      if (!categories.includes(place.category)) continue;
+      if (place.lat == null || place.lon == null) continue;
+      const dist = haversineMiles(lat, lon, place.lat, place.lon);
+      if (!best || dist < best.dist) best = { place, dist };
+    }
+    return best;
+  }
+
   /**
    * Reconstructs each real trip's own ordered (stopId, minutes) path from
    * the stop-keyed data the client already has -- no backend/ETL change
@@ -698,18 +726,44 @@
     return `NEXT ARRIVALS AT ${stopLabel}:\n${lines.join('\n')}`;
   }
 
+  /** "shop:pharmacy" -> "PHARMACY" -- drops the OSM key prefix and the category value's own underscores for a plain rider-facing label. */
+  function formatCategoryLabel(category) {
+    if (!category) return 'PLACE';
+    const value = category.includes(':') ? category.split(':')[1] : category;
+    return value.replace(/_/g, ' ').toUpperCase();
+  }
+
   function answerFindStopLocation(parsed) {
-    if (!parsed.stop) {
-      return "I DIDN'T CATCH A STOP NAME. TRY: WHERE IS <STOP NAME>?";
+    if (parsed.stop) {
+      if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
+      const stop = dataset.stops[parsed.stop.id];
+      setLastLocation(stop.lat, stop.lon, stop.name);
+      const routeList = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+      const coords = (stop.lat != null && stop.lon != null)
+        ? `${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`
+        : 'UNAVAILABLE';
+      return `STOP: ${stop.name.toUpperCase()}\nCOORDINATES: ${coords}\nSERVED BY ROUTES: ${routeList}`;
     }
-    if (parsed.stop.alternatives.length > 0) return disambiguationMessage(parsed.stop, 'STOPS');
-    const stop = dataset.stops[parsed.stop.id];
-    setLastLocation(stop.lat, stop.lon, stop.name);
-    const routeList = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-    const coords = (stop.lat != null && stop.lon != null)
-      ? `${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`
-      : 'UNAVAILABLE';
-    return `STOP: ${stop.name.toUpperCase()}\nCOORDINATES: ${coords}\nSERVED BY ROUTES: ${routeList}`;
+
+    // Not a known bus stop -- fall back to the bundled OSM corpus so
+    // "where is Walgreens?" (a business, not a stop) still answers
+    // instead of dead-ending. Same fallback shape resolveLandmark()
+    // already applies for FIND_NEAREST_STOP, just surfaced as its own
+    // direct answer here instead of "nearest stop to X".
+    if (parsed.place) {
+      if (parsed.place.alternatives.length > 0) return disambiguationMessage(parsed.place, 'PLACES');
+      const place = dataset.places[parsed.place.id];
+      setLastLocation(place.lat, place.lon, place.name);
+      const coords = `${place.lat.toFixed(5)}, ${place.lon.toFixed(5)}`;
+      return `${formatCategoryLabel(place.category)}: ${place.name.toUpperCase()}\nCOORDINATES: ${coords}${place.address ? `\nADDRESS: ${place.address.toUpperCase()}` : ''}`;
+    }
+    if (parsed.road) {
+      if (parsed.road.alternatives.length > 0) return disambiguationMessage(parsed.road, 'ROADS');
+      const road = dataset.roads[parsed.road.id];
+      setLastLocation(road.lat, road.lon, road.name);
+      return `ROAD: ${road.name.toUpperCase()}\nAPPROXIMATE LOCATION: ${road.lat.toFixed(5)}, ${road.lon.toFixed(5)}`;
+    }
+    return "I DIDN'T CATCH A STOP, BUSINESS, OR STREET NAME. TRY: WHERE IS <STOP, BUSINESS, OR STREET>?";
   }
 
   function answerListRouteStops(parsed) {
@@ -907,6 +961,27 @@
       return { type: 'point', lat: pos.lat, lon: pos.lon, label: 'you' };
     }
 
+    // TIER 1.5 (OSM PLACES) / TIER 1.6 (OSM ROADS) -- the bundled,
+    // authoritative business/road corpus (data.places/data.roads, see
+    // osm.js), checked BEFORE the smaller per-device learned cache
+    // (TIER 2 below): it's broader (thousands of real businesses vs.
+    // whatever this one device has happened to geocode before) and just
+    // as offline/instant, so a landmark this app has never personally
+    // looked up before ("nearest stop to Walgreens") can still resolve
+    // without ever touching the network.
+    const osmPlaceMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, index.places);
+    if (osmPlaceMatch && osmPlaceMatch.alternatives.length === 0) {
+      const place = dataset.places[osmPlaceMatch.id];
+      console.log('[thebus:tier] TIER 1.5 (OSM PLACES)', { query: normalizedLandmark, resolvedTo: osmPlaceMatch.id });
+      return { type: 'point', lat: place.lat, lon: place.lon, label: landmarkText };
+    }
+    const osmRoadMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, index.roads);
+    if (osmRoadMatch && osmRoadMatch.alternatives.length === 0) {
+      const road = dataset.roads[osmRoadMatch.id];
+      console.log('[thebus:tier] TIER 1.6 (OSM ROADS)', { query: normalizedLandmark, resolvedTo: osmRoadMatch.id });
+      return { type: 'point', lat: road.lat, lon: road.lon, label: landmarkText };
+    }
+
     const placeMatch = TheBusIntentParser.fuzzyMatch(normalizedLandmark, TheBusSearchIndex.getPlaceCandidates());
     if (placeMatch && placeMatch.alternatives.length === 0) {
       const place = TheBusSearchIndex.getPlaceById(placeMatch.id);
@@ -955,6 +1030,44 @@
     if (resolved.type === 'unavailable') return resolved.message;
     if (resolved.type === 'stop') return knownStopAnswer(parsed.landmark, resolved.stop, now);
     return nearestToPointAnswer(resolved.label, resolved.lat, resolved.lon, now);
+  }
+
+  /**
+   * "Nearest pharmacy", "nearest pharmacy to Publix" -- a genuinely
+   * different question from FIND_NEAREST_STOP's "nearest bus stop",
+   * answered from the bundled OSM business/POI corpus instead of GTFS
+   * stops. Shares the exact same anchor-point resolution as
+   * FIND_NEAREST_STOP (a named landmark via resolveLandmark(), or the
+   * rider's own GPS position when none was named) so both intents
+   * behave identically for "...to X" vs. a bare "nearest <thing>".
+   */
+  async function answerFindNearestPlace(parsed, now) {
+    if (!parsed.placeCategory) {
+      return "I DIDN'T CATCH WHAT KIND OF PLACE. TRY: NEAREST PHARMACY? OR NEAREST GAS STATION TO <PLACE>?";
+    }
+    const categoryLabel = formatCategoryLabel(parsed.placeCategory[0]);
+
+    let anchor;
+    let anchorLabel;
+    if (!parsed.landmark) {
+      const pos = await TheBusGeolocate.getCurrentPosition();
+      if (!pos) {
+        return `I DIDN'T CATCH A PLACE NAME. TRY: NEAREST ${categoryLabel} TO <PLACE>? OR TURN ON LOCATION AND JUST ASK: NEAREST ${categoryLabel}?`;
+      }
+      anchor = pos;
+      anchorLabel = 'YOU';
+    } else {
+      const resolved = await resolveLandmark(parsed.landmark);
+      if (resolved.type === 'unavailable') return resolved.message;
+      anchor = resolved.type === 'stop' ? { lat: resolved.stop.lat, lon: resolved.stop.lon } : resolved;
+      anchorLabel = parsed.landmark.toUpperCase();
+    }
+
+    const best = nearestPlaceByCategory(anchor.lat, anchor.lon, parsed.placeCategory);
+    if (!best) return `NO ${categoryLabel} ON FILE IN THIS AREA.`;
+    setLastLocation(best.place.lat, best.place.lon, best.place.name);
+    const addressLine = best.place.address ? `\nADDRESS: ${best.place.address.toUpperCase()}` : '';
+    return `NEAREST ${categoryLabel} TO ${anchorLabel}:\n${best.place.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)${addressLine}`;
   }
 
   // Real transfers and boarding always cost a few real minutes, not zero
@@ -1236,7 +1349,7 @@
   function answerBareLookup(parsed, now) {
     if (parsed.stop) return answerFindNextArrival(parsed, now);
     if (parsed.route) return answerListRouteStops(parsed);
-    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP>?\n- LIST STOPS ON ROUTE <N>\n- TIMETABLE FOR ROUTE <N>?\n- NEAREST STOP TO <PLACE>?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?";
+    return "COMMAND NOT RECOGNIZED. TRY:\n- WHEN IS THE NEXT BUS AT <STOP>?\n- WHERE IS <STOP, BUSINESS, OR STREET>?\n- LIST STOPS ON ROUTE <N>\n- TIMETABLE FOR ROUTE <N>?\n- NEAREST STOP TO <PLACE>?\n- NEAREST PHARMACY/GAS STATION/ETC?\n- FIRST/LAST BUS AT <STOP>?\n- FROM <PLACE> TO <PLACE>?";
   }
 
   /**
@@ -1251,6 +1364,7 @@
 
     switch (parsed.intent) {
       case 'PLAN_TRIP': return answerPlanTrip(parsed, now);
+      case 'FIND_NEAREST_PLACE': return answerFindNearestPlace(parsed, now);
       case 'FIND_NEAREST_STOP': return answerFindNearestStop(parsed, now);
       case 'FIND_FIRST_LAST_BUS': return answerFindFirstLastBus(parsed, now);
       case 'FIND_NEXT_ARRIVAL': return answerFindNextArrival(parsed, now);

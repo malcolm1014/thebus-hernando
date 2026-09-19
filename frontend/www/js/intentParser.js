@@ -21,6 +21,73 @@
 (function (global) {
 
   /**
+   * Maps a spoken/typed category phrase to the OSM tag value(s)
+   * (backend/scripts/osm-transform.js's `category` field, e.g.
+   * "shop:pharmacy") that answer it -- an array because a real-world
+   * concept sometimes spans more than one OSM tag (a "pharmacy" is
+   * tagged shop=chemist OR amenity=pharmacy depending on the mapper).
+   * Deliberately a curated, common-sense list of things a transit rider
+   * would actually ask for near a bus stop, not an exhaustive OSM tag
+   * dictionary.
+   */
+  const CATEGORY_ALIASES = {
+    'pharmacy': ['amenity:pharmacy', 'shop:chemist'],
+    'drug store': ['amenity:pharmacy', 'shop:chemist'],
+    'gas station': ['amenity:fuel'],
+    'petrol station': ['amenity:fuel'],
+    'grocery store': ['shop:supermarket', 'shop:grocery'],
+    'grocery': ['shop:supermarket', 'shop:grocery'],
+    'supermarket': ['shop:supermarket'],
+    'bank': ['amenity:bank'],
+    'atm': ['amenity:atm'],
+    'restaurant': ['amenity:restaurant'],
+    'fast food': ['amenity:fast_food'],
+    'coffee shop': ['amenity:cafe'],
+    'cafe': ['amenity:cafe'],
+    'hospital': ['amenity:hospital'],
+    'urgent care': ['amenity:clinic'],
+    'clinic': ['amenity:clinic'],
+    'post office': ['amenity:post_office'],
+    'library': ['amenity:library'],
+    'park': ['leisure:park'],
+    'hotel': ['tourism:hotel'],
+    'motel': ['tourism:motel'],
+    'laundromat': ['shop:laundry'],
+    'liquor store': ['shop:alcohol'],
+    'convenience store': ['shop:convenience'],
+    'hardware store': ['shop:hardware'],
+    'church': ['amenity:place_of_worship'],
+  };
+
+  // Longest phrase first, so "grocery store" matches as one phrase
+  // rather than the shorter "grocery" alternative winning inside the
+  // regex alternation first.
+  const CATEGORY_PHRASES = Object.keys(CATEGORY_ALIASES).sort((a, b) => b.length - a.length);
+  const CATEGORY_ALTERNATION = CATEGORY_PHRASES.map((p) => p.replace(/\s+/g, '\\s+')).join('|');
+
+  /**
+   * A category word is only a meaningful FIND_NEAREST_PLACE signal
+   * paired with an actual request phrase -- a BARE category word alone
+   * (no `requiredPrefix`) is deliberately not offered as an option here:
+   * real GTFS stop/landmark names routinely contain ordinary English
+   * words that happen to collide with a category ("Pine Island PARK" is
+   * a bus stop, not a request for the nearest park) -- confirmed as a
+   * real regression risk against this app's own existing test corpus,
+   * not a hypothetical one, before this function existed.
+   */
+  function buildCategoryCue(requiredPrefix) {
+    return new RegExp(`\\b${requiredPrefix}\\b[\\s\\S]*?\\b(${CATEGORY_ALTERNATION})\\b`, 'i');
+  }
+
+  /** Which CATEGORY_ALIASES value(s) (if any) a query is asking about. Only meaningful for FIND_NEAREST_PLACE. */
+  function extractPlaceCategory(normalizedText) {
+    for (const phrase of CATEGORY_PHRASES) {
+      if (normalizedText.includes(phrase)) return CATEGORY_ALIASES[phrase];
+    }
+    return null;
+  }
+
+  /**
    * Intent classification: WEIGHTED SCORING across every intent
    * simultaneously, not first-match-wins ordered regex (the previous
    * design). A query mentioning both "when" and "where" used to be
@@ -135,12 +202,24 @@
       { pattern: /\ball (the )?times\b/i, weight: 2 },
       { pattern: /\bevery (departure|time|arrival)\b/i, weight: 2 },
     ],
+    // "Nearest STOP" (FIND_NEAREST_STOP, weight 3 on nearest/closest
+    // alone) vs. "nearest PHARMACY" are genuinely different questions --
+    // one wants a bus stop, the other a business. Weighted at 5 so it
+    // reliably outscores FIND_NEAREST_STOP's bare 3. Every cue here
+    // REQUIRES an explicit request phrase alongside the category word
+    // (never a bare category word alone) -- see buildCategoryCue's own
+    // comment on why that's a real, not hypothetical, regression risk.
+    FIND_NEAREST_PLACE: [
+      { pattern: buildCategoryCue('(nearest|closest)'), weight: 5 },
+      { pattern: buildCategoryCue('is there (a|an|any)'), weight: 4 },
+      { pattern: buildCategoryCue('find (a|an|the|me a|me an)'), weight: 4 },
+    ],
   };
 
   // Tie-break order when two intents land on the exact same score
   // (rare, since weights are hand-tuned to avoid it) -- most-specific
   // intent wins, same reasoning as the old first-match-wins list order.
-  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
+  const INTENT_PRIORITY = ['PLAN_TRIP', 'FIND_NEAREST_PLACE', 'FIND_NEAREST_STOP', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_NEXT_ARRIVAL', 'FIND_STOP_LOCATION', 'LIST_ROUTE_STOPS'];
 
   function classifyIntent(text) {
     let bestIntent = 'UNKNOWN';
@@ -469,6 +548,16 @@
     return fuzzyMatch(normalizedText, stopCandidates.map((s) => ({ id: s.id, name: s.name })));
   }
 
+  /** Same fuzzy-match shape as extractStop, against the bundled OSM business/POI corpus (queryEngine.js's index.places) instead of GTFS stops. */
+  function extractPlace(normalizedText, placeCandidates) {
+    return fuzzyMatch(normalizedText, placeCandidates.map((p) => ({ id: p.id, name: p.name })));
+  }
+
+  /** Same fuzzy-match shape as extractStop, against the bundled OSM named-road corpus (queryEngine.js's index.roads). */
+  function extractRoad(normalizedText, roadCandidates) {
+    return fuzzyMatch(normalizedText, roadCandidates.map((r) => ({ id: r.id, name: r.name })));
+  }
+
   /**
    * Pulls the free-text place name out of a FIND_NEAREST_STOP query --
    * this is deliberately NOT matched against known stop/route names
@@ -529,25 +618,35 @@
 
   /**
    * @param {string} text - raw user input
-   * @param {{routes: Array<{id,shortName,longName}>, stops: Array<{id,name}>}} index
+   * @param {{routes: Array<{id,shortName,longName}>, stops: Array<{id,name}>, places?: Array<{id,name}>, roads?: Array<{id,name}>}} index
    *   Built by queryEngine.buildIndex() from the loaded transit_data.json
    *   -- entity extraction is only ever matched against real, current data.
+   *   `places`/`roads` are the bundled OSM corpus (absent, or empty, on a
+   *   dataset synced before that feature existed -- handled the same way
+   *   `stops[].aliases` already is elsewhere in this file).
    */
   function parseQuery(text, index) {
     const normalizedText = normalize(text);
     const intent = classifyIntent(text);
     const route = extractRoute(normalizedText, index.routes);
     const stop = extractStop(normalizedText, index.stops);
-    const landmark = intent === 'FIND_NEAREST_STOP' ? extractLandmark(text) : null;
+    // Always extracted (not gated on intent), same as route/stop above --
+    // FIND_STOP_LOCATION's "WHERE IS X" falls back to whichever of these
+    // actually matched when X isn't a known stop (see queryEngine.js's
+    // answerFindStopLocation).
+    const place = extractPlace(normalizedText, index.places || []);
+    const road = extractRoad(normalizedText, index.roads || []);
+    const placeCategory = intent === 'FIND_NEAREST_PLACE' ? extractPlaceCategory(normalizedText) : null;
+    const landmark = (intent === 'FIND_NEAREST_STOP' || intent === 'FIND_NEAREST_PLACE') ? extractLandmark(text) : null;
     const firstOrLast = intent === 'FIND_FIRST_LAST_BUS' ? extractFirstOrLast(text) : null;
     const tripEndpoints = intent === 'PLAN_TRIP' ? extractTripEndpoints(text) : null;
     return {
-      intent, route, stop, landmark, firstOrLast,
+      intent, route, stop, place, road, placeCategory, landmark, firstOrLast,
       origin: tripEndpoints ? tripEndpoints.origin : null,
       destination: tripEndpoints ? tripEndpoints.destination : null,
       raw: text,
     };
   }
 
-  global.TheBusIntentParser = { parseQuery, classifyIntent, normalize, fuzzyMatch, jaroWinkler };
+  global.TheBusIntentParser = { parseQuery, classifyIntent, normalize, fuzzyMatch, jaroWinkler, extractPlaceCategory, CATEGORY_ALIASES };
 })(window);

@@ -23,7 +23,14 @@ function compact(data) {
       routes: stop.routes.map((r) => ({ ...r, arrivals: r.arrivals.map((a) => [intern(a.tripId), intern(a.serviceId), intern(a.headsign), a.minutes]) })),
     };
   }
-  return { ...data, stops, stringPool: pool };
+  const result = { ...data, stops, stringPool: pool };
+  if (data.places) {
+    result.places = Object.fromEntries(Object.entries(data.places).map(([id, p]) => [id, { ...p, category: intern(p.category) }]));
+  }
+  if (data.roads) {
+    result.roads = Object.fromEntries(Object.entries(data.roads).map(([id, r]) => [id, { ...r, highway: intern(r.highway) }]));
+  }
+  return result;
 }
 
 function sampleData() {
@@ -56,4 +63,16 @@ test('expandDataset: a dataset with no stringPool (not compacted, or a stale pre
 test('expandDataset: null/undefined input does not crash', () => {
   assert.equal(TheBusSync.expandDataset(null), null);
   assert.equal(TheBusSync.expandDataset(undefined), undefined);
+});
+
+test('expandDataset: reverses interned places.category / roads.highway, and a dataset with neither key stays without one', () => {
+  const original = sampleData();
+  original.places = { P1: { id: 'P1', name: 'Publix', category: 'shop:supermarket', lat: 1, lon: 2, address: null, aliases: [] } };
+  original.roads = { R1: { id: 'R1', name: 'Main St', highway: 'residential', lat: 1, lon: 2, segments: 1 } };
+  const expanded = TheBusSync.expandDataset(compact(original));
+  assert.deepEqual(expanded, original);
+
+  const withoutOsm = sampleData();
+  const expandedWithout = TheBusSync.expandDataset(compact(withoutOsm));
+  assert.ok(!('places' in expandedWithout) && !('roads' in expandedWithout));
 });
