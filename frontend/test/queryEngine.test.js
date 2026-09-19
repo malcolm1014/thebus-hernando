@@ -603,6 +603,28 @@ test('FIND_WALKING_DIRECTIONS: GPS unavailable because the APP\'s own permission
   }
 });
 
+// Real, more fundamental case than any of the above: TheBusGeolocate
+// never even found a native Geolocation plugin object at all (no
+// fallback attempt is ever made, so there's no native error text
+// either) -- previously this collapsed into the exact same generic
+// "couldn't get your location" a genuine fix failure gets, making the
+// two impossible to tell apart from the rider-facing answer alone.
+test('FIND_WALKING_DIRECTIONS: no native Geolocation plugin object at all gets its own unmistakable message, distinct from a genuine fix failure', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  global.Capacitor = { Plugins: { ValhallaRouting: { tilesAvailable: async () => ({ available: true }) } } };
+  global.TheBusGeolocate = { getCurrentPosition: async () => null, getLastFailureReason: () => 'unsupported' };
+  try {
+    const answer = await TheBusQueryEngine.answerQuery('walking directions to Publix', TUESDAY_9AM_ET);
+    assert.match(answer, /NO LOCATION PLUGIN LOADED/);
+    assert.doesNotMatch(answer, /COULDN'T GET YOUR LOCATION RIGHT NOW/);
+    assert.doesNotMatch(answer, /LOCATION SERVICES ARE TURNED OFF/);
+    assert.doesNotMatch(answer, /DOESN'T HAVE PERMISSION/);
+  } finally {
+    delete global.Capacitor;
+    delete global.TheBusGeolocate;
+  }
+});
+
 // Real bug: a rider hit this exact "no-fix" case indoors in a spot
 // where another app found their location fine -- neither the
 // services-disabled nor permission-denied message applies, so the only

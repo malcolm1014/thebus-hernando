@@ -888,6 +888,15 @@
       base = "YOUR DEVICE'S LOCATION SERVICES ARE TURNED OFF -- THIS IS A DIFFERENT SETTING FROM THIS APP'S OWN LOCATION PERMISSION. TURN ON LOCATION IN YOUR DEVICE SETTINGS AND TRY AGAIN.";
     } else if (reason === 'permission-denied') {
       base = "THIS APP DOESN'T HAVE PERMISSION TO USE YOUR LOCATION. GRANT LOCATION ACCESS TO THIS APP IN YOUR DEVICE SETTINGS AND TRY AGAIN.";
+    } else if (reason === 'unsupported') {
+      // A genuinely different, more fundamental case than a fix simply
+      // failing: TheBusGeolocate never even found a native Geolocation
+      // plugin object to call in the first place (Capacitor.Plugins.Geolocation
+      // itself is missing/undefined) -- no fallback attempt was ever
+      // made, so there's no native error text to show. Worth its own
+      // unmistakable wording rather than collapsing into the same
+      // generic "couldn't get your location" a genuine fix failure gets.
+      base = "LOCATION ISN'T AVAILABLE IN THIS APP RIGHT NOW (NO LOCATION PLUGIN LOADED) -- THIS IS DIFFERENT FROM A PERMISSION OR SIGNAL PROBLEM.";
     } else {
       base = 'COULDN\'T GET YOUR LOCATION RIGHT NOW.';
       // Neither "services off" nor "permission denied" explains a
