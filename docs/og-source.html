@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>og</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    background: #05080a;
+    background-image:
+      radial-gradient(ellipse at top, rgba(79,252,160,0.14), transparent 62%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 3px);
+    font-family: 'VT323', 'Courier New', monospace;
+    color: #d7ffe8;
+    position: relative;
+  }
+  .frame {
+    width: 1200px;
+    height: 630px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px;
+  }
+  .logo {
+    width: 110px;
+    height: 110px;
+    border-radius: 24px;
+    box-shadow: 0 0 40px rgba(79,252,160,0.55), 0 0 0 2px #1e4a38;
+    margin-bottom: 22px;
+  }
+  h1 {
+    font-size: 96px;
+    letter-spacing: 10px;
+    color: #4ffca0;
+    text-shadow: 0 0 18px rgba(79,252,160,0.6), 0 0 50px rgba(79,252,160,0.3);
+    line-height: 1;
+  }
+  .subtitle {
+    font-size: 32px;
+    color: #9fd6bd;
+    letter-spacing: 2px;
+    margin-top: 10px;
+    margin-bottom: 26px;
+  }
+  .badges {
+    display: flex;
+    gap: 14px;
+  }
+  .badge {
+    border: 1px solid #2b8a63;
+    color: #4ffca0;
+    padding: 8px 20px;
+    border-radius: 999px;
+    font-size: 24px;
+    background: rgba(79,252,160,0.08);
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+  }
+  .route {
+    position: absolute;
+    bottom: 46px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 46px;
+    font-size: 22px;
+    color: #6fa08a;
+    letter-spacing: 1px;
+  }
+  .route span.dot {
+    color: #4ffca0;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <img class="logo" src="assets/icon.png" alt="">
+    <h1>TRIBUS</h1>
+    <div class="subtitle">Nature Coast &rarr; Tampa Bay Transit Terminal</div>
+    <div class="badges">
+      <span class="badge">Free</span>
+      <span class="badge">No Logging</span>
+      <span class="badge">Offline Ready</span>
+      <span class="badge">Android</span>
+    </div>
+  </div>
+  <div class="route">
+    <span><span class="dot">&#9679;</span> Hernando</span>
+    <span><span class="dot">&#9679;</span> Pasco</span>
+    <span><span class="dot">&#9679;</span> Hillsborough</span>
+    <span style="color:#5a7a6c;"><span class="dot" style="color:#5a7a6c;">&#9675;</span> Citrus (soon)</span>
+  </div>
+</body>
+</html>
