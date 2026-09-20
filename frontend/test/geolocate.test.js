@@ -73,6 +73,29 @@ test('getCurrentPosition: falls back to a one-shot read when watchPosition never
   });
 });
 
+// Real bug hit on a real device: "couldn't get your location right now.
+// (detail: high-accuracy attempt: Geolocation.watchPosition(...).then is
+// not a function)". Root cause: watchBestFix chained .then()/.catch()
+// directly on watchPosition's return value, but on that device/build the
+// plugin bridge handed back a plain (non-promise) value instead of a real
+// thenable -- unlike every other Geolocation call in this file, which is
+// always `await`ed and tolerates that gracefully. This test's fake mirrors
+// that shape (a plain synchronous, non-async watchPosition) to lock in
+// that watchBestFix no longer assumes its return value is thenable.
+test('getCurrentPosition: does not crash when watchPosition returns a plain (non-promise) value instead of a real thenable', async () => {
+  const fake = {
+    checkPermissions: async () => ({ location: 'granted' }),
+    watchPosition: (options, callback) => 'watch-1', // plain sync return, no .then -- reproduces the real device bug shape
+    clearWatch: () => {}, // also plain sync, same reasoning
+    getCurrentPosition: async () => fixedPosition(28.5, -82.6, 15),
+  };
+  await withFakeCapacitor(fake, async () => {
+    const result = await TheBusGeolocate.getCurrentPosition();
+    assert.deepEqual(result, { lat: 28.5, lon: -82.6 });
+    assert.equal(TheBusGeolocate.getLastFailureReason(), null);
+  });
+});
+
 // Real bug hit indoors on a real device: a high-accuracy GPS request
 // consistently failed to get any fix at all indoors, even though
 // @capacitor/geolocation runs on Google's Fused Location Provider,

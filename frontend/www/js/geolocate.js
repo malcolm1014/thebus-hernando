@@ -92,13 +92,13 @@
       const finish = () => {
         if (settled) return;
         settled = true;
-        if (watchId != null) Geolocation.clearWatch({ id: watchId }).catch(() => {});
+        if (watchId != null) Promise.resolve(Geolocation.clearWatch({ id: watchId })).catch(() => {});
         resolve(best);
       };
 
       const timer = setTimeout(finish, timeoutMs);
 
-      Geolocation.watchPosition({ enableHighAccuracy: true, timeout: timeoutMs }, (pos, err) => {
+      const watchCall = Geolocation.watchPosition({ enableHighAccuracy: true, timeout: timeoutMs }, (pos, err) => {
         if (settled || err || !pos) return;
         const accuracy = pos.coords.accuracy;
         if (!best || (accuracy != null && accuracy < best.accuracy)) {
@@ -108,7 +108,17 @@
           clearTimeout(timer);
           finish();
         }
-      }).then((id) => { watchId = id; }).catch(() => {}); // a watch that fails to even start just means watchBestFix times out with whatever (nothing) it has -- getCurrentPosition() below still returns null in that case
+      });
+      // Real bug hit on a real device: "high-accuracy attempt:
+      // Geolocation.watchPosition(...).then is not a function" -- unlike
+      // every other Geolocation call in this file (always `await`ed,
+      // which tolerates a non-promise return value), this is the one spot
+      // that has to chain .then()/.catch() directly, since it needs the
+      // watch ID without blocking. watchPosition's return value isn't
+      // reliably a genuine thenable on every Capacitor/Android build, so
+      // wrap it in Promise.resolve() to make chaining safe regardless of
+      // what it actually handed back.
+      Promise.resolve(watchCall).then((id) => { watchId = id; }).catch(() => {}); // a watch that fails to even start just means watchBestFix times out with whatever (nothing) it has -- getCurrentPosition() below still returns null in that case
     });
   }
 
