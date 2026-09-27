@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<!-- No maximum-scale/user-scalable=no here on purpose -- that blocks
+     pinch-to-zoom entirely, which fails WCAG 1.4.4 (Resize Text) and is
+     a real problem for any low-vision rider trying to read the small
+     answer text or bus-list panel. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TriBus // Nature Coast to Tampa Bay Transit</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+<link rel="stylesheet" href="css/terminal.css" />
+</head>
+<body>
+  <div id="crt">
+    <div id="screen">
+      <div id="boot-banner">
+        TRIBUS TRANSIT TERMINAL v1.0<br/>
+        HERNANDO * PASCO * TAMPA BAY (HART)<br/>
+        <span id="boot-status">INITIALIZING OFFLINE DATASET...</span><br/>
+        <span id="data-freshness" hidden></span>
+        <!-- Independent of the OS's prefers-reduced-motion setting --
+             a rider may find the flicker/glow uncomfortable (or just
+             distracting) without knowing that's a system setting they
+             could change, or without wanting to change it system-wide
+             just for this one app. Persisted via TheBusStorage; the
+             terminal look itself is never removed, only optional. -->
+        <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
+      </div>
+
+      <div id="view-tabs" role="tablist">
+        <button type="button" id="tab-terminal" class="view-tab active" role="tab" aria-selected="true">[ TERMINAL ]</button>
+        <button type="button" id="tab-map" class="view-tab" role="tab" aria-selected="false">[ LIVE MAP ]</button>
+      </div>
+
+      <div id="terminal-view">
+        <div id="history" aria-live="polite"></div>
+
+        <div id="input-line">
+          <span class="prompt" aria-hidden="true">&gt;</span>
+          <!-- The real, visible input -- styled to look like terminal text
+               (transparent background, matching font/color) rather than
+               mirrored into a separate fake element. A prior version tried
+               an invisible proxy input with keystrokes mirrored into a
+               fake span, which broke Android keyboards' own cursor/
+               composition tracking (confirmed on-device: reversed text
+               entry, broken backspace). Letting the OS keyboard manage a
+               real, visible input directly avoids fighting it.
+               The "&gt;" prompt beside it is decorative (aria-hidden) --
+               a screen reader needs an actual programmatic label, which
+               a plain adjacent glyph never provides on its own. -->
+          <label for="command-input" class="sr-only">Type your question, e.g. when is the next bus at a stop</label>
+          <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" inputmode="text" />
+        </div>
+      </div>
+
+      <div id="map-view" hidden>
+        <div id="map"></div>
+        <!-- Populated dynamically from the loaded dataset's agencies{}
+             metadata (see app.js's buildCountySelector) -- never
+             hardcoded to specific counties, so this scales to however
+             many agencies are actually merged into the current dataset
+             (today: Hernando/Pasco/HART; hidden entirely for a
+             single-agency dataset with nothing to choose between). -->
+        <div id="county-selector" hidden role="tablist" aria-label="Select county map"></div>
+        <button type="button" id="map-status" aria-expanded="false" aria-controls="bus-list-panel">CONNECTING TO LIVE TRACKER...</button>
+        <div id="bus-list-panel" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-launch onboarding: location consent, then a brief how-to.
+       Hidden by default -- app.js shows whichever's needed after boot,
+       and only ever once (TheBusStorage.getOnboardingSeen()). -->
+  <div id="onboard-location" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-location-title">
+    <div class="modal-box">
+      <div id="onboard-location-title" class="modal-title">SHARE YOUR LOCATION?</div>
+      <p class="modal-body">
+        TRIBUS CAN FIND THE NEAREST STOP OR THE NEXT BUS NEAR YOU
+        AUTOMATICALLY IF YOU SHARE YOUR LOCATION. YOU CAN ALWAYS SKIP
+        THIS AND JUST TYPE A STOP OR PLACE NAME INSTEAD.
+      </p>
+      <div class="modal-actions">
+        <button type="button" id="onboard-location-yes" class="modal-btn">[ YES, SHARE LOCATION ]</button>
+        <button type="button" id="onboard-location-no" class="modal-btn">[ NOT NOW ]</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="onboard-help" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-help-title">
+    <div class="modal-box">
+      <button type="button" id="onboard-help-close" class="modal-close" aria-label="Close">X</button>
+      <div id="onboard-help-title" class="modal-title">HOW TO USE TRIBUS</div>
+      <p class="modal-body">
+        TYPE A QUESTION AND PRESS ENTER. TRY THINGS LIKE:<br/>
+        <br/>
+        &gt; WHEN IS THE NEXT BUS AT &lt;STOP&gt;? (OR JUST "WHEN'S<br/>
+        &nbsp;&nbsp;THE NEXT BUS?" WITH LOCATION ON)<br/>
+        &gt; NEAREST STOP TO &lt;PLACE&gt;? (OR "...TO ME?")<br/>
+        &gt; WHERE IS &lt;STOP, BUSINESS, OR STREET&gt;?<br/>
+        &gt; NEAREST PHARMACY/GAS STATION/ETC?<br/>
+        &gt; FIRST/LAST BUS AT &lt;STOP&gt;?<br/>
+        &gt; LIST STOPS ON ROUTE &lt;N&gt;<br/>
+        &gt; TIMETABLE FOR ROUTE &lt;N&gt;?<br/>
+        &gt; FROM &lt;PLACE&gt; TO &lt;PLACE&gt;? (PLANS YOUR WHOLE TRIP)<br/>
+        &gt; WALKING DIRECTIONS TO &lt;PLACE&gt;?<br/>
+        &nbsp;&nbsp;(FIRST TYPE "DOWNLOAD WALKING DIRECTIONS" ONCE -- A<br/>
+        &nbsp;&nbsp;ONE-TIME ~164MB DOWNLOAD -- THEN THIS WORKS OFFLINE TOO)<br/>
+        <br/>
+        TAP [ LIVE MAP ] ABOVE TO SEE ROUTES AND BUSES IN REAL TIME.
+        ONCE SYNCED, EVERYTHING BUT LIVE BUS POSITIONS WORKS OFFLINE.
+      </p>
+      <p class="modal-body" style="font-size: 0.85em; opacity: 0.7;">
+        ROAD AND BUSINESS DATA (C) OPENSTREETMAP CONTRIBUTORS, ODBL.
+      </p>
+    </div>
+  </div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/geocode.js"></script>
+  <script src="js/grokEnhance.js"></script>
+  <script src="js/geolocate.js"></script>
+  <script src="js/valhallaTiles.js"></script>
+  <script src="js/intentParser.js"></script>
+  <script src="js/searchIndex.js"></script>
+  <script src="js/queryEngine.js"></script>
+  <script src="js/geoMath.js"></script>
+  <script src="js/vehicleAllocation.js"></script>
+  <script src="js/liveMap.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

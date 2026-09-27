@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TriBus — Free Offline Transit for the Nature Coast &amp; Tampa Bay</title>
-<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough County transit riders. No logging. No backend. Available now for Android.">
+<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough (Tampa) transit riders. Ask in plain English, plan trips across agencies, and try it live in your browser. No logging. No accounts. Available for Android.">
 <link rel="icon" href="assets/icon.png">
 
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://malcolm1014.github.io/thebus-hernando/">
 <meta property="og:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta property="og:description" content="Free. No logging. No backend. Offline ready. Available now for Android — covering Hernando, Pasco, and Hillsborough County transit.">
+<meta property="og:description" content="Free. No logging. No accounts. Offline ready. Plans trips across Hernando, Pasco, and Tampa Bay (HART) — and you can try the real terminal live in your browser.">
 <meta property="og:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -21,7 +21,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta name="twitter:description" content="Free. No logging. No backend. Offline ready. Available now for Android — covering Hernando, Pasco, and Hillsborough County transit.">
+<meta name="twitter:description" content="Free. No logging. No accounts. Offline ready. Plans trips across Hernando, Pasco, and Tampa Bay (HART) — try the real terminal live in your browser.">
 <meta name="twitter:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -122,6 +122,13 @@
     white-space: nowrap;
   }
 
+  .cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+  }
+
   .cta {
     display: inline-flex;
     align-items: center;
@@ -140,9 +147,16 @@
   .cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px var(--green-glow); }
   .cta svg { width: 22px; height: 22px; fill: #04140c; }
 
+  .cta.secondary {
+    background: transparent;
+    color: var(--green);
+    box-shadow: inset 0 0 0 1px var(--green-dim);
+  }
+  .cta.secondary:hover { box-shadow: inset 0 0 0 1px var(--green), 0 0 20px var(--green-glow); }
+
   .cta-note {
     display: block;
-    margin-top: 14px;
+    margin-top: 16px;
     font-size: 16px;
     color: var(--text-dim);
   }
@@ -263,10 +277,11 @@
   /* Features */
   .features {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 18px;
   }
-  @media (max-width: 640px) { .features { grid-template-columns: 1fr; } }
+  @media (max-width: 860px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
 
   .feature {
     background: var(--bg-panel);
@@ -287,29 +302,57 @@
     margin: 0;
   }
 
-  /* Terminal preview */
-  .terminal-preview {
+  /* Live in-browser demo */
+  .demo-lede { text-align: center; }
+  .device {
+    max-width: 420px;
+    margin: 0 auto;
     background: #000;
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px 22px;
+    border-radius: 22px;
+    padding: 14px;
+    box-shadow: 0 0 40px rgba(79,252,160,0.12), inset 0 0 40px rgba(79,252,160,0.05);
+  }
+  .demo-frame {
+    display: block;
+    width: 100%;
+    height: 620px;
+    border: 0;
+    border-radius: 12px;
+    background: #05080a;
+  }
+  .demo-note {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 16px;
+    margin: 20px auto 0;
+    max-width: 620px;
+  }
+  .demo-note a { color: var(--green); }
+
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 26px;
+  }
+  .examples .label {
+    width: 100%;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 17px;
+    margin-bottom: 4px;
+  }
+  .chip {
+    border: 1px dashed var(--green-dim);
     color: var(--green);
-    font-size: 18px;
-    line-height: 1.6;
-    box-shadow: inset 0 0 40px rgba(79,252,160,0.06);
-    overflow-x: auto;
+    padding: 5px 13px;
+    border-radius: 999px;
+    font-size: 17px;
+    background: rgba(79,252,160,0.05);
   }
-  .terminal-preview .prompt { color: var(--text-dim); }
-  .terminal-preview .out { color: var(--green); }
-  .terminal-preview .cursor {
-    display: inline-block;
-    width: 9px;
-    height: 16px;
-    background: var(--green);
-    vertical-align: middle;
-    animation: blink 1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
+  .chip::before { content: "> "; color: var(--green-dim); }
 
   footer {
     padding: 40px 0 60px;
@@ -332,15 +375,18 @@
     <div class="badges">
       <span class="badge">100% Free</span>
       <span class="badge">No Logging</span>
-      <span class="badge">No Backend Required</span>
-      <span class="badge">Offline Ready</span>
+      <span class="badge">Works Offline</span>
+      <span class="badge">Cross-County Trips</span>
       <span class="badge">Android</span>
     </div>
 
-    <a class="cta" href="https://github.com/malcolm1014/thebus-hernando/releases/latest/download/app-debug.apk">
-      <svg viewBox="0 0 24 24"><path d="M12 16l-6-6h4V4h4v6h4l-6 6zm-8 2h16v2H4v-2z"/></svg>
-      Download for Android
-    </a>
+    <div class="cta-row">
+      <a class="cta" href="https://github.com/malcolm1014/thebus-hernando/releases/latest/download/app-debug.apk">
+        <svg viewBox="0 0 24 24"><path d="M12 16l-6-6h4V4h4v6h4l-6 6zm-8 2h16v2H4v-2z"/></svg>
+        Download for Android
+      </a>
+      <a class="cta secondary" href="#try">▶ Try it in your browser</a>
+    </div>
     <span class="cta-note">
       Direct APK download — not on the Play Store. You may need to allow "install from unknown sources."
       <br>Free &amp; open source — <a href="https://github.com/malcolm1014/thebus-hernando">view the code</a> ·
@@ -358,11 +404,12 @@
       It merges GTFS schedule data from multiple Florida transit agencies into a single
       lightweight dataset that lives entirely on your phone — so once it's synced, checking a
       schedule, finding the nearest stop, or planning a trip works with zero signal and zero
-      backend calls. Ask it plain-English questions like "next bus to Brooksville" or "how do I
-      get from Spring Hill to downtown Tampa," and it answers instantly from data already on
-      your device. A second tab adds a live map with real-time bus positions whenever you do
-      have a connection. There's no account, no tracking, and nothing phoning home in the
-      background — just a fast, private way to catch the bus.
+      backend calls. Ask it plain-English questions like "next bus at Avalon Publix" or "from
+      Spring Hill to downtown Tampa," and it answers instantly from data already on your
+      device — no LLM guessing at the facts, just the real schedule. A second tab adds a live
+      map with real-time bus positions whenever you have a connection. There's no account, no
+      tracking, and nothing phoning home in the background — just a fast, private way to catch
+      the bus.
     </p>
   </div>
 </section>
@@ -401,7 +448,8 @@
       </div>
       <p class="route-caption">
         Trip planning can cross agency boundaries automatically — TriBus will route you from a
-        Hernando stop all the way into Tampa on HART, transfers and all.
+        Hernando stop all the way into Tampa on HART, transfers and all. Real-time bus positions
+        are live for Hernando and Pasco today.
       </p>
     </div>
   </div>
@@ -409,44 +457,68 @@
 
 <section class="features">
   <div class="wrap">
-    <h2>Why Riders Use It</h2>
+    <h2>What It Does</h2>
     <p class="section-lede">Built to respect your data, your battery, and your commute.</p>
 
     <div class="features">
+      <div class="feature">
+        <div class="icon">💬</div>
+        <h3>Ask in Plain English</h3>
+        <p>"Next bus at Avalon Publix," "first and last bus," "timetable for a route," "where is Spring Hill Dr" — type it how you'd say it.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🗺️</div>
+        <h3>Cross-County Trip Planning</h3>
+        <p>Ask "from A to B" and TriBus finds a route even if it means transferring between agencies — Hernando to Tampa, transfers and all.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📍</div>
+        <h3>Find Stops &amp; Places</h3>
+        <p>Nearest stop to you or to any landmark, plus "nearest pharmacy / gas station / grocery" from built-in OpenStreetMap places.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📡</div>
+        <h3>No Backend Needed</h3>
+        <p>Sync your regional schedule once, then every search, route, and trip plan runs entirely on-device — no signal required.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🛰️</div>
+        <h3>Live Bus Map</h3>
+        <p>When you're online, watch real buses move on the map with real-time position data, filtered by county.</p>
+      </div>
       <div class="feature">
         <div class="icon">🔒</div>
         <h3>No Logging</h3>
         <p>No accounts, no analytics, no location history stored anywhere. Your trips are yours.</p>
       </div>
-      <div class="feature">
-        <div class="icon">📡</div>
-        <h3>No Backend Needed</h3>
-        <p>Sync your regional schedule once, then every search, route, and trip plan runs entirely on-device.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">🗺️</div>
-        <h3>Cross-County Trip Planning</h3>
-        <p>Ask "from A to B" and TriBus finds a route even if it means transferring between agencies.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">🛰️</div>
-        <h3>Live Bus Map</h3>
-        <p>When you're online, watch real buses move on the map with real-time position data.</p>
-      </div>
     </div>
   </div>
 </section>
 
-<section class="preview">
+<section class="demo" id="try">
   <div class="wrap">
-    <h2>Terminal Style</h2>
-    <p class="section-lede">A green-on-black command line, not another cluttered map app.</p>
-    <div class="terminal-preview">
-      <div><span class="prompt">&gt;</span> next bus to brooksville</div>
-      <div class="out">Route 3 — Brooksville Connector<br>Departs Spring Hill Terminal 4:12 PM &middot; arrives 4:41 PM</div>
-      <div style="margin-top:10px;"><span class="prompt">&gt;</span> from spring hill to downtown tampa</div>
-      <div class="out">3 legs found via HART transfer at Wesley Chapel &middot; est. 1h 52m total</div>
-      <div style="margin-top:10px;"><span class="prompt">&gt;</span> <span class="cursor"></span></div>
+    <h2>Try It Live</h2>
+    <p class="section-lede demo-lede">
+      This is the real TriBus terminal — the exact code that ships in the Android app — running
+      right here in your browser. Type a question and press Enter.
+    </p>
+    <div class="device">
+      <iframe class="demo-frame" src="app/index.html" title="TriBus live terminal demo" allow="geolocation" loading="lazy"></iframe>
+    </div>
+    <p class="demo-note">
+      It boots instantly from built-in Hernando data, then quietly pulls the full
+      Hernando · Pasco · HART dataset in the background.
+      <a href="app/index.html" target="_blank" rel="noopener">Open the demo full screen ↗</a><br>
+      Offline walking directions and the one-time offline-map download are Android-only features;
+      everything else works right here.
+    </p>
+    <div class="examples">
+      <span class="label">Ask things like:</span>
+      <span class="chip">when is the next bus at avalon publix</span>
+      <span class="chip">from spring hill to downtown tampa</span>
+      <span class="chip">nearest stop to me</span>
+      <span class="chip">nearest pharmacy</span>
+      <span class="chip">first and last bus at avalon publix</span>
     </div>
   </div>
 </section>
@@ -455,6 +527,8 @@
   <div class="wrap">
     <div>
       <a href="https://github.com/malcolm1014/thebus-hernando">Source on GitHub</a>
+      &middot;
+      <a href="#try">Live browser demo</a>
       &middot;
       <a href="https://raw.githubusercontent.com/malcolm1014/thebus-hernando/main/PRIVACY_POLICY.md">Privacy Policy</a>
       &middot;
