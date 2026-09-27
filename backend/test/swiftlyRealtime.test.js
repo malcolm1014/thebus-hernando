@@ -55,7 +55,7 @@ test('shapes Swiftly JSON into the shared bus shape and sends the key as an Auth
       lat: 27.95, lon: -82.46, course: 90, speed: 12.5, tripId: 'T-99',
     });
     assert.equal(sawAuth, 'test-key');
-    assert.match(sawUrl, /\/real-time\/hart\/vehicles$/); // default agency key
+    assert.match(sawUrl, /\/real-time\/tampa\/vehicles$/); // default agency key (HART's Swiftly key is 'tampa')
   } finally {
     global.fetch = originalFetch;
     restore();
@@ -65,11 +65,11 @@ test('shapes Swiftly JSON into the shared bus shape and sends the key as an Auth
 test('uses an overridden Swiftly agency key when set', async () => {
   const originalFetch = global.fetch;
   let sawUrl = null;
-  const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'tampa' });
+  const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'other-agency' });
   global.fetch = async (url, opts) => { sawUrl = String(url); return mockOk([])(url, opts); };
   try {
     await mod.fetchLiveBuses();
-    assert.match(sawUrl, /\/real-time\/tampa\/vehicles$/);
+    assert.match(sawUrl, /\/real-time\/other-agency\/vehicles$/);
   } finally {
     global.fetch = originalFetch;
     restore();
