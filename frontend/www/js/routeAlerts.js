@@ -38,8 +38,25 @@
     } catch (e) { /* ignore */ }
   }
 
+  const CHANNEL_ID = 'service-alerts';
+
   function capacitorLocalNotifications() {
     return (global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.LocalNotifications) || null;
+  }
+
+  /** Create the Android notification channel once (Android 8+ needs one for local notifications to show). No-op without the plugin. */
+  async function init() {
+    const ln = capacitorLocalNotifications();
+    if (ln && ln.createChannel) {
+      try {
+        await ln.createChannel({
+          id: CHANNEL_ID,
+          name: 'Service alerts',
+          description: 'Alerts for routes you follow',
+          importance: 4, // HIGH -- these are time-sensitive disruptions
+        });
+      } catch (e) { /* older Android / plugin quirk -- default channel still works */ }
+    }
   }
 
   /** Ask for notification permission from a user gesture (e.g. when a route is first followed). Safe to call repeatedly. */
@@ -59,7 +76,7 @@
     const ln = capacitorLocalNotifications();
     if (ln && ln.schedule) {
       try {
-        await ln.schedule({ notifications: [{ id: Date.now() % 2147483647, title, body }] });
+        await ln.schedule({ notifications: [{ id: Date.now() % 2147483647, title, body, channelId: CHANNEL_ID }] });
         return true;
       } catch (e) { /* fall through */ }
     }
@@ -108,5 +125,5 @@
     if (changed) writeNotified(notified);
   }
 
-  global.TheBusRouteAlerts = { onAlerts, requestPermission, deliver };
+  global.TheBusRouteAlerts = { init, onAlerts, requestPermission, deliver };
 })(typeof window !== 'undefined' ? window : this);

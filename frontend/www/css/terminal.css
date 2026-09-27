@@ -701,3 +701,50 @@ body {
   cursor: pointer;
 }
 .route-follow-btn:active { background: rgba(51, 255, 0, 0.2); }
+
+/* ---- Predictive search suggestions (suggest.js) ---- */
+#suggestions {
+  flex: 0 0 auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 42vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--fg-dim);
+  background: rgba(0, 0, 0, 0.96);
+}
+#suggestions[hidden] { display: none; }
+.sugg {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(31, 153, 0, 0.25);
+  cursor: pointer;
+}
+.sugg:last-child { border-bottom: none; }
+.sugg.active { background: rgba(51, 255, 0, 0.16); }
+.sugg-label { color: var(--fg-bright); font-size: 19px; line-height: 1.15; }
+.sugg-hint { color: var(--fg-dim); font-size: 14px; }
+
+/* ---- High-contrast / accessibility mode (app.js contrast toggle) ---- */
+/* Crisp white-on-black, no CRT bloom or scanlines, larger base text --
+   for low-vision riders. The retro look is the default; this is opt-in. */
+:root[data-contrast="high"] {
+  --fg: #ffffff;
+  --fg-bright: #ffffff;
+  --fg-dim: #cfcfcf;
+}
+[data-contrast="high"] #screen { text-shadow: none !important; font-size: 1.08em; }
+[data-contrast="high"] #crt { animation: none !important; }
+[data-contrast="high"] #crt::before,
+[data-contrast="high"] #crt::after { display: none !important; }
+[data-contrast="high"] #history .sys-ai { text-shadow: none !important; color: #ffd24a; }
+[data-contrast="high"] .leaflet-tile-pane { filter: none; } /* readable street map, not inverted green */
+
+/* ---- Reduced motion: respect the OS setting for animations/transitions ---- */
+@media (prefers-reduced-motion: reduce) {
+  #crt { animation: none !important; }
+  #crt::before, #crt::after { animation: none !important; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

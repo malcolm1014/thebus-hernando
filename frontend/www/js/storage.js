@@ -15,6 +15,7 @@
   const SAVED_TRIPS_KEY = 'thebus_saved_trips';
   const TRIP_PREFS_KEY = 'thebus_trip_prefs';
   const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
+  const HIGH_CONTRAST_KEY = 'thebus_high_contrast';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -280,6 +281,19 @@
     return next;
   }
 
+  /** High-contrast accessibility mode (opt-in; defaults off -- the retro look is the app's identity). */
+  async function getHighContrast() {
+    let value;
+    if (Preferences) ({ value } = await Preferences.get({ key: HIGH_CONTRAST_KEY }));
+    else value = localStorage.getItem(HIGH_CONTRAST_KEY);
+    return value === 'true';
+  }
+  async function setHighContrast(enabled) {
+    const value = String(!!enabled);
+    if (Preferences) await Preferences.set({ key: HIGH_CONTRAST_KEY, value });
+    else localStorage.setItem(HIGH_CONTRAST_KEY, value);
+  }
+
   global.TheBusStorage = {
     getLocalVersion, setLocalVersion, saveDataset, loadDataset, loadBundledSnapshot,
     getLastSyncedAt, setLastSyncedAt,
@@ -289,5 +303,6 @@
     getSavedTrips, addSavedTrip, removeSavedTrip,
     getTripPrefs, setTripPrefs,
     getFollowedRoutes, isRouteFollowed, addFollowedRoute, removeFollowedRoute,
+    getHighContrast, setHighContrast,
   };
 })(window);

@@ -26,6 +26,7 @@
              just for this one app. Persisted via TheBusStorage; the
              terminal look itself is never removed, only optional. -->
         <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
+        <button type="button" id="contrast-toggle" aria-pressed="false">[ HIGH CONTRAST: OFF ]</button>
       </div>
 
       <!-- Active GTFS-Realtime service alerts (detours/closures), shown on
@@ -40,6 +41,10 @@
 
       <div id="terminal-view">
         <div id="history" aria-live="polite"></div>
+
+        <!-- Predictive search suggestions (suggest.js); populated as the
+             rider types, hidden otherwise. Sits just above the input. -->
+        <ul id="suggestions" role="listbox" aria-label="Suggestions" hidden></ul>
 
         <div id="input-line">
           <span class="prompt" aria-hidden="true">&gt;</span>
@@ -56,7 +61,9 @@
                a plain adjacent glyph never provides on its own. -->
           <label for="command-input" class="sr-only">Type your question, e.g. when is the next bus at a stop</label>
           <input id="command-input" type="text" autocomplete="off" autocapitalize="off"
-                 autocorrect="off" spellcheck="false" inputmode="text" />
+                 autocorrect="off" spellcheck="false" inputmode="text"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="suggestions" aria-activedescendant="" />
         </div>
       </div>
 
@@ -137,7 +144,9 @@
       <button type="button" id="onboard-help-close" class="modal-close" aria-label="Close">X</button>
       <div id="onboard-help-title" class="modal-title">HOW TO USE TRIBUS</div>
       <p class="modal-body">
-        TYPE A QUESTION AND PRESS ENTER. TRY THINGS LIKE:<br/>
+        START TYPING AND TRIBUS SUGGESTS STOPS, ROUTES, AND PLACES (WITH
+        THE NEXT BUS TIME) -- TAP ONE FOR THE ANSWER. OR TYPE A FULL
+        QUESTION AND PRESS ENTER. TRY THINGS LIKE:<br/>
         <br/>
         &gt; WHEN IS THE NEXT BUS AT &lt;STOP&gt;? (OR JUST "WHEN'S<br/>
         &nbsp;&nbsp;THE NEXT BUS?" WITH LOCATION ON)<br/>
@@ -175,6 +184,7 @@
   <script src="js/intentParser.js"></script>
   <script src="js/searchIndex.js"></script>
   <script src="js/queryEngine.js"></script>
+  <script src="js/suggest.js"></script>
   <script src="js/tripPlanner.js"></script>
   <script src="js/routeAlerts.js"></script>
   <script src="js/serviceAlerts.js"></script>

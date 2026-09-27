@@ -40,6 +40,22 @@
     .then(applyEffectsEnabled)
     .catch((err) => console.error('effects toggle: failed to read stored preference, leaving effects on', err));
 
+  // ---- High-contrast accessibility mode (opt-in) ----
+  const contrastToggle = document.getElementById('contrast-toggle');
+  function applyHighContrast(enabled) {
+    document.documentElement.setAttribute('data-contrast', enabled ? 'high' : 'normal');
+    contrastToggle.textContent = enabled ? '[ HIGH CONTRAST: ON ]' : '[ HIGH CONTRAST: OFF ]';
+    contrastToggle.setAttribute('aria-pressed', String(enabled));
+  }
+  contrastToggle.addEventListener('click', async () => {
+    const enabled = !(await TheBusStorage.getHighContrast());
+    await TheBusStorage.setHighContrast(enabled);
+    applyHighContrast(enabled);
+  });
+  TheBusStorage.getHighContrast()
+    .then(applyHighContrast)
+    .catch((err) => console.error('contrast toggle: failed to read stored preference', err));
+
   // ---- Crash reporting -- see backend's /api/crash-report for what
   // this deliberately does NOT send (query text, location). Best-effort:
   // never blocks anything, never throws itself, silently gives up if
@@ -210,6 +226,95 @@
     handleSubmit(value);
   }
 
+  // ---- Predictive search suggestions (suggest.js) ----
+  // As the rider types, rank the stops/routes/places/roads/commands they're
+  // most likely to mean and show a live "next bus" peek for the top stops,
+  // so the answer is essentially forming before they finish typing. Arrow
+  // keys move through it; Enter takes the highlighted one (or submits the
+  // raw text if none is highlighted).
+  const suggestBox = document.getElementById('suggestions');
+  const suggestions = (function () {
+    let items = [];
+    let active = -1;
+    let timer = null;
+
+    function open() { suggestBox.hidden = false; commandInput.setAttribute('aria-expanded', 'true'); }
+    function close() {
+      suggestBox.hidden = true;
+      suggestBox.textContent = '';
+      items = []; active = -1;
+      commandInput.setAttribute('aria-expanded', 'false');
+      commandInput.setAttribute('aria-activedescendant', '');
+    }
+    function isOpen() { return !suggestBox.hidden; }
+
+    // Cheap live peek for a stop suggestion: its very next arrival. Only for
+    // the top few, so it never turns typing into heavy work.
+    function peek(item) {
+      if (item.type !== 'stop' || !item.ref) return '';
+      try {
+        const arr = TheBusQueryEngine.nextArrivals(item.ref.id, null, new Date(), 1);
+        if (arr && arr.length) {
+          const m = arr[0].minutesUntil;
+          return m <= 0 ? ' · DUE NOW' : ` · NEXT ~${m} MIN`;
+        }
+      } catch (e) { /* no peek -- the label still stands */ }
+      return '';
+    }
+
+    function render() {
+      suggestBox.textContent = '';
+      items.forEach((it, i) => {
+        const li = document.createElement('li');
+        li.className = 'sugg' + (i === active ? ' active' : '');
+        li.id = `sugg-${i}`;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', i === active ? 'true' : 'false');
+        const lab = document.createElement('span');
+        lab.className = 'sugg-label';
+        lab.textContent = it.label;
+        li.appendChild(lab);
+        const hint = document.createElement('span');
+        hint.className = 'sugg-hint';
+        hint.textContent = (it.hint || '') + (i < 3 ? peek(it) : '');
+        li.appendChild(hint);
+        // mousedown (not click) so choosing fires before the input blurs.
+        li.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(it); });
+        suggestBox.appendChild(li);
+      });
+    }
+
+    function update(value) {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!global.TheBusSuggest) { close(); return; }
+        items = TheBusSuggest.suggest(value, 8) || [];
+        active = -1;
+        if (items.length) { render(); open(); } else { close(); }
+      }, 80);
+    }
+
+    function move(delta) {
+      if (!items.length) return;
+      active = (active + delta + items.length) % items.length;
+      commandInput.setAttribute('aria-activedescendant', `sugg-${active}`);
+      render();
+      const el = document.getElementById(`sugg-${active}`);
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }
+
+    function choose(it) {
+      if (it.fill) { commandInput.value = it.fill; close(); commandInput.focus(); update(it.fill); return; }
+      close();
+      commandInput.value = '';
+      handleSubmit(it.run || it.label);
+    }
+
+    function current() { return active >= 0 ? items[active] : null; }
+
+    return { update, move, close, isOpen, current, choose };
+  })();
+
   commandInput.addEventListener('input', (e) => {
     // Many Android soft keyboards (Gboard, SwiftKey) submit via a plain
     // `input` event carrying this inputType instead of ever firing a
@@ -218,23 +323,33 @@
     // literal newline, but strip one defensively if an IME snuck one in.
     if (e.inputType === 'insertLineBreak') {
       commandInput.value = commandInput.value.replace(/\n/g, '');
+      suggestions.close();
       submitAndClear();
+      return;
     }
+    suggestions.update(commandInput.value);
   });
 
   commandInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      submitAndClear();
+      const chosen = suggestions.isOpen() ? suggestions.current() : null;
+      if (chosen) { suggestions.choose(chosen); } else { suggestions.close(); submitAndClear(); }
+    } else if (e.key === 'Escape') {
+      if (suggestions.isOpen()) { e.preventDefault(); suggestions.close(); }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (historyPointer > 0) {
+      if (suggestions.isOpen()) {
+        suggestions.move(-1);
+      } else if (historyPointer > 0) {
         historyPointer -= 1;
         commandInput.value = commandLog[historyPointer];
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (historyPointer < commandLog.length - 1) {
+      if (suggestions.isOpen()) {
+        suggestions.move(1);
+      } else if (historyPointer < commandLog.length - 1) {
         historyPointer += 1;
         commandInput.value = commandLog[historyPointer];
       } else {
@@ -243,6 +358,10 @@
       }
     }
   });
+
+  // Tapping away closes the dropdown (mousedown-preventDefault on items
+  // keeps focus, so a suggestion tap still registers before this fires).
+  commandInput.addEventListener('blur', () => setTimeout(() => suggestions.close(), 150));
 
   // Tapping anywhere on the terminal view refocuses the input. Scoped to
   // #terminal-view specifically (not the whole #screen) so tapping the
@@ -477,6 +596,7 @@
   // Independent of dataset/map init: fetches active alerts when online and
   // shows them across the top of both tabs; stays hidden otherwise.
   TheBusServiceAlerts.init(document.getElementById('alerts-banner'));
+  if (global.TheBusRouteAlerts) TheBusRouteAlerts.init(); // set up the notification channel (native only; no-op on web)
 
   // ---- Live Map trip planner panel (Transitous via /api/plan) ----
   (function setupTripPlannerPanel() {
@@ -843,6 +963,7 @@
     const data = TheBusSync.expandDataset(rawData);
     TheBusQueryEngine.setDataset(data);
     if (global.TheBusLocalPlaces) TheBusLocalPlaces.setDataset(data); // offline place lookup for the trip planner
+    if (global.TheBusSuggest) TheBusSuggest.setDataset(data); // predictive search index
     lastDataset = data;
     // Covers the case where the rider switched to the map tab before this
     // ran -- the map would've drawn with no routes/stops yet otherwise.

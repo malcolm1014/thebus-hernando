@@ -527,6 +527,40 @@ integration tests in `test/queryEngine.test.js` (plus the existing
 Tier 1 / GPS ones) prove the tiers are actually reached in the right
 order end-to-end.
 
+## Predictive search (type-ahead)
+
+`frontend/www/js/suggest.js` makes the answer start forming before the
+rider finishes typing. On each keystroke (debounced) it ranks the things
+they're most likely to mean across everything already loaded — transit
+**stops** and **routes**, the bundled OSM **places/roads** corpus, and a few
+**command templates** — and shows them in a listbox above the input. It's
+pure, synchronous, offline work over a normalized string precomputed per
+entry, so a scan is cheap enough for every keypress.
+
+The top few stop suggestions carry a **live "next bus" peek** computed on
+the spot from `queryEngine.nextArrivals()` ("Avalon Publix · NEXT ~7 MIN"),
+so the actual answer is visible in the suggestion itself. Choosing a
+suggestion runs the most useful query for that kind of thing without the
+rider spelling it out: a stop → its next bus, a place → the nearest stop, a
+road → where it is, a route → its timetable; command templates fill the box
+for the rider to complete. Full keyboard support (↑/↓ to move, Enter to take
+the highlighted one or submit raw text if none, Esc to dismiss) with ARIA
+combobox/listbox roles, and tap-to-choose on mobile. Ranked by match quality
+(exact → prefix → word-boundary → substring) and a per-type weight
+(stops/routes/places above roads). 5 tests in `test/suggest.test.js`.
+
+## Accessibility
+
+Alongside the CRT-effects toggle, a **HIGH CONTRAST** toggle (persisted via
+`TheBusStorage`) sets `data-contrast="high"` on the root: crisp white-on-black
+with no bloom/scanlines/flicker, larger base text, an un-inverted (readable)
+street basemap, and a distinct high-contrast color for AI-rephrased answers.
+The app also honors the OS **`prefers-reduced-motion`** setting (kills the CRT
+flicker and minimizes transitions), the predictive dropdown and controls
+expose proper ARIA roles/labels, and interactive targets keep a ≥40px touch
+size. The retro green look remains the default and identity; high-contrast is
+opt-in.
+
 ## Nearest stop to anywhere
 
 `nearest stop to Springstead High School` (or "closest bus stop near
@@ -1045,11 +1079,18 @@ When the alerts feed refreshes, any active alert affecting a followed route
 fires a notification — via the Capacitor LocalNotifications plugin if the
 native shell has it, else the Web Notifications API when permission is
 granted, and always the in-app banner. De-duped by alert id so a
-long-running alert notifies once, not every refresh. This is
-foreground-oriented: true background push (device notified while the app is
-closed) needs the LocalNotifications plugin (`npm i
-@capacitor/local-notifications && npx cap sync` — the code already
-feature-detects and uses it) or a push service, which this app doesn't run.
+long-running alert notifies once, not every refresh.
+
+`@capacitor/local-notifications` is now a declared dependency: the Android
+manifest patcher adds `POST_NOTIFICATIONS` (Android 13+), `capacitor.config.json`
+configures the plugin, and `routeAlerts.init()` creates a high-importance
+`service-alerts` notification channel at startup. So on a native build
+(`npm install && npx cap sync android`) followed-route alerts fire as real
+device notifications even when the app is backgrounded; on the web/PWA it
+falls back to the Web Notifications API, and everywhere the in-app banner is
+the guaranteed surface. (True server-push while the app is fully killed
+would additionally need FCM + a server component, which this app still
+doesn't run.)
 
 Both alerts and trip updates are requested as **JSON** (`?format=json`) —
 the standard GTFS-RT `FeedMessage` shape, so no protobuf dependency and no
