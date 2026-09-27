@@ -112,10 +112,73 @@ test('fetchServiceAlerts requests JSON with auth, and drops inactive + textless 
   };
   try {
     const result = await mod.fetchServiceAlerts('hart', now);
-    assert.match(sawUrl, /\/real-time\/hart\/gtfs-rt-alerts\?format=json$/);
+    assert.match(sawUrl, /\/real-time\/hart\/gtfs-rt-alerts\/v2\?format=json$/); // V2 alerts path by default
     assert.equal(sawAuth, 'k');
     assert.equal(result.alerts.length, 1);
     assert.equal(result.alerts[0].header, 'Live detour');
+  } finally {
+    global.fetch = original;
+    restore();
+  }
+});
+
+test('fetchServiceAlerts falls back to the legacy alerts path when the V2 path fails', async () => {
+  const original = global.fetch;
+  const urls = [];
+  const { mod, restore } = freshModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'tampa' });
+  const now = 150 * 1000;
+  global.fetch = async (url) => {
+    const s = String(url);
+    urls.push(s);
+    // Simulate HART's V2 alerts breaking the legacy JSON serializer:
+    // /v2 here is the fallback target that succeeds, /gtfs-rt-alerts (no
+    // /v2) is the one we make fail, so we can assert the order + fallback.
+    if (/\/gtfs-rt-alerts\/v2\?/.test(s)) {
+      return { ok: false, status: 400, text: async () => 'Cannot convert V2 informed entity to V1 format.' };
+    }
+    return jsonRes({ entity: [
+      { id: 'active', alert: { headerText: { translation: [{ language: 'en', text: 'Legacy detour' }] }, activePeriod: [] } },
+    ] });
+  };
+  try {
+    const result = await mod.fetchServiceAlerts('tampa', now);
+    // Tried V2 first, then fell back to the legacy path.
+    assert.equal(urls.length, 2);
+    assert.match(urls[0], /\/gtfs-rt-alerts\/v2\?format=json$/);
+    assert.match(urls[1], /\/gtfs-rt-alerts\?format=json$/);
+    assert.equal(result.alerts.length, 1);
+    assert.equal(result.alerts[0].header, 'Legacy detour');
+  } finally {
+    global.fetch = original;
+    restore();
+  }
+});
+
+test('fetchServiceAlerts honors an overridden SWIFTLY_ALERTS_PATH (no duplicate fallback fetch)', async () => {
+  const original = global.fetch;
+  const urls = [];
+  const { mod, restore } = freshModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'tampa', SWIFTLY_ALERTS_PATH: 'gtfs-rt-alerts' });
+  global.fetch = async (url) => { urls.push(String(url)); return jsonRes({ entity: [] }); };
+  try {
+    await mod.fetchServiceAlerts('tampa', 150 * 1000);
+    assert.equal(urls.length, 1); // override == legacy path, so no second (duplicate) attempt
+    assert.match(urls[0], /\/gtfs-rt-alerts\?format=json$/);
+  } finally {
+    global.fetch = original;
+    restore();
+  }
+});
+
+test('fetchServiceAlerts tolerates a bare top-level array feed shape', async () => {
+  const original = global.fetch;
+  const { mod, restore } = freshModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'tampa' });
+  global.fetch = async () => jsonRes([
+    { id: 'a', alert: { headerText: { translation: [{ language: 'en', text: 'Array-shaped alert' }] }, activePeriod: [] } },
+  ]);
+  try {
+    const result = await mod.fetchServiceAlerts('tampa', 150 * 1000);
+    assert.equal(result.alerts.length, 1);
+    assert.equal(result.alerts[0].header, 'Array-shaped alert');
   } finally {
     global.fetch = original;
     restore();
