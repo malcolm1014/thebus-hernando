@@ -12,6 +12,8 @@
   const ONBOARDING_KEY = 'thebus_onboarding_seen';
   const LAST_SYNCED_KEY = 'thebus_last_synced_at';
   const EFFECTS_ENABLED_KEY = 'thebus_effects_enabled';
+  const SAVED_TRIPS_KEY = 'thebus_saved_trips';
+  const TRIP_PREFS_KEY = 'thebus_trip_prefs';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -195,11 +197,73 @@
     }
   }
 
+  // ---- Small JSON blob helper (Preferences in the native shell,
+  // localStorage on the web) -- used for the saved-trips list and the
+  // trip-planner preferences. Same store/size profile as search memory. ----
+  async function getJson(key, fallback) {
+    try {
+      let raw;
+      if (Preferences) ({ value: raw } = await Preferences.get({ key }));
+      else raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (err) {
+      return fallback;
+    }
+  }
+  async function setJson(key, value) {
+    const json = JSON.stringify(value);
+    if (Preferences) await Preferences.set({ key, value: json });
+    else localStorage.setItem(key, json);
+  }
+
+  /** Saved trips: an array of { from, to, savedAt } the rider can re-plan in one tap. Newest first, capped so it can't grow without bound. */
+  async function getSavedTrips() {
+    const list = await getJson(SAVED_TRIPS_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  async function addSavedTrip(trip) {
+    const from = (trip && trip.from ? String(trip.from) : '').trim();
+    const to = (trip && trip.to ? String(trip.to) : '').trim();
+    if (!from || !to) return getSavedTrips();
+    const existing = await getSavedTrips();
+    // De-dupe on the same from/to (case-insensitive); newest entry wins.
+    const key = `${from.toLowerCase()}\u0000${to.toLowerCase()}`;
+    const filtered = existing.filter((t) => `${String(t.from).toLowerCase()}\u0000${String(t.to).toLowerCase()}` !== key);
+    const next = [{ from, to, savedAt: Date.now() }, ...filtered].slice(0, 12);
+    await setJson(SAVED_TRIPS_KEY, next);
+    return next;
+  }
+  async function removeSavedTrip(from, to) {
+    const key = `${String(from).toLowerCase()}\u0000${String(to).toLowerCase()}`;
+    const next = (await getSavedTrips()).filter((t) => `${String(t.from).toLowerCase()}\u0000${String(t.to).toLowerCase()}` !== key);
+    await setJson(SAVED_TRIPS_KEY, next);
+    return next;
+  }
+
+  /** Trip-planner preferences: { fewerTransfers, lessWalking, wheelchair } booleans. */
+  async function getTripPrefs() {
+    const p = await getJson(TRIP_PREFS_KEY, {});
+    return {
+      fewerTransfers: !!(p && p.fewerTransfers),
+      lessWalking: !!(p && p.lessWalking),
+      wheelchair: !!(p && p.wheelchair),
+    };
+  }
+  async function setTripPrefs(prefs) {
+    await setJson(TRIP_PREFS_KEY, {
+      fewerTransfers: !!prefs.fewerTransfers,
+      lessWalking: !!prefs.lessWalking,
+      wheelchair: !!prefs.wheelchair,
+    });
+  }
+
   global.TheBusStorage = {
     getLocalVersion, setLocalVersion, saveDataset, loadDataset, loadBundledSnapshot,
     getLastSyncedAt, setLastSyncedAt,
     getSearchMemory, saveSearchMemory,
     getOnboardingSeen, setOnboardingSeen,
     getEffectsEnabled, setEffectsEnabled,
+    getSavedTrips, addSavedTrip, removeSavedTrip,
+    getTripPrefs, setTripPrefs,
   };
 })(window);

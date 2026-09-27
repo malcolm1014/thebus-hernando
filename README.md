@@ -977,7 +977,30 @@ There are two ways to reach it: the terminal command `PLAN <origin> to
 `[ PLAN A TRIP ]` button). The panel renders each option as a card (times,
 duration, transfers, per-leg walk/bus detail) and drops **A / B pins** on
 the map, fitting the view to them — a friendlier surface than the terminal
-for a multi-leg journey.
+for a multi-leg journey. It also offers **use-my-location** for the start
+and a from/to **swap**.
+
+**Preferences** (panel checkboxes; persisted on-device via `TheBusStorage`,
+and also applied to the terminal `PLAN` command): fewer transfers, less
+walking, and wheelchair-accessible. These map to MOTIS plan params in
+`/api/plan` — `maxTransfers`, `maxPreTransitTime`/`maxPostTransitTime`, and
+`pedestrianProfile=WHEELCHAIR` respectively (query params `maxTransfers`,
+`maxWalk` in minutes, `wheelchair=1`).
+
+**Saved trips**: a planned text trip can be saved (`[ SAVE THIS TRIP ]`)
+and re-planned in one tap from the panel's SAVED TRIPS list — stored
+on-device, newest-first, de-duped, capped at 12.
+
+**Fares & tickets** (`frontend/www/js/faresInfo.js`): a small curated,
+**bundled** dataset (works offline) with each agency's single-ride price
+where publicly published (HART $2 cash / Flamingo Fares; PascoGo $1.50 /
+Token Transit; Hernando cash + Token Transit — price not published online,
+so it links the official page instead of guessing), how to pay, the
+ticketing app, and the official fares URL, each with a verified date. Two
+surfaces: the terminal command `FARES` (or `FARES HART`), and a footer on a
+planned trip listing the agencies that trip actually uses. No price is ever
+fabricated: where a current fare isn't published, the app says "see
+official page" and links it.
 
 ## Real-time alerts & arrival predictions (GTFS-RT)
 

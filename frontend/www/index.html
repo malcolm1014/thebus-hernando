@@ -81,13 +81,33 @@
             <span>PLAN A TRIP</span>
             <button type="button" id="tp-close" class="tp-close" aria-label="Close">X</button>
           </div>
-          <label class="tp-field">FROM
-            <input type="text" id="tp-from" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+          <label class="tp-field" for="tp-from">FROM
+            <span class="tp-field-row">
+              <input type="text" id="tp-from" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+              <button type="button" id="tp-here" class="tp-mini" title="Use my location" aria-label="Use my location">&#9678;</button>
+            </span>
           </label>
-          <label class="tp-field">TO
+          <div class="tp-swap-row">
+            <button type="button" id="tp-swap" class="tp-mini" title="Swap start and destination" aria-label="Swap start and destination">&#8645;</button>
+          </div>
+          <label class="tp-field" for="tp-to">TO
             <input type="text" id="tp-to" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
           </label>
+
+          <fieldset class="tp-prefs">
+            <legend>PREFERENCES</legend>
+            <label><input type="checkbox" id="tp-pref-transfers" /> FEWER TRANSFERS</label>
+            <label><input type="checkbox" id="tp-pref-walking" /> LESS WALKING</label>
+            <label><input type="checkbox" id="tp-pref-wheelchair" /> WHEELCHAIR ACCESSIBLE</label>
+          </fieldset>
+
           <button type="button" id="tp-go" class="tp-go">[ PLAN ]</button>
+
+          <div id="tp-saved-wrap" hidden>
+            <div class="tp-subhead">SAVED TRIPS</div>
+            <div id="tp-saved"></div>
+          </div>
+
           <div id="tp-results" aria-live="polite"></div>
         </div>
       </div>
@@ -128,6 +148,8 @@
         &gt; LIST STOPS ON ROUTE &lt;N&gt;<br/>
         &gt; TIMETABLE FOR ROUTE &lt;N&gt;?<br/>
         &gt; FROM &lt;PLACE&gt; TO &lt;PLACE&gt;? (PLANS YOUR WHOLE TRIP)<br/>
+        &gt; PLAN &lt;CITY&gt; TO &lt;CITY&gt; (LONG-DISTANCE, NEEDS SIGNAL)<br/>
+        &gt; FARES (OR "FARES HART") -- PRICES &amp; HOW TO PAY<br/>
         &gt; WALKING DIRECTIONS TO &lt;PLACE&gt;?<br/>
         &nbsp;&nbsp;(FIRST TYPE "DOWNLOAD WALKING DIRECTIONS" ONCE -- A<br/>
         &nbsp;&nbsp;ONE-TIME ~164MB DOWNLOAD -- THEN THIS WORKS OFFLINE TOO)<br/>
@@ -153,6 +175,7 @@
   <script src="js/queryEngine.js"></script>
   <script src="js/tripPlanner.js"></script>
   <script src="js/serviceAlerts.js"></script>
+  <script src="js/faresInfo.js"></script>
   <script src="js/geoMath.js"></script>
   <script src="js/vehicleAllocation.js"></script>
   <script src="js/liveMap.js"></script>

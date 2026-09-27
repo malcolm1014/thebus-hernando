@@ -24,6 +24,26 @@
     return { origin, dest };
   }
 
+  /**
+   * Builds the /api/plan query string, translating rider preference
+   * toggles to backend params. `opts.fromCoords`/`opts.toCoords`
+   * ({lat,lon}) send explicit coordinates (e.g. "use my location")
+   * instead of the text origin/dest.
+   */
+  function buildPlanQuery(origin, dest, prefs, opts) {
+    const o = opts || {};
+    const params = [];
+    if (o.fromCoords) params.push(`fromLat=${encodeURIComponent(o.fromCoords.lat)}`, `fromLon=${encodeURIComponent(o.fromCoords.lon)}`);
+    else params.push(`from=${encodeURIComponent(origin)}`);
+    if (o.toCoords) params.push(`toLat=${encodeURIComponent(o.toCoords.lat)}`, `toLon=${encodeURIComponent(o.toCoords.lon)}`);
+    else params.push(`to=${encodeURIComponent(dest)}`);
+    const p = prefs || {};
+    if (p.fewerTransfers) params.push('maxTransfers=1');
+    if (p.lessWalking) params.push('maxWalk=10'); // cap access/egress walking at ~10 min each end
+    if (p.wheelchair) params.push('wheelchair=1');
+    return params.join('&');
+  }
+
   function fmtTime(iso) {
     if (!iso) return '';
     const d = new Date(iso);
@@ -94,12 +114,12 @@
    * string (success, no-route, or a clear error message) -- never throws,
    * so the caller can print whatever comes back directly.
    */
-  async function plan(origin, dest) {
+  async function plan(origin, dest, prefs) {
     if (!global.navigator || !navigator.onLine) {
       return 'TRIP PLANNING NEEDS A CONNECTION. LOCAL TRIPS WORK OFFLINE -- TRY "FROM <STOP> TO <STOP>".';
     }
     const base = global.TheBusSync && TheBusSync.API_BASE ? TheBusSync.API_BASE : '';
-    const url = `${base}/api/plan?from=${encodeURIComponent(origin)}&to=${encodeURIComponent(dest)}`;
+    const url = `${base}/api/plan?${buildPlanQuery(origin, dest, prefs)}`;
     let res;
     try {
       res = await fetch(url);
@@ -128,12 +148,12 @@
    * panel to render as real DOM (option cards, tappable legs) instead of
    * terminal text. Resolves to { error } or { result } -- never throws.
    */
-  async function planStructured(origin, dest) {
+  async function planStructured(origin, dest, prefs, opts) {
     if (!global.navigator || !navigator.onLine) {
       return { error: 'TRIP PLANNING NEEDS A CONNECTION.' };
     }
     const base = global.TheBusSync && TheBusSync.API_BASE ? TheBusSync.API_BASE : '';
-    const url = `${base}/api/plan?from=${encodeURIComponent(origin)}&to=${encodeURIComponent(dest)}`;
+    const url = `${base}/api/plan?${buildPlanQuery(origin, dest, prefs, opts)}`;
     let res;
     try {
       res = await fetch(url);
@@ -156,5 +176,5 @@
   // Small formatting helpers the panel renderer reuses.
   const format = { time: fmtTime, duration: fmtDuration, modeLabel };
 
-  global.TheBusTripPlanner = { parseCommand, plan, planStructured, formatResult, format };
+  global.TheBusTripPlanner = { parseCommand, plan, planStructured, formatResult, format, buildPlanQuery };
 })(typeof window !== 'undefined' ? window : this);

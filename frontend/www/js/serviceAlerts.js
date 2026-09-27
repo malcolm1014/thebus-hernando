@@ -61,7 +61,11 @@
 
       const head = document.createElement('div');
       head.className = 'alert-head';
-      head.textContent = `⚠ ${(alert.header || 'SERVICE ALERT').toUpperCase()}`;
+      // GTFS-RT effect (DETOUR, NO_SERVICE, ...) as a short tag, if present.
+      const effect = alert.effect && alert.effect !== 'UNKNOWN_EFFECT'
+        ? String(alert.effect).replace(/_/g, ' ').toUpperCase()
+        : '';
+      head.textContent = `⚠ ${effect ? '[' + effect + '] ' : ''}${(alert.header || 'SERVICE ALERT').toUpperCase()}`;
       body.appendChild(head);
 
       if (alert.description && alert.description.trim() && alert.description !== alert.header) {
@@ -69,6 +73,16 @@
         desc.className = 'alert-desc';
         desc.textContent = alert.description.toUpperCase();
         body.appendChild(desc);
+      }
+
+      if (alert.url && /^https?:\/\//i.test(alert.url)) {
+        const link = document.createElement('a');
+        link.className = 'alert-link';
+        link.href = alert.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'MORE INFO';
+        body.appendChild(link);
       }
       row.appendChild(body);
 

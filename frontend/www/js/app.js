@@ -145,9 +145,20 @@
     const tripCmd = TheBusTripPlanner.parseCommand(text);
     if (tripCmd) {
       withProcessingDelay(async () => {
-        const output = await TheBusTripPlanner.plan(tripCmd.origin, tripCmd.dest);
+        let prefs;
+        try { prefs = await TheBusStorage.getTripPrefs(); } catch (e) { prefs = undefined; }
+        const output = await TheBusTripPlanner.plan(tripCmd.origin, tripCmd.dest, prefs);
         appendEntry('sys', output);
       });
+      return;
+    }
+
+    // Fares & tickets: "FARE(S)", "TICKET(S)", "HOW MUCH", optionally naming
+    // an agency ("fares hart"). Answered entirely offline from bundled data.
+    const fareMatch = text.match(/^\s*(?:fares?|tickets?|how much(?: is| does)?(?: it)?(?: cost)?)\b\s*(.*)$/i);
+    if (fareMatch && global.TheBusFares) {
+      const output = TheBusFares.formatQuery(fareMatch[1]);
+      appendEntry('sys', output || 'FARE INFO UNAVAILABLE.');
       return;
     }
 
@@ -462,9 +473,36 @@
     const closeBtn = document.getElementById('tp-close');
     const fromInput = document.getElementById('tp-from');
     const toInput = document.getElementById('tp-to');
+    const hereBtn = document.getElementById('tp-here');
+    const swapBtn = document.getElementById('tp-swap');
     const goBtn = document.getElementById('tp-go');
     const results = document.getElementById('tp-results');
+    const prefTransfers = document.getElementById('tp-pref-transfers');
+    const prefWalking = document.getElementById('tp-pref-walking');
+    const prefWheelchair = document.getElementById('tp-pref-wheelchair');
+    const savedWrap = document.getElementById('tp-saved-wrap');
+    const savedList = document.getElementById('tp-saved');
     if (!toggle || !panel) return;
+
+    const MY_LOCATION = 'MY LOCATION';
+    let myLocationCoords = null; // {lat,lon} when FROM is "use my location"
+
+    // Restore saved preferences into the checkboxes; persist on change.
+    TheBusStorage.getTripPrefs().then((p) => {
+      prefTransfers.checked = p.fewerTransfers;
+      prefWalking.checked = p.lessWalking;
+      prefWheelchair.checked = p.wheelchair;
+    }).catch(() => {});
+    function currentPrefs() {
+      return { fewerTransfers: prefTransfers.checked, lessWalking: prefWalking.checked, wheelchair: prefWheelchair.checked };
+    }
+    [prefTransfers, prefWalking, prefWheelchair].forEach((cb) =>
+      cb.addEventListener('change', () => { TheBusStorage.setTripPrefs(currentPrefs()).catch(() => {}); }));
+
+    // Editing FROM by hand clears any "use my location" coords tied to it.
+    fromInput.addEventListener('input', () => {
+      if (fromInput.value !== MY_LOCATION) myLocationCoords = null;
+    });
 
     function setMsg(text) {
       results.textContent = '';
@@ -477,6 +515,7 @@
     function openPanel() {
       panel.hidden = false;
       toggle.setAttribute('aria-expanded', 'true');
+      renderSaved();
       fromInput.focus();
     }
     function closePanel() {
@@ -486,7 +525,70 @@
     toggle.addEventListener('click', () => (panel.hidden ? openPanel() : closePanel()));
     closeBtn.addEventListener('click', closePanel);
 
-    function renderResult(result) {
+    // "Use my location" -> fill FROM with a sentinel + remember coords.
+    hereBtn.addEventListener('click', async () => {
+      hereBtn.disabled = true;
+      const prev = fromInput.value;
+      fromInput.value = 'LOCATING...';
+      try {
+        const pos = await TheBusGeolocate.getCurrentPosition();
+        if (pos && pos.lat != null) {
+          myLocationCoords = { lat: pos.lat, lon: pos.lon };
+          fromInput.value = MY_LOCATION;
+        } else {
+          fromInput.value = prev;
+          setMsg("COULDN'T GET YOUR LOCATION. TYPE A START INSTEAD.");
+        }
+      } catch (e) {
+        fromInput.value = prev;
+        setMsg("COULDN'T GET YOUR LOCATION. TYPE A START INSTEAD.");
+      } finally {
+        hereBtn.disabled = false;
+      }
+    });
+
+    swapBtn.addEventListener('click', () => {
+      const f = fromInput.value;
+      fromInput.value = toInput.value;
+      toInput.value = f;
+      myLocationCoords = null; // coords no longer map cleanly after a swap
+    });
+
+    // ---- Fares footer: which agencies this trip uses, and how to pay ----
+    function renderFaresFooter(result) {
+      if (!global.TheBusFares) return;
+      const names = new Set();
+      (result.itineraries || []).forEach((it) => (it.legs || []).forEach((leg) => {
+        if (leg.agency) names.add(leg.agency);
+      }));
+      const infos = [];
+      names.forEach((n) => { const info = TheBusFares.matchByName(n); if (info && !infos.includes(info)) infos.push(info); });
+      if (infos.length === 0) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'tp-fares';
+      const h = document.createElement('div');
+      h.className = 'tp-subhead';
+      h.textContent = 'FARES & TICKETS';
+      wrap.appendChild(h);
+      infos.forEach((info) => {
+        const line = document.createElement('div');
+        line.className = 'tp-fare-line';
+        const price = info.singleRide ? info.singleRide : 'SEE OFFICIAL PAGE';
+        line.textContent = `${info.label}: ${price}`;
+        wrap.appendChild(line);
+        const link = document.createElement('a');
+        link.className = 'tp-fare-link';
+        link.href = info.officialUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = `HOW TO PAY / BUY (${info.app ? info.app.name : 'OFFICIAL'})`;
+        wrap.appendChild(link);
+      });
+      results.appendChild(wrap);
+    }
+
+    function renderResult(result, saveTrip) {
       results.textContent = '';
       const fmt = TheBusTripPlanner.format;
       const head = document.createElement('div');
@@ -496,7 +598,6 @@
       head.textContent = `${fromName} -> ${toName}`;
       results.appendChild(head);
 
-      // Drop A/B pins on the map and frame them.
       if (result.from && result.to && TheBusLiveMap.showTripEndpoints) {
         TheBusLiveMap.showTripEndpoints(result.from, result.to);
       }
@@ -540,26 +641,79 @@
         });
         results.appendChild(opt);
       });
+
+      renderFaresFooter(result);
+
+      // Offer to save the trip -- only when both ends are plain text (a
+      // "my location" trip can't be re-planned from saved text).
+      if (saveTrip && saveTrip.from && saveTrip.to) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'tp-save';
+        saveBtn.textContent = '[ SAVE THIS TRIP ]';
+        saveBtn.addEventListener('click', async () => {
+          await TheBusStorage.addSavedTrip(saveTrip);
+          saveBtn.textContent = '[ SAVED ]';
+          saveBtn.disabled = true;
+          renderSaved();
+        });
+        results.appendChild(saveBtn);
+      }
     }
 
     async function runPlan() {
-      const from = fromInput.value.trim();
-      const to = toInput.value.trim();
-      if (!from || !to) { setMsg('ENTER BOTH A START AND A DESTINATION.'); return; }
+      const fromText = fromInput.value.trim();
+      const toText = toInput.value.trim();
+      const usingMyLocation = fromText === MY_LOCATION && myLocationCoords;
+      if ((!fromText && !usingMyLocation) || !toText) { setMsg('ENTER BOTH A START AND A DESTINATION.'); return; }
       goBtn.disabled = true;
       goBtn.textContent = '[ PLANNING... ]';
       setMsg('PLANNING...');
-      const outcome = await TheBusTripPlanner.planStructured(from, to);
+      const opts = usingMyLocation ? { fromCoords: myLocationCoords } : undefined;
+      const outcome = await TheBusTripPlanner.planStructured(fromText, toText, currentPrefs(), opts);
       goBtn.disabled = false;
       goBtn.textContent = '[ PLAN ]';
       if (outcome.error) { setMsg(outcome.error); return; }
-      renderResult(outcome.result);
+      const saveTrip = (!usingMyLocation && fromText && toText) ? { from: fromText, to: toText } : null;
+      renderResult(outcome.result, saveTrip);
     }
 
     goBtn.addEventListener('click', runPlan);
     [fromInput, toInput].forEach((el) => el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); runPlan(); }
     }));
+
+    // ---- Saved trips ----
+    async function renderSaved() {
+      let trips = [];
+      try { trips = await TheBusStorage.getSavedTrips(); } catch (e) { trips = []; }
+      savedList.textContent = '';
+      if (!trips.length) { savedWrap.hidden = true; return; }
+      savedWrap.hidden = false;
+      trips.forEach((t) => {
+        const row = document.createElement('div');
+        row.className = 'tp-saved-row';
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'tp-saved-go';
+        go.textContent = `${t.from.toUpperCase()} -> ${t.to.toUpperCase()}`;
+        go.addEventListener('click', () => {
+          fromInput.value = t.from;
+          toInput.value = t.to;
+          myLocationCoords = null;
+          runPlan();
+        });
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'tp-mini';
+        del.setAttribute('aria-label', 'Remove saved trip');
+        del.textContent = 'X';
+        del.addEventListener('click', async () => { await TheBusStorage.removeSavedTrip(t.from, t.to); renderSaved(); });
+        row.appendChild(go);
+        row.appendChild(del);
+        savedList.appendChild(row);
+      });
+    }
   })();
 
   // iOS Safari shrinks the *visual* viewport (not the layout viewport)
@@ -682,6 +836,7 @@
       renderFreshness();
       appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
       appendEntry('sys', 'GOING FARTHER? TRY "PLAN TAMPA TO ORLANDO" (NEEDS A CONNECTION).');
+      appendEntry('sys', 'FARES & TICKETS: TYPE "FARES" (OR "FARES HART").');
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();

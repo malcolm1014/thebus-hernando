@@ -67,6 +67,21 @@ test('plans with explicit coords: builds the MOTIS plan URL, sends a User-Agent,
   }
 });
 
+test('buildPlanUrl maps rider preferences to MOTIS params', () => {
+  const tp = freshModule();
+  const url = String(tp.buildPlanUrl({
+    fromLatLon: '1,2', toLatLon: '3,4',
+    prefs: { maxTransfers: 1, maxWalkSeconds: 600, wheelchair: true },
+  }));
+  assert.match(url, /maxTransfers=1/);
+  assert.match(url, /maxPreTransitTime=600/);
+  assert.match(url, /maxPostTransitTime=600/);
+  assert.match(url, /pedestrianProfile=WHEELCHAIR/);
+  // No prefs -> none of those params present (MOTIS defaults apply).
+  const bare = String(tp.buildPlanUrl({ fromLatLon: '1,2', toLatLon: '3,4' }));
+  assert.doesNotMatch(bare, /maxTransfers|pedestrianProfile|maxPreTransitTime/);
+});
+
 test('geocodes text endpoints, biasing the destination search toward the origin', async () => {
   const original = global.fetch;
   const calls = [];

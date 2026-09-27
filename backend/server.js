@@ -271,6 +271,19 @@ app.get('/api/plan', planRateLimit, express.json(), async (req, res) => {
   const time = (req.query.time || '').toString().trim() || undefined;
   const arriveBy = req.query.arriveBy === '1' || req.query.arriveBy === 'true';
 
+  // Optional rider preferences (all omitted -> MOTIS defaults):
+  //   maxTransfers=<int>, maxWalk=<minutes>, wheelchair=1
+  const prefs = {};
+  if (req.query.maxTransfers != null && req.query.maxTransfers !== '') {
+    const n = Number(req.query.maxTransfers);
+    if (Number.isFinite(n)) prefs.maxTransfers = n;
+  }
+  if (req.query.maxWalk != null && req.query.maxWalk !== '') {
+    const mins = Number(req.query.maxWalk);
+    if (Number.isFinite(mins) && mins > 0) prefs.maxWalkSeconds = Math.round(mins * 60);
+  }
+  if (req.query.wheelchair === '1' || req.query.wheelchair === 'true') prefs.wheelchair = true;
+
   try {
     const result = await planTrip({
       from: from || undefined,
@@ -279,6 +292,7 @@ app.get('/api/plan', planRateLimit, express.json(), async (req, res) => {
       toCoords: hasToCoords ? { name: to || 'DESTINATION', lat: toLat, lon: toLon } : undefined,
       time,
       arriveBy,
+      prefs: Object.keys(prefs).length ? prefs : undefined,
     });
     res.json(result);
   } catch (err) {

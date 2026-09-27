@@ -133,12 +133,31 @@ function normalizeItinerary(it) {
   };
 }
 
-function buildPlanUrl({ fromLatLon, toLatLon, time, arriveBy }) {
+function buildPlanUrl({ fromLatLon, toLatLon, time, arriveBy, prefs }) {
   const url = new URL(`${baseUrl()}/api/v1/plan`);
   url.searchParams.set('fromPlace', fromLatLon);
   url.searchParams.set('toPlace', toLatLon);
   if (time) url.searchParams.set('time', time);
   if (arriveBy) url.searchParams.set('arriveBy', 'true');
+
+  // Rider preferences -> MOTIS plan params (confirmed against
+  // motis-project/motis openapi.yaml):
+  //  - fewer transfers  -> maxTransfers
+  //  - less walking      -> maxPreTransitTime + maxPostTransitTime (seconds,
+  //                         the access/egress street-routing caps; default 900)
+  //  - wheelchair        -> pedestrianProfile=WHEELCHAIR
+  const p = prefs || {};
+  if (p.maxTransfers != null && Number.isFinite(Number(p.maxTransfers))) {
+    url.searchParams.set('maxTransfers', String(Math.max(0, Math.trunc(Number(p.maxTransfers)))));
+  }
+  if (p.maxWalkSeconds != null && Number.isFinite(Number(p.maxWalkSeconds))) {
+    const secs = String(Math.max(60, Math.trunc(Number(p.maxWalkSeconds))));
+    url.searchParams.set('maxPreTransitTime', secs);
+    url.searchParams.set('maxPostTransitTime', secs);
+  }
+  if (p.wheelchair) {
+    url.searchParams.set('pedestrianProfile', 'WHEELCHAIR');
+  }
   return url;
 }
 
@@ -150,7 +169,7 @@ function buildPlanUrl({ fromLatLon, toLatLon, time, arriveBy }) {
  * Throws only on a genuine upstream/network failure, or a
  * PlaceNotFoundError when a text place can't be resolved.
  */
-async function planTrip({ from, to, fromCoords, toCoords, time, arriveBy } = {}) {
+async function planTrip({ from, to, fromCoords, toCoords, time, arriveBy, prefs } = {}) {
   const origin = fromCoords || (await geocodePlace(from));
   if (!origin) throw new PlaceNotFoundError('from', from);
   // Bias the destination search toward the origin so a bare "Main St"
@@ -159,11 +178,11 @@ async function planTrip({ from, to, fromCoords, toCoords, time, arriveBy } = {})
   const dest = toCoords || (await geocodePlace(to, originLatLon));
   if (!dest) throw new PlaceNotFoundError('to', to);
 
-  const cacheKey = JSON.stringify({ o: originLatLon, d: `${dest.lat},${dest.lon}`, time: time || '', arriveBy: !!arriveBy });
+  const cacheKey = JSON.stringify({ o: originLatLon, d: `${dest.lat},${dest.lon}`, time: time || '', arriveBy: !!arriveBy, prefs: prefs || null });
   const cached = planCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) return cached.data;
 
-  const url = buildPlanUrl({ fromLatLon: originLatLon, toLatLon: `${dest.lat},${dest.lon}`, time, arriveBy });
+  const url = buildPlanUrl({ fromLatLon: originLatLon, toLatLon: `${dest.lat},${dest.lon}`, time, arriveBy, prefs });
   const res = await fetch(url, { headers: requestHeaders() });
   if (!res.ok) throw new Error(`Transitous plan failed: HTTP ${res.status}`);
   const raw = await res.json();

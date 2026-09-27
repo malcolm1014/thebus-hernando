@@ -17,6 +17,24 @@ test('parseCommand ignores non-trip questions so the offline engine still handle
   assert.equal(TheBusTripPlanner.parseCommand('from avalon publix to pine island'), null);
 });
 
+test('buildPlanQuery encodes preferences and coordinate overrides', () => {
+  const withPrefs = TheBusTripPlanner.buildPlanQuery('Tampa', 'Orlando', { fewerTransfers: true, lessWalking: true, wheelchair: true });
+  assert.match(withPrefs, /from=Tampa/);
+  assert.match(withPrefs, /to=Orlando/);
+  assert.match(withPrefs, /maxTransfers=1/);
+  assert.match(withPrefs, /maxWalk=10/);
+  assert.match(withPrefs, /wheelchair=1/);
+
+  const bare = TheBusTripPlanner.buildPlanQuery('A', 'B', {});
+  assert.doesNotMatch(bare, /maxTransfers|maxWalk|wheelchair/);
+
+  const coords = TheBusTripPlanner.buildPlanQuery('MY LOCATION', 'Publix', {}, { fromCoords: { lat: 28.5, lon: -82.6 } });
+  assert.match(coords, /fromLat=28\.5/);
+  assert.match(coords, /fromLon=-82\.6/);
+  assert.match(coords, /to=Publix/);
+  assert.doesNotMatch(coords, /from=MY/); // coords replace the text origin
+});
+
 test('formatResult renders a retro itinerary with walk + bus legs', () => {
   const out = TheBusTripPlanner.formatResult({
     from: { name: 'Tampa, FL' }, to: { name: 'Orlando, FL' },

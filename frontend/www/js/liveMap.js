@@ -541,7 +541,15 @@
     const lines = predictions.slice(0, 4).map((p) => {
       const route = escapeHtml(String(routeShortNameFor(p.routeId)).toUpperCase());
       const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
-      return `RT ${route}: ${mins}`;
+      // Schedule adherence from the feed's delay (seconds): + = late.
+      let adherence = '';
+      if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
+        const m = Math.round(p.delaySeconds / 60);
+        if (m >= 1) adherence = ` (${m} MIN LATE)`;
+        else if (m <= -1) adherence = ` (${-m} MIN EARLY)`;
+        else adherence = ' (ON TIME)';
+      }
+      return `RT ${route}: ${mins}${adherence}`;
     });
     popup.setContent(`${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`);
   }
