@@ -1,105 +1,91 @@
 /**
  * Device-token registry for push notifications: which devices want alerts
- * for which routes, and which (alert, device) pairs have already been
- * pushed (so a long-running alert notifies once, not every check).
+ * for which routes, and which (alert, device) pairs have already been pushed
+ * (so a long-running alert notifies once, not every check).
  *
- * In-memory, with best-effort JSON persistence to the data dir so it
- * survives a process restart. It does NOT survive Render's free-tier idle
- * teardown (nothing on disk does -- see geocode.js's note), so on a cold
- * environment devices simply re-register on next app launch (the client
- * re-sends its token on boot). A production deployment would back this with
- * a real datastore; the pure matching logic here (pendingSends) is
- * datastore-agnostic.
+ * Backed by a real datastore when DATABASE_URL is set (Postgres, so tokens
+ * survive cold starts/redeploys), else a best-effort JSON file -- see
+ * src/pushStore.js. This module keeps a small in-memory cache for fast
+ * matching and writes through to the store on every change; on boot it loads
+ * the cache from the store, so a restart (or a fresh Postgres-backed
+ * instance) comes up with the registered devices intact. The matching logic
+ * itself is pure and datastore-agnostic (src/pushMatch.js).
+ *
+ * All methods are async (the store may be a database).
  */
-const fs = require('fs');
-const path = require('path');
-const config = require('./config');
+const { getStore } = require('./pushStore');
+const { matchAlerts } = require('./pushMatch');
 
-const STORE_PATH = path.join(config.dataDir, 'push-registry.json');
+const NOTIFIED_MEM_CAP = 5000;
 
-// token -> { routes: string[] (raw agency route ids), updatedAt }
-const devices = new Map();
-// Set of "<alertId>|<token>" already pushed.
-const notified = new Set();
+let store = null;
+const devices = new Map();      // token -> { routes: string[], updatedAt }
+const notified = new Set();     // "<alertId>|<token>"
+let loadPromise = null;
 
-function load() {
-  try {
-    if (!fs.existsSync(STORE_PATH)) return;
-    const raw = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
-    if (raw && raw.devices) for (const [t, v] of Object.entries(raw.devices)) devices.set(t, v);
-    if (raw && Array.isArray(raw.notified)) raw.notified.forEach((k) => notified.add(k));
-  } catch (e) { /* corrupt/missing -- start empty */ }
+async function ensureLoaded() {
+  if (loadPromise) return loadPromise;
+  loadPromise = (async () => {
+    store = store || getStore();
+    await store.init();
+    const { devices: devs, notified: notifs } = await store.loadAll();
+    devices.clear();
+    notified.clear();
+    for (const d of devs) devices.set(d.token, { routes: d.routes || [], updatedAt: d.updatedAt || 0 });
+    for (const k of notifs) notified.add(k);
+  })().catch((err) => {
+    console.error('[pushRegistry] load failed, continuing with empty in-memory registry:', err.message);
+    loadPromise = null; // allow a later retry
+  });
+  return loadPromise;
 }
 
-function persist() {
-  try {
-    fs.mkdirSync(config.dataDir, { recursive: true });
-    // Cap the notified set so it can't grow without bound over a long warm run.
-    const notifiedArr = [...notified].slice(-5000);
-    fs.writeFileSync(STORE_PATH, JSON.stringify({ devices: Object.fromEntries(devices), notified: notifiedArr }));
-  } catch (e) { /* best-effort; registry still works in memory */ }
-}
-
-let loaded = false;
-function ensureLoaded() { if (!loaded) { load(); loaded = true; } }
-
-function register(token, routes) {
-  ensureLoaded();
+async function register(token, routes) {
   if (!token || typeof token !== 'string') return false;
+  await ensureLoaded();
   const clean = Array.isArray(routes) ? [...new Set(routes.map(String))] : [];
-  devices.set(token, { routes: clean, updatedAt: Date.now() });
-  persist();
+  const updatedAt = Date.now();
+  devices.set(token, { routes: clean, updatedAt });
+  try { await store.putDevice(token, clean, updatedAt); } catch (e) { console.error('[pushRegistry] putDevice failed:', e.message); }
   return true;
 }
 
-function unregister(token) {
-  ensureLoaded();
+async function unregister(token) {
+  await ensureLoaded();
   const had = devices.delete(token);
-  if (had) persist();
+  if (had) { try { await store.removeDevice(token); } catch (e) { console.error('[pushRegistry] removeDevice failed:', e.message); } }
   return had;
 }
 
-function list() {
-  ensureLoaded();
+async function list() {
+  await ensureLoaded();
   return [...devices.entries()].map(([token, v]) => ({ token, ...v }));
 }
 
 /**
- * Given the current active alerts, returns the (token, alert) pairs that
- * should be pushed now -- a device whose followed routes intersect an
- * alert's routes, that hasn't already been notified for that alert -- and
- * marks them notified. Pure over the in-memory state (no network).
- * @param {Array<{id,routes,header,description,effect}>} alerts
- * @returns {Array<{token, alertId, title, body}>}
+ * Given the current active alerts, returns the notifications to deliver now
+ * (a device whose followed routes intersect an alert's routes, not already
+ * notified for that alert) and records them as notified.
+ * @returns {Promise<Array<{token, alertId, title, body}>>}
  */
-function pendingSends(alerts) {
-  ensureLoaded();
-  const out = [];
-  if (!Array.isArray(alerts)) return out;
-  for (const [token, dev] of devices) {
-    const followed = new Set(dev.routes || []);
-    if (followed.size === 0) continue;
-    for (const alert of alerts) {
-      if (!alert || alert.id == null) continue;
-      const routes = Array.isArray(alert.routes) ? alert.routes.map(String) : [];
-      const hitRoute = routes.find((r) => followed.has(r));
-      if (!hitRoute) continue;
-      const key = `${alert.id}|${token}`;
-      if (notified.has(key)) continue;
-      notified.add(key);
-      const effect = alert.effect && alert.effect !== 'UNKNOWN_EFFECT' ? String(alert.effect).replace(/_/g, ' ') : 'Service alert';
-      out.push({
-        token,
-        alertId: alert.id,
-        title: `Route ${hitRoute}: ${effect}`,
-        body: alert.header || alert.description || 'Tap for details.',
-      });
+async function pendingSends(alerts) {
+  await ensureLoaded();
+  const deviceList = [...devices.entries()].map(([token, v]) => ({ token, routes: v.routes }));
+  const { sends, newKeys } = matchAlerts(deviceList, notified, alerts);
+  if (newKeys.length) {
+    newKeys.forEach((k) => notified.add(k));
+    // Bound the in-memory set so a long warm run can't grow it forever.
+    if (notified.size > NOTIFIED_MEM_CAP) {
+      const excess = notified.size - NOTIFIED_MEM_CAP;
+      let i = 0;
+      for (const k of notified) { if (i++ >= excess) break; notified.delete(k); }
     }
+    try { await store.addNotified(newKeys); } catch (e) { console.error('[pushRegistry] addNotified failed:', e.message); }
   }
-  if (out.length) persist();
-  return out;
+  return sends;
 }
 
-function resetForTests() { devices.clear(); notified.clear(); loaded = true; }
+// Tests inject a fake store and reset state.
+function __setStoreForTests(fake) { store = fake; devices.clear(); notified.clear(); loadPromise = null; }
 
-module.exports = { register, unregister, list, pendingSends, resetForTests, STORE_PATH };
+module.exports = { register, unregister, list, pendingSends, ensureLoaded, __setStoreForTests };

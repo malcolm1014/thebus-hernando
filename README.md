@@ -91,8 +91,11 @@ thebus-hernando/
                                notifications via Node crypto (no firebase-admin),
                                gated on FCM_SERVICE_ACCOUNT -- see "Push
                                notifications server" below
-      pushRegistry.js           token -> followed-routes registry + alert
-                               matching for the push cron
+      pushRegistry.js           token -> followed-routes registry (async,
+                               cached + write-through) driving the push cron
+      pushStore.js              registry datastore: Postgres (DATABASE_URL) or
+                               a JSON-file fallback
+      pushMatch.js              pure alert -> device matching (dedup logic)
     server.js                 GET /api/version, GET /api/download,
                                GET /api/live-buses, GET /api/service-alerts,
                                GET /api/predictions, GET /api/geocode,
@@ -1132,9 +1135,12 @@ How it works:
 - The client (`@capacitor/push-notifications`, `frontend/www/js/pushClient.js`)
   registers the device's FCM token and posts it with the rider's followed
   route ids to `POST /api/push/register` (updated on every follow/unfollow).
-- `src/pushRegistry.js` stores token→routes (in memory, persisted to
-  `data/push-registry.json`; devices re-register on launch after a cold
-  environment).
+- `src/pushRegistry.js` stores token→routes and the notified-history, behind
+  a pluggable datastore (`src/pushStore.js`): **Postgres when `DATABASE_URL`
+  is set** (so devices survive cold starts, redeploys, and the free-tier
+  teardown), else a JSON file fallback. It keeps a small in-memory cache for
+  fast matching and writes through to the store; the matching itself is pure
+  and datastore-agnostic (`src/pushMatch.js`).
 - A cron (`PUSH_CHECK_CRON`, default every 2 min) runs `checkAndPushAlerts()`:
   fetch HART's active alerts, find every registered device whose followed
   routes an alert touches and that hasn't been notified for it yet, and send.
@@ -1153,11 +1159,22 @@ Setup (one time):
 3. Redeploy. `GET`-ping the service to keep it warm, or use a paid instance —
    the cron only fires while the instance is awake.
 
-Limitations, stated honestly: the free Render tier sleeps when idle (so the
-check pauses until the next request), and the in-memory registry resets on a
-cold environment (devices re-register on next launch). Both are the same
-free-tier realities the ETL cron and geocode cache already document; a paid
-instance + a datastore remove them.
+**Keeping it warm**: Render's free tier spins down after ~15 min with no
+inbound requests, which pauses the push (and ETL) crons. The server runs a
+**self-pinger** — every `KEEP_WARM_CRON` (default 10 min) it fetches its own
+public URL (`RENDER_EXTERNAL_URL`, injected automatically; `KEEP_WARM_URL`
+overrides), which counts as inbound traffic and keeps it awake. It only runs
+when a public URL is known, so it never fires locally. An external pinger
+(cron-job.org, UptimeRobot) hitting `/healthz` works too, or use a paid
+instance.
+
+**Durable registry**: attach a Render **PostgreSQL** instance and the
+injected `DATABASE_URL` switches the registry from the file fallback to
+Postgres, so registered devices and notified-history survive cold starts and
+redeploys (tables `push_devices` / `push_notified` are created automatically
+on boot). With both the pinger and Postgres in place, the two free-tier
+limitations above are gone; without them, devices simply re-register on next
+launch and the check resumes on the next request.
 
 ## Keeping the payload lean
 

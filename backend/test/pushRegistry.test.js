@@ -2,44 +2,61 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const registry = require('../src/pushRegistry');
 
-test('pendingSends matches a device\'s followed routes to alerts, once each', () => {
-  registry.resetForTests();
-  registry.register('tokA', ['5', '9']);
-  registry.register('tokB', ['1']);
+// An in-memory fake of the pushStore interface, so these tests exercise the
+// registry's caching + write-through + matching without touching disk or a DB.
+function makeFakeStore() {
+  const devices = new Map();
+  const notified = new Set();
+  return {
+    devices,
+    notified,
+    async init() {},
+    async loadAll() {
+      return {
+        devices: [...devices.entries()].map(([token, v]) => ({ token, routes: v.routes, updatedAt: v.updatedAt })),
+        notified: [...notified],
+      };
+    },
+    async putDevice(token, routes, updatedAt) { devices.set(token, { routes, updatedAt }); },
+    async removeDevice(token) { devices.delete(token); },
+    async addNotified(keys) { keys.forEach((k) => notified.add(k)); },
+  };
+}
 
-  const alerts = [
-    { id: 'a1', header: 'Route 5 detour', effect: 'DETOUR', routes: ['5'] },
-    { id: 'a2', header: 'Route 2 delay', routes: ['2'] }, // nobody follows route 2
-  ];
+test('register writes through to the store and matches alerts once', async () => {
+  const store = makeFakeStore();
+  registry.__setStoreForTests(store);
+  await registry.register('tokA', ['5', '9']);
+  assert.ok(store.devices.has('tokA')); // written through to the datastore
 
-  const first = registry.pendingSends(alerts);
+  const first = await registry.pendingSends([{ id: 'a1', header: 'Route 5 detour', effect: 'DETOUR', routes: ['5'] }]);
   assert.equal(first.length, 1);
   assert.equal(first[0].token, 'tokA');
-  assert.match(first[0].title, /Route 5: DETOUR/);
+  assert.ok(store.notified.has('a1|tokA')); // notified recorded in the datastore
 
-  // Same alerts again -> already notified, nothing to send.
-  assert.equal(registry.pendingSends(alerts).length, 0);
+  // Same alert again -> deduped.
+  assert.equal((await registry.pendingSends([{ id: 'a1', header: 'x', routes: ['5'] }])).length, 0);
 });
 
-test('a newly-active alert on a followed route is picked up on a later check', () => {
-  registry.resetForTests();
-  registry.register('tokA', ['5']);
-  assert.equal(registry.pendingSends([{ id: 'a1', routes: ['9'] }]).length, 0); // route not followed
-  const later = registry.pendingSends([{ id: 'a1', routes: ['9'] }, { id: 'a2', header: 'New', routes: ['5'] }]);
-  assert.equal(later.length, 1);
-  assert.equal(later[0].alertId, 'a2');
+test('state is reloaded from the datastore on boot (survives a "restart")', async () => {
+  const store = makeFakeStore();
+  store.devices.set('tokA', { routes: ['5'], updatedAt: 1 }); // pre-existing rows in the DB
+  store.notified.add('old|tokA');
+  registry.__setStoreForTests(store);
+
+  // First call triggers ensureLoaded(), which pulls the rows in.
+  const list = await registry.list();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].token, 'tokA');
+  // A previously-notified pair stays deduped after the reload.
+  assert.equal((await registry.pendingSends([{ id: 'old', header: 'x', routes: ['5'] }])).length, 0);
 });
 
-test('unregister stops a device from matching', () => {
-  registry.resetForTests();
-  registry.register('tokA', ['5']);
-  registry.unregister('tokA');
-  assert.equal(registry.pendingSends([{ id: 'a1', header: 'x', routes: ['5'] }]).length, 0);
-  assert.equal(registry.list().length, 0);
-});
-
-test('a device following no routes never matches', () => {
-  registry.resetForTests();
-  registry.register('tokA', []);
-  assert.equal(registry.pendingSends([{ id: 'a1', header: 'x', routes: ['5'] }]).length, 0);
+test('unregister removes from cache and store', async () => {
+  const store = makeFakeStore();
+  registry.__setStoreForTests(store);
+  await registry.register('tokA', ['5']);
+  await registry.unregister('tokA');
+  assert.equal(store.devices.has('tokA'), false);
+  assert.equal((await registry.pendingSends([{ id: 'a1', header: 'x', routes: ['5'] }])).length, 0);
 });

@@ -50,3 +50,15 @@ services:
         sync: false
       - key: PUSH_CHECK_CRON
         sync: false
+      # Real datastore for the push token registry (optional but recommended
+      # once push is on): attach a Render PostgreSQL instance and it injects
+      # DATABASE_URL. Unset -> file fallback that resets on free-tier teardown.
+      - key: DATABASE_URL
+        sync: false
+      # Keep-warm pinger so the crons keep firing on the free tier. Render
+      # injects RENDER_EXTERNAL_URL automatically, so KEEP_WARM_URL is only
+      # needed to override it; both optional.
+      - key: KEEP_WARM_URL
+        sync: false
+      - key: KEEP_WARM_CRON
+        sync: false

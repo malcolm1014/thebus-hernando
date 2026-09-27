@@ -221,20 +221,30 @@ app.get('/api/predictions', predictionsRateLimit, async (req, res) => {
  * route set. Always accepted (stored) even when FCM isn't configured
  * server-side; pushes only actually send once FCM_SERVICE_ACCOUNT is set.
  */
-app.post('/api/push/register', pushRegisterRateLimit, express.json({ limit: '10kb' }), (req, res) => {
+app.post('/api/push/register', pushRegisterRateLimit, express.json({ limit: '10kb' }), async (req, res) => {
   const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
   const routes = req.body && Array.isArray(req.body.routes) ? req.body.routes : [];
   if (!token) return res.status(400).json({ error: 'missing token' });
-  pushRegistry.register(token, routes);
-  res.json({ ok: true, pushConfigured: push.isConfigured() });
+  try {
+    await pushRegistry.register(token, routes);
+    res.json({ ok: true, pushConfigured: push.isConfigured() });
+  } catch (err) {
+    console.error('[server] push register failed:', err);
+    res.status(500).json({ error: 'could not register' });
+  }
 });
 
 /** POST /api/push/unregister  { token } */
-app.post('/api/push/unregister', pushRegisterRateLimit, express.json({ limit: '10kb' }), (req, res) => {
+app.post('/api/push/unregister', pushRegisterRateLimit, express.json({ limit: '10kb' }), async (req, res) => {
   const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
   if (!token) return res.status(400).json({ error: 'missing token' });
-  pushRegistry.unregister(token);
-  res.json({ ok: true });
+  try {
+    await pushRegistry.unregister(token);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[server] push unregister failed:', err);
+    res.status(500).json({ error: 'could not unregister' });
+  }
 });
 
 /**
@@ -463,6 +473,23 @@ async function main() {
   } else {
     console.log('[server] push-alert cron not scheduled (needs FCM_SERVICE_ACCOUNT + SWIFTLY_API_KEY).');
   }
+
+  // Keep-warm pinger: Render's free tier spins the service down after ~15
+  // min with no inbound requests, which pauses the ETL + push crons. Pinging
+  // our own public URL on a schedule counts as inbound traffic and keeps the
+  // instance awake. Only runs when a public URL is known (i.e. on Render);
+  // never fires locally.
+  if (config.keepWarmUrl && config.keepWarmCron) {
+    const pingUrl = `${config.keepWarmUrl.replace(/\/+$/, '')}/healthz`;
+    cron.schedule(config.keepWarmCron, async () => {
+      try {
+        await fetch(pingUrl);
+      } catch (err) {
+        console.error('[server] keep-warm ping failed:', err.message);
+      }
+    });
+    console.log(`[server] keep-warm pinger scheduled ("${config.keepWarmCron}" -> ${pingUrl}).`);
+  }
 }
 
 /**
@@ -475,7 +502,7 @@ async function checkAndPushAlerts() {
   if (!push.isConfigured() || !config.swiftlyApiKey) return;
   try {
     const { alerts } = await fetchServiceAlerts(config.swiftlyHartAgencyKey);
-    const sends = pushRegistry.pendingSends(alerts);
+    const sends = await pushRegistry.pendingSends(alerts);
     for (const s of sends) {
       try {
         const result = await push.sendToToken(s.token, { title: s.title, body: s.body, data: { alertId: s.alertId } });
