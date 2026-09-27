@@ -511,7 +511,9 @@ async function checkAndPushAlerts() {
         console.error('[server] push send failed:', err.message);
       }
     }
-    if (sends.length) console.log(`[server] pushed ${sends.length} alert notification(s).`);
+    // One line per successful check so a healthy alerts feed is visible in
+    // the logs, not just inferred from the ABSENCE of a failure line.
+    console.log(`[server] push-alert check ok: ${alerts.length} active alert(s), ${sends.length} notification(s) sent.`);
   } catch (err) {
     console.error('[server] push-alert check failed:', err.message);
   }
