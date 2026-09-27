@@ -1150,14 +1150,18 @@ How it works:
 
 Setup (one time):
 1. Create a Firebase project; add an **Android app** with package id
-   `com.savvysecurity.thebus`; download `google-services.json` into
-   `android/app/` and add the Firebase gradle plugin (standard Capacitor
-   push setup), then `npx cap sync android`.
-2. In Firebase → Project settings → Service accounts, **Generate new private
+   `com.savvysecurity.thebus`; download its **`google-services.json`**.
+2. Add that file's contents as the GitHub Actions secret
+   **`GOOGLE_SERVICES_JSON`** (repo → Settings → Secrets and variables →
+   Actions). The APK workflow's Firebase step (`scripts/patch-firebase.js`)
+   is secret-gated: with the secret set it writes the file + ensures the
+   Gradle wiring so the built APK can receive pushes; unset, it no-ops and
+   the build is unaffected. No manual Gradle editing — CI handles it.
+3. In Firebase → Project settings → Service accounts, **Generate new private
    key**. Set the whole JSON as the `FCM_SERVICE_ACCOUNT` env var on Render
    (one line). The server derives the project id from it.
-3. Redeploy. `GET`-ping the service to keep it warm, or use a paid instance —
-   the cron only fires while the instance is awake.
+4. Push to `main` to rebuild the APK (now push-capable), and redeploy the
+   backend. Keep the instance warm (below) so the cron fires.
 
 **Keeping it warm**: Render's free tier spins down after ~15 min with no
 inbound requests, which pauses the push (and ETL) crons. The server runs a
