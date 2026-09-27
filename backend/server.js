@@ -6,8 +6,13 @@ const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
 const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
+const { fetchLiveBuses: fetchHartLiveBuses } = require('./src/swiftlyRealtime');
+const { fetchServiceAlerts, predictionsForStop } = require('./src/swiftlyGtfsRt');
+const push = require('./src/push');
+const pushRegistry = require('./src/pushRegistry');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
+const { planTrip, PlaceNotFoundError } = require('./src/tripPlanner');
 const { fetchStaticMap } = require('./src/staticmap');
 const { enhanceAnswer } = require('./src/grokAnswer');
 const { createRateLimiter } = require('./src/rateLimit');
@@ -33,6 +38,16 @@ const versionRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 const downloadRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 const crashReportRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 10 });
 const enhanceAnswerRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
+// Trip planning proxies a donated, volunteer-run service (Transitous), so
+// keep this tight -- one plan per rider tap is plenty under 15/min, and
+// tripPlanner.js also caches results to absorb bursts.
+const planRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 15 });
+// Alerts/predictions are backed by a server-side cache (see
+// swiftlyGtfsRt.js), so most requests never hit Swiftly -- these caps just
+// bound abuse of the public endpoints.
+const alertsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
+const predictionsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
+const pushRegisterRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 
 let etlRunning = false;
 
@@ -100,8 +115,9 @@ app.post('/api/refresh', express.json(), async (req, res) => {
  * GET /api/live-buses
  * Merges live vehicle positions from every agency with a working
  * real-time source -- currently Hernando (Passio GO, src/passio.js) and
- * PascoGo (Avail/myStop, src/pascoRealtime.js); HART has no source
- * wired in yet (see README's "Live map" section). Each source is
+ * PascoGo (Avail/myStop, src/pascoRealtime.js); and HART (Swiftly's
+ * official real-time API, src/swiftlyRealtime.js) whenever a Swiftly key
+ * is configured (see config.js / .env.example). Each source is
  * fetched independently via Promise.allSettled so one vendor being
  * down/changed doesn't blank out the other's real buses -- the same
  * "one bad source shouldn't break everything" approach etl.js already
@@ -124,6 +140,12 @@ app.get('/api/live-buses', async (req, res) => {
     { agencyId: 'hernando', fetch: fetchLiveBuses },
     { agencyId: 'pasco', fetch: fetchPascoLiveBuses },
   ];
+  // HART only joins the merge when a Swiftly key is configured -- an
+  // unset key would 401 every poll, so skip the source entirely rather
+  // than adding a guaranteed-failing fetch to Promise.allSettled.
+  if (config.swiftlyApiKey) {
+    sources.push({ agencyId: 'hart', fetch: fetchHartLiveBuses });
+  }
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
 
   let buses = [];
@@ -142,6 +164,87 @@ app.get('/api/live-buses', async (req, res) => {
     return res.status(502).json({ error: 'live bus data unavailable' });
   }
   res.json({ buses, fetchedAt: new Date().toISOString() });
+});
+
+/**
+ * GET /api/service-alerts
+ * Active GTFS-Realtime service alerts (detours, cancellations, stop
+ * closures) for HART, via Swiftly (src/swiftlyGtfsRt.js). Only HART
+ * publishes an alerts feed to us today, and only when a Swiftly key is
+ * configured -- with no key this returns an empty list (HTTP 200) rather
+ * than an error, so the client's banner simply stays hidden, same as
+ * before this feature existed.
+ */
+app.get('/api/service-alerts', alertsRateLimit, async (req, res) => {
+  if (!config.swiftlyApiKey) {
+    return res.json({ alerts: [], fetchedAt: new Date().toISOString() });
+  }
+  try {
+    const result = await fetchServiceAlerts(config.swiftlyHartAgencyKey);
+    res.json(result);
+  } catch (err) {
+    console.error('[server] service-alerts fetch failed:', err);
+    res.status(502).json({ error: 'service alerts unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/predictions?stop=<stopId>
+ * Live arrival predictions (GTFS-Realtime trip updates) for one stop, via
+ * Swiftly (src/swiftlyGtfsRt.js). `stop` may be our namespaced id
+ * ("hart:1234") or the raw agency id ("1234"). Returns upcoming arrivals
+ * soonest-first; an empty list (HTTP 200) means "no live prediction for
+ * this stop right now" (no key configured, stop not in the feed, or
+ * nothing due), which the client treats as "fall back to the schedule".
+ */
+app.get('/api/predictions', predictionsRateLimit, async (req, res) => {
+  const stop = (req.query.stop || '').toString().trim();
+  if (!stop) {
+    return res.status(400).json({ error: 'missing required query parameter: stop' });
+  }
+  if (!config.swiftlyApiKey) {
+    return res.json({ stopId: stop, predictions: [], fetchedAt: new Date().toISOString() });
+  }
+  try {
+    const result = await predictionsForStop(config.swiftlyHartAgencyKey, stop);
+    res.json(result);
+  } catch (err) {
+    console.error('[server] predictions fetch failed:', err);
+    res.status(502).json({ error: 'predictions unavailable', message: err.message });
+  }
+});
+
+/**
+ * POST /api/push/register  { token, routes: [rawRouteId, ...] }
+ * Registers a device's FCM token and the (raw agency) route ids it wants
+ * service-alert notifications for. Idempotent -- re-posting updates the
+ * route set. Always accepted (stored) even when FCM isn't configured
+ * server-side; pushes only actually send once FCM_SERVICE_ACCOUNT is set.
+ */
+app.post('/api/push/register', pushRegisterRateLimit, express.json({ limit: '10kb' }), async (req, res) => {
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  const routes = req.body && Array.isArray(req.body.routes) ? req.body.routes : [];
+  if (!token) return res.status(400).json({ error: 'missing token' });
+  try {
+    await pushRegistry.register(token, routes);
+    res.json({ ok: true, pushConfigured: push.isConfigured() });
+  } catch (err) {
+    console.error('[server] push register failed:', err);
+    res.status(500).json({ error: 'could not register' });
+  }
+});
+
+/** POST /api/push/unregister  { token } */
+app.post('/api/push/unregister', pushRegisterRateLimit, express.json({ limit: '10kb' }), async (req, res) => {
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'missing token' });
+  try {
+    await pushRegistry.unregister(token);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[server] push unregister failed:', err);
+    res.status(500).json({ error: 'could not unregister' });
+  }
 });
 
 /**
@@ -164,6 +267,77 @@ app.get('/api/geocode', geocodeRateLimit, async (req, res) => {
   } catch (err) {
     console.error('[server] geocode failed:', err);
     res.status(502).json({ error: 'geocoding unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/plan?from=<place>&to=<place>[&time=<ISO>][&arriveBy=1]
+ *   (or pass explicit coords: fromLat/fromLon/toLat/toLon)
+ *
+ * Cross-agency / cross-country journey planning -- "Tier 2" from the
+ * research brief. Where the offline app plans trips inside the bundled
+ * tri-county dataset, this proxies the free Transitous/MOTIS API for any
+ * two places nationwide (see src/tripPlanner.js). Requires network; the
+ * client only calls it on an explicit "PLAN ... to ..." command and falls
+ * back to a plain offline message when there's no connection.
+ *
+ * Returns { from, to, itineraries } -- itineraries is [] (HTTP 200) when
+ * both places are real but no transit route connects them, so the client
+ * can say "no route found" rather than treating it as an error. A place
+ * that can't be resolved is 422 (naming which one); an upstream failure
+ * is 502.
+ */
+app.get('/api/plan', planRateLimit, express.json(), async (req, res) => {
+  const from = (req.query.from || '').toString().trim();
+  const to = (req.query.to || '').toString().trim();
+  const fromLat = Number(req.query.fromLat);
+  const fromLon = Number(req.query.fromLon);
+  const toLat = Number(req.query.toLat);
+  const toLon = Number(req.query.toLon);
+  const hasFromCoords = Number.isFinite(fromLat) && Number.isFinite(fromLon);
+  const hasToCoords = Number.isFinite(toLat) && Number.isFinite(toLon);
+
+  if (!from && !hasFromCoords) {
+    return res.status(400).json({ error: 'missing origin: provide from=<place> or fromLat/fromLon' });
+  }
+  if (!to && !hasToCoords) {
+    return res.status(400).json({ error: 'missing destination: provide to=<place> or toLat/toLon' });
+  }
+
+  const time = (req.query.time || '').toString().trim() || undefined;
+  const arriveBy = req.query.arriveBy === '1' || req.query.arriveBy === 'true';
+
+  // Optional rider preferences (all omitted -> MOTIS defaults):
+  //   maxTransfers=<int>, maxWalk=<minutes>, wheelchair=1
+  const prefs = {};
+  if (req.query.maxTransfers != null && req.query.maxTransfers !== '') {
+    const n = Number(req.query.maxTransfers);
+    if (Number.isFinite(n)) prefs.maxTransfers = n;
+  }
+  if (req.query.maxWalk != null && req.query.maxWalk !== '') {
+    const mins = Number(req.query.maxWalk);
+    if (Number.isFinite(mins) && mins > 0) prefs.maxWalkSeconds = Math.round(mins * 60);
+  }
+  if (req.query.wheelchair === '1' || req.query.wheelchair === 'true') prefs.wheelchair = true;
+  if (req.query.rental === '1' || req.query.rental === 'true') prefs.rental = true; // GBFS bike/scooter share
+
+  try {
+    const result = await planTrip({
+      from: from || undefined,
+      to: to || undefined,
+      fromCoords: hasFromCoords ? { name: from || 'START', lat: fromLat, lon: fromLon } : undefined,
+      toCoords: hasToCoords ? { name: to || 'DESTINATION', lat: toLat, lon: toLon } : undefined,
+      time,
+      arriveBy,
+      prefs: Object.keys(prefs).length ? prefs : undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof PlaceNotFoundError) {
+      return res.status(422).json({ error: 'place not found', which: err.which, text: err.text, message: err.message });
+    }
+    console.error('[server] trip plan failed:', err);
+    res.status(502).json({ error: 'trip planning unavailable', message: err.message });
   }
 });
 
@@ -288,6 +462,58 @@ async function main() {
       }
     });
     console.log(`[server] scheduled ETL cron: "${config.etlCron}"`);
+  }
+
+  // Push notifications: check alerts and push to matching registered devices.
+  // Only meaningful when both a Swiftly key (for the alerts feed) and FCM
+  // credentials are configured; otherwise this stays idle.
+  if (push.isConfigured() && config.swiftlyApiKey && config.pushCheckCron) {
+    cron.schedule(config.pushCheckCron, checkAndPushAlerts);
+    console.log(`[server] scheduled push-alert cron: "${config.pushCheckCron}"`);
+  } else {
+    console.log('[server] push-alert cron not scheduled (needs FCM_SERVICE_ACCOUNT + SWIFTLY_API_KEY).');
+  }
+
+  // Keep-warm pinger: Render's free tier spins the service down after ~15
+  // min with no inbound requests, which pauses the ETL + push crons. Pinging
+  // our own public URL on a schedule counts as inbound traffic and keeps the
+  // instance awake. Only runs when a public URL is known (i.e. on Render);
+  // never fires locally.
+  if (config.keepWarmUrl && config.keepWarmCron) {
+    const pingUrl = `${config.keepWarmUrl.replace(/\/+$/, '')}/healthz`;
+    cron.schedule(config.keepWarmCron, async () => {
+      try {
+        await fetch(pingUrl);
+      } catch (err) {
+        console.error('[server] keep-warm ping failed:', err.message);
+      }
+    });
+    console.log(`[server] keep-warm pinger scheduled ("${config.keepWarmCron}" -> ${pingUrl}).`);
+  }
+}
+
+/**
+ * One push cycle: fetch HART's active alerts, find every registered device
+ * whose followed routes an alert touches (and that hasn't been notified for
+ * that alert yet), and send it an FCM message. Dead tokens (FCM 404) are
+ * dropped. Safe to call on a timer; never throws.
+ */
+async function checkAndPushAlerts() {
+  if (!push.isConfigured() || !config.swiftlyApiKey) return;
+  try {
+    const { alerts } = await fetchServiceAlerts(config.swiftlyHartAgencyKey);
+    const sends = await pushRegistry.pendingSends(alerts);
+    for (const s of sends) {
+      try {
+        const result = await push.sendToToken(s.token, { title: s.title, body: s.body, data: { alertId: s.alertId } });
+        if (result.unregister) pushRegistry.unregister(s.token);
+      } catch (err) {
+        console.error('[server] push send failed:', err.message);
+      }
+    }
+    if (sends.length) console.log(`[server] pushed ${sends.length} alert notification(s).`);
+  } catch (err) {
+    console.error('[server] push-alert check failed:', err.message);
   }
 }
 

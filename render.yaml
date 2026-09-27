@@ -25,3 +25,40 @@ services:
         sync: false
       - key: ETL_CRON
         sync: false
+      # HART live vehicle positions via Swiftly's official real-time API
+      # (see backend/.env.example). Optional -- leave unset and HART just
+      # shows routes/stops with no live buses. SWIFTLY_HART_AGENCY_KEY is
+      # only needed if HART's Swiftly agency key differs from the 'hart'
+      # default.
+      - key: SWIFTLY_API_KEY
+        sync: false
+      - key: SWIFTLY_HART_AGENCY_KEY
+        sync: false
+      # Cross-country trip planning (GET /api/plan). Both optional -- the
+      # planner proxies the free Transitous/MOTIS network by default (no
+      # key needed). Set TRIP_PLANNER_USER_AGENT to your own contact if you
+      # deploy a fork; set TRANSITOUS_BASE_URL only to use a self-hosted
+      # MOTIS instance. See backend/.env.example.
+      - key: TRIP_PLANNER_USER_AGENT
+        sync: false
+      - key: TRANSITOUS_BASE_URL
+        sync: false
+      # Push notifications for followed-route alerts (optional). FCM_SERVICE_ACCOUNT
+      # is the whole Firebase service-account JSON on one line; leave unset and
+      # push is off (in-app/web notifications still work). See README.
+      - key: FCM_SERVICE_ACCOUNT
+        sync: false
+      - key: PUSH_CHECK_CRON
+        sync: false
+      # Real datastore for the push token registry (optional but recommended
+      # once push is on): attach a Render PostgreSQL instance and it injects
+      # DATABASE_URL. Unset -> file fallback that resets on free-tier teardown.
+      - key: DATABASE_URL
+        sync: false
+      # Keep-warm pinger so the crons keep firing on the free tier. Render
+      # injects RENDER_EXTERNAL_URL automatically, so KEEP_WARM_URL is only
+      # needed to override it; both optional.
+      - key: KEEP_WARM_URL
+        sync: false
+      - key: KEEP_WARM_CRON
+        sync: false

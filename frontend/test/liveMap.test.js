@@ -31,7 +31,7 @@ function installLeafletStub() {
     tileLayer: () => chainable({}),
     layerGroup: () => chainable({ clearLayers: () => {}, removeLayer: () => {} }),
     polyline: (points, opts) => {
-      const line = chainable({ points, opts, setStyle: (s) => Object.assign(line.opts, s) });
+      const line = chainable({ points, opts, setStyle: (s) => Object.assign(line.opts, s), bindPopup: () => line });
       created.polylines.push(line);
       return line;
     },

@@ -6,6 +6,7 @@ npm-debug.log*
 backend/data/raw/
 backend/data/transit_data.json
 backend/data/*.zip
+backend/data/push-registry.json
 backend/.env
 
 # Frontend / Capacitor

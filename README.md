@@ -68,12 +68,40 @@ thebus-hernando/
       pascoRealtime.js          same idea, PascoGo's own real-time vendor
                                (Avail/myStop, a DIFFERENT vendor than
                                Passio -- see "Live map" below)
+      swiftlyRealtime.js        proxies HART's (Tampa) real-time VEHICLE
+                               POSITIONS via Swiftly's OFFICIAL,
+                               key-authenticated JSON API -- the one live
+                               source that isn't reverse-engineered; only
+                               wired into /api/live-buses when
+                               SWIFTLY_API_KEY is set (see "Live map" below)
+      swiftlyGtfsRt.js          HART's other two GTFS-Realtime feeds via
+                               Swiftly -- SERVICE ALERTS and TRIP UPDATES
+                               (arrival predictions), requested as JSON
+                               (?format=json, no protobuf dep); backs
+                               GET /api/service-alerts + GET /api/predictions
       geocode.js                proxies OpenStreetMap Nominatim to resolve
                                a place name ("Springstead High School") to
                                coordinates for "nearest stop to X" queries
+      tripPlanner.js            proxies the free Transitous/MOTIS routing
+                               network for cross-agency / cross-country
+                               A->B journeys (the "Tier 2" online planner,
+                               see "Trip planning" below) -- geocode + plan,
+                               normalized to a compact itinerary shape
+      push.js                   sends Firebase Cloud Messaging (FCM HTTP v1)
+                               notifications via Node crypto (no firebase-admin),
+                               gated on FCM_SERVICE_ACCOUNT -- see "Push
+                               notifications server" below
+      pushRegistry.js           token -> followed-routes registry (async,
+                               cached + write-through) driving the push cron
+      pushStore.js              registry datastore: Postgres (DATABASE_URL) or
+                               a JSON-file fallback
+      pushMatch.js              pure alert -> device matching (dedup logic)
     server.js                 GET /api/version, GET /api/download,
-                               GET /api/live-buses, GET /api/geocode,
-                               POST /api/refresh (secret-protected)
+                               GET /api/live-buses, GET /api/service-alerts,
+                               GET /api/predictions, GET /api/geocode,
+                               GET /api/plan, POST /api/push/register,
+                               POST /api/push/unregister, POST /api/refresh
+                               (secret-protected)
     test/                     node --test unit tests (transform, gtfsParse, ETL safety check,
                                passio shaping, shape-polyline simplification) -- also run in CI
                                (.github/workflows/backend-tests.yml) on every push, though it
@@ -188,7 +216,7 @@ different timezone were ever added.
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
-npm test                    # 21 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping, shape-polyline simplification
+npm test                    # unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, live-feed response shaping (passio.js / pascoRealtime.js / swiftlyRealtime.js), shape-polyline simplification
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -510,6 +538,40 @@ integration tests in `test/queryEngine.test.js` (plus the existing
 Tier 1 / GPS ones) prove the tiers are actually reached in the right
 order end-to-end.
 
+## Predictive search (type-ahead)
+
+`frontend/www/js/suggest.js` makes the answer start forming before the
+rider finishes typing. On each keystroke (debounced) it ranks the things
+they're most likely to mean across everything already loaded — transit
+**stops** and **routes**, the bundled OSM **places/roads** corpus, and a few
+**command templates** — and shows them in a listbox above the input. It's
+pure, synchronous, offline work over a normalized string precomputed per
+entry, so a scan is cheap enough for every keypress.
+
+The top few stop suggestions carry a **live "next bus" peek** computed on
+the spot from `queryEngine.nextArrivals()` ("Avalon Publix · NEXT ~7 MIN"),
+so the actual answer is visible in the suggestion itself. Choosing a
+suggestion runs the most useful query for that kind of thing without the
+rider spelling it out: a stop → its next bus, a place → the nearest stop, a
+road → where it is, a route → its timetable; command templates fill the box
+for the rider to complete. Full keyboard support (↑/↓ to move, Enter to take
+the highlighted one or submit raw text if none, Esc to dismiss) with ARIA
+combobox/listbox roles, and tap-to-choose on mobile. Ranked by match quality
+(exact → prefix → word-boundary → substring) and a per-type weight
+(stops/routes/places above roads). 5 tests in `test/suggest.test.js`.
+
+## Accessibility
+
+Alongside the CRT-effects toggle, a **HIGH CONTRAST** toggle (persisted via
+`TheBusStorage`) sets `data-contrast="high"` on the root: crisp white-on-black
+with no bloom/scanlines/flicker, larger base text, an un-inverted (readable)
+street basemap, and a distinct high-contrast color for AI-rephrased answers.
+The app also honors the OS **`prefers-reduced-motion`** setting (kills the CRT
+flicker and minimizes transitions), the predictive dropdown and controls
+expose proper ARIA roles/labels, and interactive targets keep a ≥40px touch
+size. The retro green look remains the default and identity; high-contrast is
+opt-in.
+
 ## Nearest stop to anywhere
 
 `nearest stop to Springstead High School` (or "closest bus stop near
@@ -785,19 +847,36 @@ rider only cares about one county. Real-time bus tracking is gated per
 selection (see below) -- switching to a county with no live feed says
 so honestly instead of leaving "CONNECTING..." up forever.
 
-**Scope note**: real-time positions cover Hernando + Pasco; **HART has
-no live source wired in yet**. HART has an official, documented
-GTFS-Realtime feed via Swiftly (`https://api.goswift.ly/real-time/
-tampa/gtfs-rt-vehicle-positions`, plus a separate trip-updates
-endpoint) -- the "correct" path rather than reverse-engineering. The
-API key request has been submitted via Swiftly's form
-(`goswift.ly/realtime-api-key`) -- Swiftly says to allow up to 5
-business days before following up at support@goswift.ly. Once the key
-arrives: standard GTFS-RT is protobuf-encoded, not plain JSON like
-Passio/Avail, so consuming it should use MobilityData's official
-`gtfs-realtime-bindings` npm package rather than a hand-rolled parser --
-unlike Passio/Avail, this is a real published spec, not an undocumented
-vendor shape needing defensive field-name guessing.
+**Scope note**: real-time positions cover all three agencies --
+Hernando (Passio), Pasco (Avail/myStop), and **HART via Swiftly's
+official real-time API** (`src/swiftlyRealtime.js`). HART's source is
+the one that's a documented, key-authenticated vendor API rather than a
+reverse-engineered web-widget endpoint -- HART is Swiftly's customer, so
+this is the sanctioned path. It's gated on a configured key
+(`SWIFTLY_API_KEY`, see `.env.example`): with no key set, HART still
+draws routes/stops but no live buses (the map says "LIVE TRACKER
+UNAVAILABLE" for it), exactly the pre-key behavior -- the
+`/api/live-buses` merge only adds HART as a source when the key is
+present, so an unset key never causes a failing poll. Request a key at
+`goswift.ly/realtime-api-key` (Swiftly says allow up to 5 business days;
+follow up at support@goswift.ly).
+
+We consume Swiftly's plain-**JSON** `/real-time/{agency}/vehicles`
+endpoint rather than its protobuf `gtfs-rt-vehicle-positions` feed (this
+section's earlier sketch, from before the key arrived). The JSON path
+adds no dependency (protobuf would pull in MobilityData's
+`gtfs-realtime-bindings` + protobufjs; this backend deliberately stays
+dependency-light, and `passio.js`/`pascoRealtime.js` already establish
+"live vendor feed -> plain JSON -> normalize"), and it returns richer,
+already-decoded data: Swiftly's JSON carries a real per-vehicle `tripId`
+and `routeShortName`, neither of which Passio or Avail provide (the whole
+`vehicleAllocation.js` machinery exists to *reconstruct* the trip_id
+those feeds omit). We normalize Swiftly's response to the exact shared
+bus shape the other two emit, so the client works unchanged, and pass
+`tripId` through for a future pass that could skip trip allocation
+entirely for HART. Swiftly's agency key (the `{agency}` path segment) is
+overridable via `SWIFTLY_HART_AGENCY_KEY` in case HART's key differs from
+the `hart` default -- a one-line env change, never a code change.
 
 ### GPS refinement, vehicle allocation, and trajectory rendering
 
@@ -905,6 +984,197 @@ field-name casings (`Latitude`/`lat`, `Heading`/`CalculatedCourse`/
 real names against a live response during weekday daytime service and
 trim the fallback list down, the same verification MANUAL_TEST_SCRIPT.md
 already asks for on other unconfirmed-until-real-service-hours behavior.
+
+## Trip planning (cross-country)
+
+The offline rule engine plans A→B trips **inside** the bundled tri-county
+dataset (see `queryEngine.js` — "from X to Y" resolved entirely offline).
+For trips that leave that dataset — Tampa to Orlando, Brooksville to
+Atlanta — there's a second, online-only planner.
+
+Rather than build or self-host a nationwide routing engine, TriBus proxies
+**Transitous** (`api.transitous.org`), a free, community-run instance of
+the **MOTIS** engine that aggregates thousands of agency feeds worldwide
+behind one JSON API. `backend/src/tripPlanner.js` geocodes each endpoint
+and calls MOTIS's `/api/v1/plan`, normalizing the result to a compact
+`{ from, to, itineraries[] }` shape; `GET /api/plan?from=…&to=…` exposes
+it. This is the same "proxy a third party through our own backend" pattern
+the live-bus feeds use (`passio.js` / `pascoRealtime.js` /
+`swiftlyRealtime.js`) — the app never makes a cross-origin call, and the
+required Transitous `User-Agent` and result caching live in one place.
+
+Client side (`frontend/www/js/tripPlanner.js`), it's a deliberately
+**explicit, online-only command**: a rider types `PLAN <origin> to
+<destination>` (e.g. `PLAN Tampa to Orlando`). It's kept separate from the
+offline "from X to Y" planner so it never collides with it and only fires
+when the rider clearly wants a long-distance route; offline, it says so
+plainly instead of failing. Itineraries render in the terminal in the same
+retro style as every other answer (walk/bus legs, times, transfers).
+
+Two env knobs, both optional (`backend/.env.example`): `TRANSITOUS_BASE_URL`
+(point at a self-hosted MOTIS instance if you ever outgrow the donated
+service — identical API, no code changes) and `TRIP_PLANNER_USER_AGENT`
+(Transitous requires a meaningful one; set your own contact if you deploy a
+fork). No API key exists or is needed.
+
+There are two ways to reach it: the terminal command `PLAN <origin> to
+<destination>`, and a dedicated **planner panel on the Live Map tab** (the
+`[ PLAN A TRIP ]` button). The panel renders each option as a card (times,
+duration, transfers, per-leg walk/bus detail) and drops **A / B pins** on
+the map, fitting the view to them — a friendlier surface than the terminal
+for a multi-leg journey. It also offers **use-my-location** for the start
+and a from/to **swap**, and it **draws the first option's route lines on
+the map** (walk legs dashed, transit legs solid) plus the A/B pins. The
+leg shapes come from MOTIS as encoded polylines (precision 7), decoded
+server-side (`tripPlanner.js`) into `[[lat,lon],…]` arrays; the client
+draws them behind a plausibility guard (any leg whose points fall outside a
+box around the endpoints is skipped) so a decode/precision mismatch can
+never scatter garbage across the map.
+
+**Corpus-powered place resolution**: before sending an endpoint to
+Transitous's online geocoder, both planner surfaces resolve it against the
+**bundled OSM corpus** (the same `data.places`/`data.roads` +
+transit stops the terminal search engine uses — see below) via
+`frontend/www/js/localPlaces.js`. So a local landmark the online geocoder
+might not know ("Avalon Publix", "Springstead High School") resolves
+instantly and offline to exact coordinates, and only cities/addresses fall
+through to Transitous. The resolver is deliberately conservative (exact
+name/alias or a clear prefix match) so a vague query isn't force-matched to
+a random local road.
+
+**Preferences** (panel checkboxes; persisted on-device via `TheBusStorage`,
+and also applied to the terminal `PLAN` command): fewer transfers, less
+walking, wheelchair-accessible, and **bike/scooter share**. These map to
+MOTIS plan params in `/api/plan` — `maxTransfers`,
+`maxPreTransitTime`/`maxPostTransitTime`, `pedestrianProfile=WHEELCHAIR`,
+and (for shared mobility) adding the GBFS `RENTAL` mode to
+`preTransitModes`/`postTransitModes`/`directModes` (query params
+`maxTransfers`, `maxWalk` minutes, `wheelchair=1`, `rental=1`).
+
+**Multimodal via GBFS**: with bike/scooter share enabled, MOTIS blends
+shared-mobility legs (from any GBFS feed Transitous has for the area) into
+the first-mile/last-mile, so a plan can be "scoot 0.8 mi → bus → walk".
+Rental legs are labeled distinctly ("BIKE/SCOOTER SHARE (system)"), drawn
+in amber on the map, and normalized with their system/form-factor. Because
+the exact mode name could differ across MOTIS versions, the mode is
+configurable (`TRANSITOUS_RENTAL_MODE`, default `RENTAL`) and a
+rental-enabled plan MOTIS rejects **auto-retries walk-only** — so enabling
+shared mobility can only ever add options, never break a plan.
+
+**Saved trips**: a planned text trip can be saved (`[ SAVE THIS TRIP ]`)
+and re-planned in one tap from the panel's SAVED TRIPS list — stored
+on-device, newest-first, de-duped, capped at 12.
+
+**Fares & tickets** (`frontend/www/js/faresInfo.js`): a small curated,
+**bundled** dataset (works offline) with each agency's single-ride price
+where publicly published (HART $2 cash / Flamingo Fares; PascoGo $1.50 /
+Token Transit; Hernando cash + Token Transit — price not published online,
+so it links the official page instead of guessing), how to pay, the
+ticketing app, and the official fares URL, each with a verified date. Two
+surfaces: the terminal command `FARES` (or `FARES HART`), and a footer on a
+planned trip listing the agencies that trip actually uses. No price is ever
+fabricated: where a current fare isn't published, the app says "see
+official page" and links it.
+
+## Real-time alerts & arrival predictions (GTFS-RT)
+
+GTFS-Realtime has three feeds. TriBus consumes all three for HART (via
+Swiftly), each proxied + cached server-side (Swiftly explicitly designs
+these for server-to-server use, not direct browser calls):
+
+- **Vehicle positions** → the live dots on the map (`swiftlyRealtime.js`,
+  `/api/live-buses`).
+- **Service alerts** → detours, cancellations, stop closures
+  (`swiftlyGtfsRt.js`, `/api/service-alerts`). Shown as an amber banner
+  across the top of both tabs (`frontend/www/js/serviceAlerts.js`);
+  deliberately off the green palette so it reads as "pay attention." A
+  rider can dismiss an alert (remembered per-device); a genuinely new one
+  still shows. The banner stays hidden when nothing is active or offline.
+- **Trip updates** → authoritative arrival predictions
+  (`swiftlyGtfsRt.js`, `/api/predictions?stop=`). Surfaced in a stop's map
+  popup: tap a stop and its next few **live** arrivals fold in under the
+  scheduled routes, each with schedule adherence ("3 MIN LATE"). Falls back
+  silently to the schedule offline, or for stops with no live data.
+
+**Follow a route + notifications** (`frontend/www/js/routeAlerts.js`): tap
+a route line on the map to **FOLLOW ALERTS** for it (stored on-device).
+When the alerts feed refreshes, any active alert affecting a followed route
+fires a notification — via the Capacitor LocalNotifications plugin if the
+native shell has it, else the Web Notifications API when permission is
+granted, and always the in-app banner. De-duped by alert id so a
+long-running alert notifies once, not every refresh.
+
+`@capacitor/local-notifications` is now a declared dependency: the Android
+manifest patcher adds `POST_NOTIFICATIONS` (Android 13+), `capacitor.config.json`
+configures the plugin, and `routeAlerts.init()` creates a high-importance
+`service-alerts` notification channel at startup. So on a native build
+(`npm install && npx cap sync android`) followed-route alerts fire as real
+device notifications even when the app is backgrounded; on the web/PWA it
+falls back to the Web Notifications API, and everywhere the in-app banner is
+the guaranteed surface. (True server-push while the app is fully killed
+would additionally need FCM + a server component, which this app still
+doesn't run.)
+
+Both alerts and trip updates are requested as **JSON** (`?format=json`) —
+the standard GTFS-RT `FeedMessage` shape, so no protobuf dependency and no
+vendor guessing (field names normalized defensively for camel/snake case).
+Both are gated on `SWIFTLY_API_KEY`: with no key, the alerts banner stays
+hidden and stop popups show schedule only — exactly the prior behavior.
+Our dataset namespaces stop ids as `<agencyId>:<rawId>`, so the predictions
+endpoint strips that prefix before matching the raw agency stop_id the RT
+feed uses.
+
+## Push notifications server
+
+For alerts that reach a rider while the app is **fully closed**, the backend
+can push via **Firebase Cloud Messaging (FCM)**. It's entirely optional and
+gated on config — with nothing set up, followed-route alerts still work in
+the foreground (local + web notifications), this just adds the closed-app path.
+
+How it works:
+- The client (`@capacitor/push-notifications`, `frontend/www/js/pushClient.js`)
+  registers the device's FCM token and posts it with the rider's followed
+  route ids to `POST /api/push/register` (updated on every follow/unfollow).
+- `src/pushRegistry.js` stores token→routes and the notified-history, behind
+  a pluggable datastore (`src/pushStore.js`): **Postgres when `DATABASE_URL`
+  is set** (so devices survive cold starts, redeploys, and the free-tier
+  teardown), else a JSON file fallback. It keeps a small in-memory cache for
+  fast matching and writes through to the store; the matching itself is pure
+  and datastore-agnostic (`src/pushMatch.js`).
+- A cron (`PUSH_CHECK_CRON`, default every 2 min) runs `checkAndPushAlerts()`:
+  fetch HART's active alerts, find every registered device whose followed
+  routes an alert touches and that hasn't been notified for it yet, and send.
+- `src/push.js` sends via the **FCM HTTP v1 API using Node's built-in crypto**
+  (service-account JWT → OAuth2 token → `messages:send`) — no `firebase-admin`
+  dependency. Dead tokens (FCM 404) are dropped.
+
+Setup (one time):
+1. Create a Firebase project; add an **Android app** with package id
+   `com.savvysecurity.thebus`; download `google-services.json` into
+   `android/app/` and add the Firebase gradle plugin (standard Capacitor
+   push setup), then `npx cap sync android`.
+2. In Firebase → Project settings → Service accounts, **Generate new private
+   key**. Set the whole JSON as the `FCM_SERVICE_ACCOUNT` env var on Render
+   (one line). The server derives the project id from it.
+3. Redeploy. `GET`-ping the service to keep it warm, or use a paid instance —
+   the cron only fires while the instance is awake.
+
+**Keeping it warm**: Render's free tier spins down after ~15 min with no
+inbound requests, which pauses the push (and ETL) crons. The server runs a
+**self-pinger** — every `KEEP_WARM_CRON` (default 10 min) it fetches its own
+public URL (`RENDER_EXTERNAL_URL`, injected automatically; `KEEP_WARM_URL`
+overrides), which counts as inbound traffic and keeps it awake. It only runs
+when a public URL is known, so it never fires locally. An external pinger
+(cron-job.org, UptimeRobot) hitting `/healthz` works too, or use a paid
+instance.
+
+**Durable registry**: attach a Render **PostgreSQL** instance and the
+injected `DATABASE_URL` switches the registry from the file fallback to
+Postgres, so registered devices and notified-history survive cold starts and
+redeploys (tables `push_devices` / `push_notified` are created automatically
+on boot). With both the pinger and Postgres in place, the two free-tier
+limitations above are gone; without them, devices simply re-register on next
+launch and the check resumes on the next request.
 
 ## Keeping the payload lean
 
