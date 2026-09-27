@@ -235,10 +235,14 @@
   let selectedAgencyId = null;
   let countySelectorBuiltForVersion = null;
 
-  // Real-time bus positions (Passio) are Hernando-only today -- see
-  // README's "Live map" scope note. A single, easy-to-extend list here
-  // rather than baking that assumption into liveMap.js itself.
-  const LIVE_TRACKING_AGENCIES = new Set(['hernando', 'pasco']);
+  // Which agencies have a real-time source wired into /api/live-buses:
+  // Hernando (Passio), Pasco (Avail/myStop), and HART (Swiftly's official
+  // API -- active whenever the backend has a Swiftly key configured; when
+  // it doesn't, HART simply reports "LIVE TRACKER UNAVAILABLE" with
+  // routes/stops still shown, no worse than before). A single,
+  // easy-to-extend list here rather than baking that assumption into
+  // liveMap.js itself -- see README's "Live map" scope note.
+  const LIVE_TRACKING_AGENCIES = new Set(['hernando', 'pasco', 'hart']);
 
   function agencyIdsOf(dataset) {
     return dataset && dataset.agencies ? Object.keys(dataset.agencies) : [];
@@ -249,8 +253,8 @@
   // already treat as "no agency filter" (both check `agencyId &&
   // ...`), so this needs no special-casing in either of them: it's
   // just never filtering anything out, and live tracking still runs
-  // normally (Hernando's real buses are still worth showing on the
-  // combined view even though Pasco/HART have none yet).
+  // normally (every agency's real buses are worth showing at once on the
+  // combined view).
   const ALL_COUNTIES = null;
   const ALL_COUNTIES_LABEL = 'TRI-COUNTY';
 

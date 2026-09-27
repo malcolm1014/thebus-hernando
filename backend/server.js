@@ -6,6 +6,7 @@ const config = require('./src/config');
 const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
 const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
+const { fetchLiveBuses: fetchHartLiveBuses } = require('./src/swiftlyRealtime');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { fetchStaticMap } = require('./src/staticmap');
@@ -100,8 +101,9 @@ app.post('/api/refresh', express.json(), async (req, res) => {
  * GET /api/live-buses
  * Merges live vehicle positions from every agency with a working
  * real-time source -- currently Hernando (Passio GO, src/passio.js) and
- * PascoGo (Avail/myStop, src/pascoRealtime.js); HART has no source
- * wired in yet (see README's "Live map" section). Each source is
+ * PascoGo (Avail/myStop, src/pascoRealtime.js); and HART (Swiftly's
+ * official real-time API, src/swiftlyRealtime.js) whenever a Swiftly key
+ * is configured (see config.js / .env.example). Each source is
  * fetched independently via Promise.allSettled so one vendor being
  * down/changed doesn't blank out the other's real buses -- the same
  * "one bad source shouldn't break everything" approach etl.js already
@@ -124,6 +126,12 @@ app.get('/api/live-buses', async (req, res) => {
     { agencyId: 'hernando', fetch: fetchLiveBuses },
     { agencyId: 'pasco', fetch: fetchPascoLiveBuses },
   ];
+  // HART only joins the merge when a Swiftly key is configured -- an
+  // unset key would 401 every poll, so skip the source entirely rather
+  // than adding a guaranteed-failing fetch to Promise.allSettled.
+  if (config.swiftlyApiKey) {
+    sources.push({ agencyId: 'hart', fetch: fetchHartLiveBuses });
+  }
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
 
   let buses = [];

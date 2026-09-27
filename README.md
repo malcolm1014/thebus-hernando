@@ -68,6 +68,12 @@ thebus-hernando/
       pascoRealtime.js          same idea, PascoGo's own real-time vendor
                                (Avail/myStop, a DIFFERENT vendor than
                                Passio -- see "Live map" below)
+      swiftlyRealtime.js        proxies HART's (Tampa) real-time feed via
+                               Swiftly's OFFICIAL, key-authenticated JSON
+                               API -- the one live source that isn't
+                               reverse-engineered; only wired into
+                               /api/live-buses when SWIFTLY_API_KEY is set
+                               (see "Live map" below)
       geocode.js                proxies OpenStreetMap Nominatim to resolve
                                a place name ("Springstead High School") to
                                coordinates for "nearest stop to X" queries
@@ -188,7 +194,7 @@ different timezone were ever added.
 cd backend
 npm install
 cp .env.example .env        # GTFS_FEED_URL is already filled in and verified live; set REFRESH_SECRET
-npm test                    # 21 unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, passio.js response shaping, shape-polyline simplification
+npm test                    # unit tests: transform.js, gtfsParse.js, ETL broken-feed guard, live-feed response shaping (passio.js / pascoRealtime.js / swiftlyRealtime.js), shape-polyline simplification
 npm run etl                 # one-off: pull the feed, write data/transit_data.json
 npm start                   # serve /api/version + /api/download on :3000
 ```
@@ -785,19 +791,36 @@ rider only cares about one county. Real-time bus tracking is gated per
 selection (see below) -- switching to a county with no live feed says
 so honestly instead of leaving "CONNECTING..." up forever.
 
-**Scope note**: real-time positions cover Hernando + Pasco; **HART has
-no live source wired in yet**. HART has an official, documented
-GTFS-Realtime feed via Swiftly (`https://api.goswift.ly/real-time/
-tampa/gtfs-rt-vehicle-positions`, plus a separate trip-updates
-endpoint) -- the "correct" path rather than reverse-engineering. The
-API key request has been submitted via Swiftly's form
-(`goswift.ly/realtime-api-key`) -- Swiftly says to allow up to 5
-business days before following up at support@goswift.ly. Once the key
-arrives: standard GTFS-RT is protobuf-encoded, not plain JSON like
-Passio/Avail, so consuming it should use MobilityData's official
-`gtfs-realtime-bindings` npm package rather than a hand-rolled parser --
-unlike Passio/Avail, this is a real published spec, not an undocumented
-vendor shape needing defensive field-name guessing.
+**Scope note**: real-time positions cover all three agencies --
+Hernando (Passio), Pasco (Avail/myStop), and **HART via Swiftly's
+official real-time API** (`src/swiftlyRealtime.js`). HART's source is
+the one that's a documented, key-authenticated vendor API rather than a
+reverse-engineered web-widget endpoint -- HART is Swiftly's customer, so
+this is the sanctioned path. It's gated on a configured key
+(`SWIFTLY_API_KEY`, see `.env.example`): with no key set, HART still
+draws routes/stops but no live buses (the map says "LIVE TRACKER
+UNAVAILABLE" for it), exactly the pre-key behavior -- the
+`/api/live-buses` merge only adds HART as a source when the key is
+present, so an unset key never causes a failing poll. Request a key at
+`goswift.ly/realtime-api-key` (Swiftly says allow up to 5 business days;
+follow up at support@goswift.ly).
+
+We consume Swiftly's plain-**JSON** `/real-time/{agency}/vehicles`
+endpoint rather than its protobuf `gtfs-rt-vehicle-positions` feed (this
+section's earlier sketch, from before the key arrived). The JSON path
+adds no dependency (protobuf would pull in MobilityData's
+`gtfs-realtime-bindings` + protobufjs; this backend deliberately stays
+dependency-light, and `passio.js`/`pascoRealtime.js` already establish
+"live vendor feed -> plain JSON -> normalize"), and it returns richer,
+already-decoded data: Swiftly's JSON carries a real per-vehicle `tripId`
+and `routeShortName`, neither of which Passio or Avail provide (the whole
+`vehicleAllocation.js` machinery exists to *reconstruct* the trip_id
+those feeds omit). We normalize Swiftly's response to the exact shared
+bus shape the other two emit, so the client works unchanged, and pass
+`tripId` through for a future pass that could skip trip allocation
+entirely for HART. Swiftly's agency key (the `{agency}` path segment) is
+overridable via `SWIFTLY_HART_AGENCY_KEY` in case HART's key differs from
+the `hart` default -- a one-line env change, never a code change.
 
 ### GPS refinement, vehicle allocation, and trajectory rendering
 

@@ -25,3 +25,12 @@ services:
         sync: false
       - key: ETL_CRON
         sync: false
+      # HART live vehicle positions via Swiftly's official real-time API
+      # (see backend/.env.example). Optional -- leave unset and HART just
+      # shows routes/stops with no live buses. SWIFTLY_HART_AGENCY_KEY is
+      # only needed if HART's Swiftly agency key differs from the 'hart'
+      # default.
+      - key: SWIFTLY_API_KEY
+        sync: false
+      - key: SWIFTLY_HART_AGENCY_KEY
+        sync: false
