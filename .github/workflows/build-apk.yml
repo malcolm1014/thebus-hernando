@@ -21,6 +21,8 @@ jobs:
     # instead, which CAN read secrets.
     env:
       HAS_RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+      # Same secrets-can't-be-referenced-in-`if:` reasoning as above.
+      HAS_GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +69,17 @@ jobs:
 
       - name: Sync web assets into the native project
         run: npx cap sync android
+
+      - name: Wire in Firebase for push notifications (only if configured)
+        # Writes google-services.json + ensures the Gradle wiring so
+        # @capacitor/push-notifications can deliver server pushes. Gated on
+        # the GOOGLE_SERVICES_JSON secret: with it unset the script no-ops
+        # and the build is unaffected (push stays inert). Set the secret in
+        # Settings -> Secrets and variables -> Actions to enable.
+        if: ${{ env.HAS_GOOGLE_SERVICES == 'true' }}
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: node scripts/patch-firebase.js
 
       - name: Pin debug signing to a fixed keystore
         # Without this, the Android Gradle Plugin's IMPLICIT debug
