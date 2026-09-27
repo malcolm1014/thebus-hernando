@@ -85,6 +85,10 @@ module.exports = {
   // only wires HART in when a key is present, so an unset key never
   // causes a failing request. Request a key at goswift.ly/realtime-api-key.
   swiftlyApiKey: process.env.SWIFTLY_API_KEY,
+  // Swiftly's real-time API host -- shared by the vehicle-positions,
+  // service-alerts, and trip-updates (predictions) feeds. Overridable
+  // mainly for testing; there's no reason to change it in production.
+  swiftlyBaseUrl: process.env.SWIFTLY_BASE_URL || 'https://api.goswift.ly',
   // Swiftly namespaces every agency by its own key (NOT our internal
   // 'hart' agencyId). Confirm the exact value in your Swiftly dashboard
   // / onboarding email -- it's overridable here so a wrong guess is a

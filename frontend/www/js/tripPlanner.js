@@ -123,5 +123,38 @@
     return formatResult(result);
   }
 
-  global.TheBusTripPlanner = { parseCommand, plan, formatResult };
+  /**
+   * Like plan(), but returns structured data for the Live Map's planner
+   * panel to render as real DOM (option cards, tappable legs) instead of
+   * terminal text. Resolves to { error } or { result } -- never throws.
+   */
+  async function planStructured(origin, dest) {
+    if (!global.navigator || !navigator.onLine) {
+      return { error: 'TRIP PLANNING NEEDS A CONNECTION.' };
+    }
+    const base = global.TheBusSync && TheBusSync.API_BASE ? TheBusSync.API_BASE : '';
+    const url = `${base}/api/plan?from=${encodeURIComponent(origin)}&to=${encodeURIComponent(dest)}`;
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      return { error: 'COULD NOT REACH THE TRIP PLANNER. CHECK YOUR CONNECTION.' };
+    }
+    if (res.status === 422) {
+      let which = '';
+      try { const b = await res.json(); which = b && b.text ? ` ("${String(b.text).toUpperCase()}")` : ''; } catch (e) { /* ignore */ }
+      return { error: `COULDN'T FIND ONE OF THOSE PLACES${which}. TRY A CITY OR LANDMARK.` };
+    }
+    if (!res.ok) return { error: 'TRIP PLANNER UNAVAILABLE RIGHT NOW. TRY AGAIN IN A MOMENT.' };
+    try {
+      return { result: await res.json() };
+    } catch (err) {
+      return { error: 'TRIP PLANNER RETURNED SOMETHING UNEXPECTED.' };
+    }
+  }
+
+  // Small formatting helpers the panel renderer reuses.
+  const format = { time: fmtTime, duration: fmtDuration, modeLabel };
+
+  global.TheBusTripPlanner = { parseCommand, plan, planStructured, formatResult, format };
 })(typeof window !== 'undefined' ? window : this);

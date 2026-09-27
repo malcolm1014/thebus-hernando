@@ -75,6 +75,26 @@ test('plan() formats a successful backend response', async () => {
   }
 });
 
+test('planStructured() returns { result } on success and { error } on failure', async () => {
+  const prevOnline = global.navigator.onLine;
+  const prevFetch = global.fetch;
+  global.navigator.onLine = true;
+  try {
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ from: { name: 'A' }, to: { name: 'B' }, itineraries: [] }) });
+    const ok = await TheBusTripPlanner.planStructured('A', 'B');
+    assert.ok(ok.result && Array.isArray(ok.result.itineraries));
+    assert.equal(ok.error, undefined);
+
+    global.fetch = async () => ({ ok: false, status: 502, json: async () => ({}) });
+    const bad = await TheBusTripPlanner.planStructured('A', 'B');
+    assert.match(bad.error, /UNAVAILABLE/);
+    assert.equal(bad.result, undefined);
+  } finally {
+    global.navigator.onLine = prevOnline;
+    global.fetch = prevFetch;
+  }
+});
+
 test('plan() gives a friendly message when a place cannot be found (422)', async () => {
   const prevOnline = global.navigator.onLine;
   const prevFetch = global.fetch;

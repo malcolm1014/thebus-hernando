@@ -450,6 +450,118 @@
   tabTerminal.addEventListener('click', showTerminal);
   tabMap.addEventListener('click', showMap);
 
+  // ---- Service alerts banner (GTFS-RT via /api/service-alerts) ----
+  // Independent of dataset/map init: fetches active alerts when online and
+  // shows them across the top of both tabs; stays hidden otherwise.
+  TheBusServiceAlerts.init(document.getElementById('alerts-banner'));
+
+  // ---- Live Map trip planner panel (Transitous via /api/plan) ----
+  (function setupTripPlannerPanel() {
+    const toggle = document.getElementById('plan-trip-toggle');
+    const panel = document.getElementById('trip-planner-panel');
+    const closeBtn = document.getElementById('tp-close');
+    const fromInput = document.getElementById('tp-from');
+    const toInput = document.getElementById('tp-to');
+    const goBtn = document.getElementById('tp-go');
+    const results = document.getElementById('tp-results');
+    if (!toggle || !panel) return;
+
+    function setMsg(text) {
+      results.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'tp-msg';
+      d.textContent = text;
+      results.appendChild(d);
+    }
+
+    function openPanel() {
+      panel.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      fromInput.focus();
+    }
+    function closePanel() {
+      panel.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    toggle.addEventListener('click', () => (panel.hidden ? openPanel() : closePanel()));
+    closeBtn.addEventListener('click', closePanel);
+
+    function renderResult(result) {
+      results.textContent = '';
+      const fmt = TheBusTripPlanner.format;
+      const head = document.createElement('div');
+      head.className = 'tp-route-head';
+      const fromName = (result.from && result.from.name ? result.from.name : 'START').toUpperCase();
+      const toName = (result.to && result.to.name ? result.to.name : 'DESTINATION').toUpperCase();
+      head.textContent = `${fromName} -> ${toName}`;
+      results.appendChild(head);
+
+      // Drop A/B pins on the map and frame them.
+      if (result.from && result.to && TheBusLiveMap.showTripEndpoints) {
+        TheBusLiveMap.showTripEndpoints(result.from, result.to);
+      }
+
+      const itins = result.itineraries || [];
+      if (itins.length === 0) {
+        const d = document.createElement('div');
+        d.className = 'tp-msg';
+        d.textContent = 'NO TRANSIT ROUTE FOUND BETWEEN THOSE TWO PLACES.';
+        results.appendChild(d);
+        return;
+      }
+
+      itins.forEach((it, i) => {
+        const opt = document.createElement('div');
+        opt.className = 'tp-option';
+        const meta = document.createElement('div');
+        meta.className = 'tp-option-meta';
+        const transfers = it.transfers === 0 ? 'DIRECT'
+          : (it.transfers != null ? `${it.transfers} TRANSFER${it.transfers === 1 ? '' : 'S'}` : '');
+        const parts = [fmt.duration(it.durationMinutes), transfers].filter(Boolean).join(', ');
+        meta.textContent = `OPTION ${i + 1}: ${fmt.time(it.departure)} -> ${fmt.time(it.arrival)}${parts ? '  (' + parts + ')' : ''}`;
+        opt.appendChild(meta);
+
+        (it.legs || []).forEach((leg) => {
+          const isWalk = (leg.mode || '').toUpperCase() === 'WALK';
+          const row = document.createElement('div');
+          row.className = 'tp-leg';
+          if (isWalk) {
+            const dist = leg.distanceMeters != null ? ` ${(leg.distanceMeters / 1609.34).toFixed(2)} MI` : '';
+            row.textContent = `WALK${dist}${leg.to ? ' TO ' + leg.to.toUpperCase() : ''}`;
+            opt.appendChild(row);
+          } else {
+            row.textContent = `${fmt.modeLabel(leg)}${leg.headsign ? ' -> ' + leg.headsign.toUpperCase() : ''}`;
+            opt.appendChild(row);
+            const times = document.createElement('div');
+            times.className = 'tp-leg-time';
+            times.textContent = `${(leg.from || '').toUpperCase()} ${fmt.time(leg.departure)} -> ${(leg.to || '').toUpperCase()} ${fmt.time(leg.arrival)}`;
+            opt.appendChild(times);
+          }
+        });
+        results.appendChild(opt);
+      });
+    }
+
+    async function runPlan() {
+      const from = fromInput.value.trim();
+      const to = toInput.value.trim();
+      if (!from || !to) { setMsg('ENTER BOTH A START AND A DESTINATION.'); return; }
+      goBtn.disabled = true;
+      goBtn.textContent = '[ PLANNING... ]';
+      setMsg('PLANNING...');
+      const outcome = await TheBusTripPlanner.planStructured(from, to);
+      goBtn.disabled = false;
+      goBtn.textContent = '[ PLAN ]';
+      if (outcome.error) { setMsg(outcome.error); return; }
+      renderResult(outcome.result);
+    }
+
+    goBtn.addEventListener('click', runPlan);
+    [fromInput, toInput].forEach((el) => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); runPlan(); }
+    }));
+  })();
+
   // iOS Safari shrinks the *visual* viewport (not the layout viewport)
   // when the on-screen keyboard opens, which `height: 100%` doesn't
   // track on its own -- the input line can end up hidden behind the

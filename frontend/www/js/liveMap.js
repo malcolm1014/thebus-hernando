@@ -19,6 +19,7 @@
   let routeLayerGroup = null;
   let stopLayerGroup = null;
   let busLayerGroup = null;
+  let tripLayerGroup = null; // start/end markers for a planned trip (Live Map planner)
   let pollTimer = null;
   let currentPollIntervalMs = 10000;
   let currentDataset = null;
@@ -70,10 +71,16 @@
     routeLayerGroup = L.layerGroup().addTo(map);
     stopLayerGroup = L.layerGroup().addTo(map);
     busLayerGroup = L.layerGroup().addTo(map);
+    tripLayerGroup = L.layerGroup().addTo(map);
 
     // Trajectory rendering: clicking empty map background resets the
     // "highlight one route" state set by clickRouteToHighlight below.
     map.on('click', () => setHighlightedRoute(null));
+
+    // Live arrival predictions (GTFS-RT trip updates): when a rider opens a
+    // stop's popup, fetch that stop's next live arrivals and fold them in.
+    // Delegated once here rather than a handler per (thousands of) markers.
+    map.on('popupopen', (e) => augmentStopPopup(e.popup));
 
     return map;
   }
@@ -157,7 +164,11 @@
         fillOpacity: 0.9,
       }).addTo(stopLayerGroup);
       const routesHere = stop.routes.map((r) => r.shortName || r.longName).filter(Boolean).join(', ') || 'NONE';
-      marker.bindPopup(`<strong>${escapeHtml(stop.name.toUpperCase())}</strong><br/>ROUTES: ${escapeHtml(routesHere.toUpperCase())}`);
+      const baseHtml = `<strong>${escapeHtml(stop.name.toUpperCase())}</strong><br/>ROUTES: ${escapeHtml(routesHere.toUpperCase())}`;
+      marker.bindPopup(baseHtml);
+      // Stashed so the delegated popupopen handler can fetch live arrivals
+      // for this specific stop and rebuild the popup around the base text.
+      marker._stopInfo = { id: stop.id, baseHtml };
       bounds.push([stop.lat, stop.lon]);
     }
 
@@ -496,5 +507,70 @@
     });
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, __setNowForTesting };
+  // --- Live arrival predictions in stop popups (GTFS-RT trip updates) ---
+  function routeShortNameFor(routeId) {
+    if (!currentDataset || !currentDataset.routes || routeId == null) return routeId;
+    // Predictions carry the agency's raw route_id; our routes are keyed as
+    // `<agencyId>:<routeId>`. Only HART has a predictions feed today, so
+    // that's the namespace to look under.
+    const r = currentDataset.routes[`hart:${routeId}`];
+    return (r && (r.shortName || r.longName)) ? (r.shortName || r.longName) : routeId;
+  }
+
+  async function fetchStopPredictions(stopId) {
+    if (!global.navigator || !navigator.onLine) return [];
+    const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    try {
+      const res = await fetch(`${base}/api/predictions?stop=${encodeURIComponent(stopId)}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data.predictions) ? data.predictions : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** On popupopen, fold this stop's next live arrivals into its popup (leaves the base popup untouched if there are none, or offline). */
+  async function augmentStopPopup(popup) {
+    const marker = popup && popup._source;
+    const info = marker && marker._stopInfo;
+    if (!info) return;
+    if (!global.navigator || !navigator.onLine) return; // schedule-only popup offline
+    const predictions = await fetchStopPredictions(info.id);
+    if (!predictions.length) return; // no live data (offline, non-HART stop, or nothing due) -> keep the schedule-only popup
+    const lines = predictions.slice(0, 4).map((p) => {
+      const route = escapeHtml(String(routeShortNameFor(p.routeId)).toUpperCase());
+      const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
+      return `RT ${route}: ${mins}`;
+    });
+    popup.setContent(`${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`);
+  }
+
+  // --- Trip planner endpoints (Live Map planner) ------------------------
+  function clearTripEndpoints() {
+    if (tripLayerGroup) tripLayerGroup.clearLayers();
+  }
+
+  /** Drops start/end markers for a planned trip and fits the map to them. */
+  function showTripEndpoints(from, to) {
+    if (!map || !tripLayerGroup) return;
+    clearTripEndpoints();
+    const pts = [];
+    [[from, 'A'], [to, 'B']].forEach(([pt, letter]) => {
+      if (!pt || pt.lat == null || pt.lon == null) return;
+      const icon = L.divIcon({
+        className: 'trip-endpoint',
+        html: `<div class="trip-endpoint-dot">${letter}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+      L.marker([pt.lat, pt.lon], { icon })
+        .bindPopup(`<strong>${escapeHtml((pt.name || '').toUpperCase())}</strong>`)
+        .addTo(tripLayerGroup);
+      pts.push([pt.lat, pt.lon]);
+    });
+    if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 14 });
+  }
+
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, showTripEndpoints, clearTripEndpoints, __setNowForTesting };
 })(window);

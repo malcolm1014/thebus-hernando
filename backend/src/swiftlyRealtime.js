@@ -34,7 +34,8 @@
 
 const config = require('./config');
 
-const SWIFTLY_BASE = 'https://api.goswift.ly';
+// Shared with the alerts/trip-updates feeds via config (src/swiftlyGtfsRt.js).
+const SWIFTLY_BASE = config.swiftlyBaseUrl || 'https://api.goswift.ly';
 
 // Short in-memory cache, same size and reasoning as passio.js /
 // pascoRealtime.js: a burst of riders opening the map only costs Swiftly

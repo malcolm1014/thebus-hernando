@@ -28,6 +28,11 @@
         <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
       </div>
 
+      <!-- Active GTFS-Realtime service alerts (detours/closures), shown on
+           both the terminal and map tabs. Populated by serviceAlerts.js;
+           stays hidden when there's nothing active or no connection. -->
+      <div id="alerts-banner" role="region" aria-label="Service alerts" aria-live="polite" hidden></div>
+
       <div id="view-tabs" role="tablist">
         <button type="button" id="tab-terminal" class="view-tab active" role="tab" aria-selected="true">[ TERMINAL ]</button>
         <button type="button" id="tab-map" class="view-tab" role="tab" aria-selected="false">[ LIVE MAP ]</button>
@@ -66,6 +71,25 @@
         <div id="county-selector" hidden role="tablist" aria-label="Select county map"></div>
         <button type="button" id="map-status" aria-expanded="false" aria-controls="bus-list-panel">CONNECTING TO LIVE TRACKER...</button>
         <div id="bus-list-panel" hidden></div>
+
+        <!-- Cross-country trip planner (Transitous/MOTIS via /api/plan).
+             Toggle bottom-right so it clears the zoom control (top-left),
+             county selector (top-right) and bus-count status (bottom-left). -->
+        <button type="button" id="plan-trip-toggle" aria-expanded="false" aria-controls="trip-planner-panel">[ PLAN A TRIP ]</button>
+        <div id="trip-planner-panel" hidden role="dialog" aria-label="Plan a trip">
+          <div class="tp-header">
+            <span>PLAN A TRIP</span>
+            <button type="button" id="tp-close" class="tp-close" aria-label="Close">X</button>
+          </div>
+          <label class="tp-field">FROM
+            <input type="text" id="tp-from" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+          </label>
+          <label class="tp-field">TO
+            <input type="text" id="tp-to" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+          </label>
+          <button type="button" id="tp-go" class="tp-go">[ PLAN ]</button>
+          <div id="tp-results" aria-live="polite"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -128,6 +152,7 @@
   <script src="js/searchIndex.js"></script>
   <script src="js/queryEngine.js"></script>
   <script src="js/tripPlanner.js"></script>
+  <script src="js/serviceAlerts.js"></script>
   <script src="js/geoMath.js"></script>
   <script src="js/vehicleAllocation.js"></script>
   <script src="js/liveMap.js"></script>

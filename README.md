@@ -68,12 +68,17 @@ thebus-hernando/
       pascoRealtime.js          same idea, PascoGo's own real-time vendor
                                (Avail/myStop, a DIFFERENT vendor than
                                Passio -- see "Live map" below)
-      swiftlyRealtime.js        proxies HART's (Tampa) real-time feed via
-                               Swiftly's OFFICIAL, key-authenticated JSON
-                               API -- the one live source that isn't
-                               reverse-engineered; only wired into
-                               /api/live-buses when SWIFTLY_API_KEY is set
-                               (see "Live map" below)
+      swiftlyRealtime.js        proxies HART's (Tampa) real-time VEHICLE
+                               POSITIONS via Swiftly's OFFICIAL,
+                               key-authenticated JSON API -- the one live
+                               source that isn't reverse-engineered; only
+                               wired into /api/live-buses when
+                               SWIFTLY_API_KEY is set (see "Live map" below)
+      swiftlyGtfsRt.js          HART's other two GTFS-Realtime feeds via
+                               Swiftly -- SERVICE ALERTS and TRIP UPDATES
+                               (arrival predictions), requested as JSON
+                               (?format=json, no protobuf dep); backs
+                               GET /api/service-alerts + GET /api/predictions
       geocode.js                proxies OpenStreetMap Nominatim to resolve
                                a place name ("Springstead High School") to
                                coordinates for "nearest stop to X" queries
@@ -83,7 +88,8 @@ thebus-hernando/
                                see "Trip planning" below) -- geocode + plan,
                                normalized to a compact itinerary shape
     server.js                 GET /api/version, GET /api/download,
-                               GET /api/live-buses, GET /api/geocode,
+                               GET /api/live-buses, GET /api/service-alerts,
+                               GET /api/predictions, GET /api/geocode,
                                GET /api/plan, POST /api/refresh (secret-protected)
     test/                     node --test unit tests (transform, gtfsParse, ETL safety check,
                                passio shaping, shape-polyline simplification) -- also run in CI
@@ -965,6 +971,42 @@ Two env knobs, both optional (`backend/.env.example`): `TRANSITOUS_BASE_URL`
 service — identical API, no code changes) and `TRIP_PLANNER_USER_AGENT`
 (Transitous requires a meaningful one; set your own contact if you deploy a
 fork). No API key exists or is needed.
+
+There are two ways to reach it: the terminal command `PLAN <origin> to
+<destination>`, and a dedicated **planner panel on the Live Map tab** (the
+`[ PLAN A TRIP ]` button). The panel renders each option as a card (times,
+duration, transfers, per-leg walk/bus detail) and drops **A / B pins** on
+the map, fitting the view to them — a friendlier surface than the terminal
+for a multi-leg journey.
+
+## Real-time alerts & arrival predictions (GTFS-RT)
+
+GTFS-Realtime has three feeds. TriBus consumes all three for HART (via
+Swiftly), each proxied + cached server-side (Swiftly explicitly designs
+these for server-to-server use, not direct browser calls):
+
+- **Vehicle positions** → the live dots on the map (`swiftlyRealtime.js`,
+  `/api/live-buses`).
+- **Service alerts** → detours, cancellations, stop closures
+  (`swiftlyGtfsRt.js`, `/api/service-alerts`). Shown as an amber banner
+  across the top of both tabs (`frontend/www/js/serviceAlerts.js`);
+  deliberately off the green palette so it reads as "pay attention." A
+  rider can dismiss an alert (remembered per-device); a genuinely new one
+  still shows. The banner stays hidden when nothing is active or offline.
+- **Trip updates** → authoritative arrival predictions
+  (`swiftlyGtfsRt.js`, `/api/predictions?stop=`). Surfaced in a stop's map
+  popup: tap a stop and its next few **live** arrivals fold in under the
+  scheduled routes. Falls back silently to the schedule offline, or for
+  stops with no live data.
+
+Both alerts and trip updates are requested as **JSON** (`?format=json`) —
+the standard GTFS-RT `FeedMessage` shape, so no protobuf dependency and no
+vendor guessing (field names normalized defensively for camel/snake case).
+Both are gated on `SWIFTLY_API_KEY`: with no key, the alerts banner stays
+hidden and stop popups show schedule only — exactly the prior behavior.
+Our dataset namespaces stop ids as `<agencyId>:<rawId>`, so the predictions
+endpoint strips that prefix before matching the raw agency stop_id the RT
+feed uses.
 
 ## Keeping the payload lean
 

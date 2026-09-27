@@ -7,6 +7,7 @@ const { runEtl } = require('./src/etl');
 const { fetchLiveBuses } = require('./src/passio');
 const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
 const { fetchLiveBuses: fetchHartLiveBuses } = require('./src/swiftlyRealtime');
+const { fetchServiceAlerts, predictionsForStop } = require('./src/swiftlyGtfsRt');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { planTrip, PlaceNotFoundError } = require('./src/tripPlanner');
@@ -39,6 +40,11 @@ const enhanceAnswerRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 
 // keep this tight -- one plan per rider tap is plenty under 15/min, and
 // tripPlanner.js also caches results to absorb bursts.
 const planRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 15 });
+// Alerts/predictions are backed by a server-side cache (see
+// swiftlyGtfsRt.js), so most requests never hit Swiftly -- these caps just
+// bound abuse of the public endpoints.
+const alertsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
+const predictionsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 
 let etlRunning = false;
 
@@ -155,6 +161,54 @@ app.get('/api/live-buses', async (req, res) => {
     return res.status(502).json({ error: 'live bus data unavailable' });
   }
   res.json({ buses, fetchedAt: new Date().toISOString() });
+});
+
+/**
+ * GET /api/service-alerts
+ * Active GTFS-Realtime service alerts (detours, cancellations, stop
+ * closures) for HART, via Swiftly (src/swiftlyGtfsRt.js). Only HART
+ * publishes an alerts feed to us today, and only when a Swiftly key is
+ * configured -- with no key this returns an empty list (HTTP 200) rather
+ * than an error, so the client's banner simply stays hidden, same as
+ * before this feature existed.
+ */
+app.get('/api/service-alerts', alertsRateLimit, async (req, res) => {
+  if (!config.swiftlyApiKey) {
+    return res.json({ alerts: [], fetchedAt: new Date().toISOString() });
+  }
+  try {
+    const result = await fetchServiceAlerts(config.swiftlyHartAgencyKey);
+    res.json(result);
+  } catch (err) {
+    console.error('[server] service-alerts fetch failed:', err);
+    res.status(502).json({ error: 'service alerts unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/predictions?stop=<stopId>
+ * Live arrival predictions (GTFS-Realtime trip updates) for one stop, via
+ * Swiftly (src/swiftlyGtfsRt.js). `stop` may be our namespaced id
+ * ("hart:1234") or the raw agency id ("1234"). Returns upcoming arrivals
+ * soonest-first; an empty list (HTTP 200) means "no live prediction for
+ * this stop right now" (no key configured, stop not in the feed, or
+ * nothing due), which the client treats as "fall back to the schedule".
+ */
+app.get('/api/predictions', predictionsRateLimit, async (req, res) => {
+  const stop = (req.query.stop || '').toString().trim();
+  if (!stop) {
+    return res.status(400).json({ error: 'missing required query parameter: stop' });
+  }
+  if (!config.swiftlyApiKey) {
+    return res.json({ stopId: stop, predictions: [], fetchedAt: new Date().toISOString() });
+  }
+  try {
+    const result = await predictionsForStop(config.swiftlyHartAgencyKey, stop);
+    res.json(result);
+  } catch (err) {
+    console.error('[server] predictions fetch failed:', err);
+    res.status(502).json({ error: 'predictions unavailable', message: err.message });
+  }
 });
 
 /**
