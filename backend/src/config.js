@@ -95,6 +95,16 @@ module.exports = {
   // 403 on every feed. Still overridable via env in case Swiftly ever
   // renames it, so a change stays a one-line env edit, never a code change.
   swiftlyHartAgencyKey: process.env.SWIFTLY_HART_AGENCY_KEY || 'tampa',
+  // Swiftly's service-alerts feed path. HART publishes GTFS-RT V2 alerts
+  // whose "informed entity" fields the legacy `gtfs-rt-alerts` JSON
+  // serializer can't represent -- requesting that path returns
+  // HTTP 400 "Cannot convert V2 informed entity to V1 format". Swiftly's
+  // versioned `gtfs-rt-alerts/v2` endpoint serves the V2 shape directly, so
+  // that's the default. swiftlyGtfsRt.js falls back to the legacy path if
+  // this one ever fails, so a wrong value self-heals; overridable here in
+  // case Swiftly changes the path again. (Trip-updates need no /v2 -- they
+  // have no V2-informed-entity problem -- so only alerts is versioned.)
+  swiftlyAlertsPath: process.env.SWIFTLY_ALERTS_PATH || 'gtfs-rt-alerts/v2',
 
   // Cross-agency / cross-country trip planning (src/tripPlanner.js). We
   // proxy the free, community-run Transitous instance of the MOTIS

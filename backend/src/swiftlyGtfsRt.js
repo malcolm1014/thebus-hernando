@@ -71,6 +71,9 @@ async function fetchFeed(pathSegment, agencyKey) {
 
 /** The FeedMessage's entity[] array, across the couple of spellings a serializer might use. */
 function entitiesOf(feed) {
+  // Tolerate a bare top-level array too: some Swiftly JSON serializations
+  // return the entity list directly rather than wrapped in a FeedMessage.
+  if (Array.isArray(feed)) return feed;
   const entities = pick(feed, ['entity', 'entities']);
   return Array.isArray(entities) ? entities : [];
 }
@@ -119,12 +122,46 @@ function isAlertActive(alert, nowSecs) {
   });
 }
 
+/**
+ * Alert-feed paths to try, in order. The configured V2 path first
+ * (HART's alerts need it -- see config.swiftlyAlertsPath), then the legacy
+ * `gtfs-rt-alerts` path as a fallback so a wrong/renamed V2 path degrades
+ * to the old behavior instead of failing outright. Deduped so a deploy
+ * that sets SWIFTLY_ALERTS_PATH=gtfs-rt-alerts doesn't fetch twice.
+ */
+function alertsCandidatePaths() {
+  const primary = config.swiftlyAlertsPath || 'gtfs-rt-alerts/v2';
+  return primary === 'gtfs-rt-alerts' ? [primary] : [primary, 'gtfs-rt-alerts'];
+}
+
+/** Fetch the alerts feed, trying each candidate path until one succeeds. */
+async function fetchAlertsFeed(key) {
+  // Mirror fetchFeed's guard so we fail fast (and make no request) with a
+  // clear message rather than looping over paths when unconfigured.
+  if (!config.swiftlyApiKey) throw new Error('Swiftly API key not configured (SWIFTLY_API_KEY)');
+  const paths = alertsCandidatePaths();
+  let lastErr = null;
+  for (let i = 0; i < paths.length; i++) {
+    try {
+      const feed = await fetchFeed(paths[i], key);
+      if (i > 0) console.warn(`[swiftly] alerts: primary path failed; succeeded on fallback "${paths[i]}"`);
+      return feed;
+    } catch (err) {
+      lastErr = err;
+      if (i < paths.length - 1) {
+        console.warn(`[swiftly] alerts path "${paths[i]}" failed (${err.message}); trying fallback "${paths[i + 1]}"...`);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchServiceAlerts(agencyKey, now = Date.now()) {
   const key = agencyKey || config.swiftlyHartAgencyKey;
   const cached = alertsCache.get(key);
   if (cached && now < cached.expiresAt) return cached.data;
 
-  const feed = await fetchFeed('gtfs-rt-alerts', key);
+  const feed = await fetchAlertsFeed(key);
   const nowSecs = Math.floor(now / 1000);
   const alerts = entitiesOf(feed)
     .map(normalizeAlert)
