@@ -77,10 +77,14 @@
     // "highlight one route" state set by clickRouteToHighlight below.
     map.on('click', () => setHighlightedRoute(null));
 
-    // Live arrival predictions (GTFS-RT trip updates): when a rider opens a
-    // stop's popup, fetch that stop's next live arrivals and fold them in.
-    // Delegated once here rather than a handler per (thousands of) markers.
-    map.on('popupopen', (e) => augmentStopPopup(e.popup));
+    // Delegated popup handler (one listener, not one per marker/line):
+    // route lines get a follow-alerts toggle; stop markers get live
+    // arrival predictions folded in.
+    map.on('popupopen', (e) => {
+      const src = e.popup && e.popup._source;
+      if (src && src._routeInfo) buildRoutePopup(e.popup, src._routeInfo);
+      else augmentStopPopup(e.popup);
+    });
 
     return map;
   }
@@ -149,6 +153,9 @@
         L.DomEvent.stopPropagation(e); // don't also trigger the map's own click handler (which resets the highlight)
         setHighlightedRoute(route.id);
       });
+      const rawId = route.id.includes(':') ? route.id.split(':').slice(1).join(':') : route.id;
+      line._routeInfo = { id: route.id, rawId, shortName: route.shortName || route.longName || rawId, agencyId: route.agencyId || null };
+      line.bindPopup(`ROUTE ${escapeHtml(String(line._routeInfo.shortName).toUpperCase())}`); // replaced with a follow toggle on open
       routeLinesById.set(route.id, line);
       for (const pt of route.shapePoints) bounds.push(pt);
     }
@@ -554,9 +561,51 @@
     popup.setContent(`${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`);
   }
 
-  // --- Trip planner endpoints (Live Map planner) ------------------------
+  // --- Follow-a-route popup (service-alert notifications) ----------------
+  async function buildRoutePopup(popup, info) {
+    const wrap = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = `ROUTE ${String(info.shortName).toUpperCase()}`;
+    wrap.appendChild(title);
+    wrap.appendChild(document.createElement('br'));
+
+    const btn = document.createElement('button');
+    btn.className = 'route-follow-btn';
+    let followed = false;
+    try { followed = await TheBusStorage.isRouteFollowed(info.id); } catch (e) { followed = false; }
+    const label = () => { btn.textContent = followed ? 'UNFOLLOW ALERTS' : 'FOLLOW ALERTS'; };
+    label();
+    btn.addEventListener('click', async () => {
+      try {
+        if (followed) {
+          await TheBusStorage.removeFollowedRoute(info.id);
+          followed = false;
+        } else {
+          await TheBusStorage.addFollowedRoute(info);
+          followed = true;
+          if (global.TheBusRouteAlerts) TheBusRouteAlerts.requestPermission(); // ask on this user gesture
+        }
+        label();
+      } catch (e) { /* storage hiccup -- leave the button as-is */ }
+    });
+    wrap.appendChild(btn);
+    popup.setContent(wrap);
+  }
+
+  // --- Trip planner endpoints + route lines (Live Map planner) ----------
   function clearTripEndpoints() {
     if (tripLayerGroup) tripLayerGroup.clearLayers();
+  }
+
+  function endpointMarker(pt, letter) {
+    const icon = L.divIcon({
+      className: 'trip-endpoint',
+      html: `<div class="trip-endpoint-dot">${letter}</div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+    return L.marker([pt.lat, pt.lon], { icon })
+      .bindPopup(`<strong>${escapeHtml((pt.name || '').toUpperCase())}</strong>`);
   }
 
   /** Drops start/end markers for a planned trip and fits the map to them. */
@@ -566,19 +615,61 @@
     const pts = [];
     [[from, 'A'], [to, 'B']].forEach(([pt, letter]) => {
       if (!pt || pt.lat == null || pt.lon == null) return;
-      const icon = L.divIcon({
-        className: 'trip-endpoint',
-        html: `<div class="trip-endpoint-dot">${letter}</div>`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-      });
-      L.marker([pt.lat, pt.lon], { icon })
-        .bindPopup(`<strong>${escapeHtml((pt.name || '').toUpperCase())}</strong>`)
-        .addTo(tripLayerGroup);
+      endpointMarker(pt, letter).addTo(tripLayerGroup);
       pts.push([pt.lat, pt.lon]);
     });
     if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 14 });
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, showTripEndpoints, clearTripEndpoints, __setNowForTesting };
+  /**
+   * Draws a planned trip's FIRST option: each leg's shape as a polyline
+   * (walk legs dashed, transit legs solid) plus the A/B endpoint pins,
+   * then fits the map to it. Geometry comes from the backend already
+   * decoded (backend/src/tripPlanner.js). Guarded against a bad decode:
+   * any leg whose points fall outside a generous box around the trip's
+   * endpoints is skipped (lines only, pins always draw), so a polyline
+   * precision mismatch can never scatter garbage across the map.
+   */
+  function drawTripPlan(result) {
+    if (!map || !tripLayerGroup) return;
+    clearTripEndpoints();
+    const from = result && result.from;
+    const to = result && result.to;
+    const bounds = [];
+
+    // Plausibility box: within ~2 degrees of the endpoints.
+    let guard = null;
+    if (from && to && from.lat != null && to.lat != null) {
+      guard = {
+        minLat: Math.min(from.lat, to.lat) - 2, maxLat: Math.max(from.lat, to.lat) + 2,
+        minLon: Math.min(from.lon, to.lon) - 2, maxLon: Math.max(from.lon, to.lon) + 2,
+      };
+    }
+    const inGuard = ([lat, lon]) => !guard || (lat >= guard.minLat && lat <= guard.maxLat && lon >= guard.minLon && lon <= guard.maxLon);
+
+    const itin = result && result.itineraries && result.itineraries[0];
+    if (itin && Array.isArray(itin.legs)) {
+      itin.legs.forEach((leg) => {
+        const geom = Array.isArray(leg.geometry) ? leg.geometry.filter(inGuard) : [];
+        if (geom.length < 2) return;
+        const isWalk = (leg.mode || '').toUpperCase() === 'WALK';
+        L.polyline(geom, {
+          color: isWalk ? '#7dff5c' : '#33ff00',
+          weight: isWalk ? 3 : 5,
+          opacity: 0.9,
+          dashArray: isWalk ? '4 6' : null,
+        }).addTo(tripLayerGroup);
+        geom.forEach((p) => bounds.push(p));
+      });
+    }
+
+    [[from, 'A'], [to, 'B']].forEach(([pt, letter]) => {
+      if (!pt || pt.lat == null || pt.lon == null) return;
+      endpointMarker(pt, letter).addTo(tripLayerGroup);
+      bounds.push([pt.lat, pt.lon]);
+    });
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }
+
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, showTripEndpoints, drawTripPlan, clearTripEndpoints, __setNowForTesting };
 })(window);

@@ -42,6 +42,42 @@ function pick(obj, names) {
   return null;
 }
 
+// MOTIS /api/v1/plan returns leg shapes as Google-encoded polylines with
+// precision 7 (confirmed in motis-project/motis openapi.yaml). Decoding
+// here (server-side) means the client just draws [[lat,lon],...] arrays
+// and never needs a decoder or to know the precision.
+const POLYLINE_PRECISION = 7;
+
+function decodePolyline(encoded, precision = POLYLINE_PRECISION) {
+  if (typeof encoded !== 'string' || encoded.length === 0) return [];
+  const factor = Math.pow(10, precision);
+  const points = [];
+  let index = 0;
+  let lat = 0;
+  let lon = 0;
+  while (index < encoded.length) {
+    let result = 0;
+    let shift = 0;
+    let b;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    result = 0;
+    shift = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lon += (result & 1) ? ~(result >> 1) : (result >> 1);
+    points.push([lat / factor, lon / factor]);
+  }
+  return points;
+}
+
 function baseUrl() {
   return (config.transitousBaseUrl || 'https://api.transitous.org').replace(/\/+$/, '');
 }
@@ -104,8 +140,12 @@ function normalizeLeg(leg) {
   const endTime = pick(leg, ['endTime']) || pick(to, ['arrival']);
   const durationSecs = pick(leg, ['duration']);
   const distance = pick(leg, ['distance']);
+  const geo = pick(leg, ['legGeometry', 'geometry']);
+  const encoded = geo && typeof geo === 'object' ? pick(geo, ['points']) : (typeof geo === 'string' ? geo : null);
+  const geometry = encoded ? decodePolyline(encoded) : [];
   return {
     mode: pick(leg, ['mode']) || 'UNKNOWN',
+    geometry, // [[lat,lon],...] for drawing the leg on the map (may be [])
     routeName: (() => {
       const r = pick(leg, ['routeShortName', 'routeLongName', 'route']);
       return r != null ? String(r) : null;
@@ -215,5 +255,6 @@ module.exports = {
   normalizeItinerary,
   normalizeLeg,
   buildPlanUrl,
+  decodePolyline,
   PlaceNotFoundError,
 };

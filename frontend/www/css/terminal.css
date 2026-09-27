@@ -687,3 +687,17 @@ body {
 .tp-fares { margin-top: 10px; border-top: 1px solid rgba(31, 153, 0, 0.5); padding-top: 6px; }
 .tp-fare-line { color: var(--fg); font-size: 15px; margin-top: 4px; }
 .tp-fare-link { display: inline-block; color: var(--fg-bright); text-decoration: underline; font-size: 15px; margin: 2px 0 4px; }
+
+/* Follow-a-route button inside a route line's map popup */
+.route-follow-btn {
+  margin-top: 4px;
+  background: rgba(51, 255, 0, 0.1);
+  color: var(--fg-bright);
+  border: 1px solid var(--fg-dim);
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 18px;
+  padding: 5px 8px;
+  min-height: 38px;
+  cursor: pointer;
+}
+.route-follow-btn:active { background: rgba(51, 255, 0, 0.2); }

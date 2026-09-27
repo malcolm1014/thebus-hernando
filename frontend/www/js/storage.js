@@ -14,6 +14,7 @@
   const EFFECTS_ENABLED_KEY = 'thebus_effects_enabled';
   const SAVED_TRIPS_KEY = 'thebus_saved_trips';
   const TRIP_PREFS_KEY = 'thebus_trip_prefs';
+  const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -257,6 +258,28 @@
     });
   }
 
+  /** Followed routes (for service-alert notifications): array of { id, rawId, shortName, agencyId }. */
+  async function getFollowedRoutes() {
+    const list = await getJson(FOLLOWED_ROUTES_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  async function isRouteFollowed(id) {
+    return (await getFollowedRoutes()).some((r) => r.id === id);
+  }
+  async function addFollowedRoute(route) {
+    if (!route || !route.id) return getFollowedRoutes();
+    const existing = await getFollowedRoutes();
+    if (existing.some((r) => r.id === route.id)) return existing;
+    const next = [{ id: route.id, rawId: route.rawId || route.id, shortName: route.shortName || route.id, agencyId: route.agencyId || null }, ...existing].slice(0, 50);
+    await setJson(FOLLOWED_ROUTES_KEY, next);
+    return next;
+  }
+  async function removeFollowedRoute(id) {
+    const next = (await getFollowedRoutes()).filter((r) => r.id !== id);
+    await setJson(FOLLOWED_ROUTES_KEY, next);
+    return next;
+  }
+
   global.TheBusStorage = {
     getLocalVersion, setLocalVersion, saveDataset, loadDataset, loadBundledSnapshot,
     getLastSyncedAt, setLastSyncedAt,
@@ -265,5 +288,6 @@
     getEffectsEnabled, setEffectsEnabled,
     getSavedTrips, addSavedTrip, removeSavedTrip,
     getTripPrefs, setTripPrefs,
+    getFollowedRoutes, isRouteFollowed, addFollowedRoute, removeFollowedRoute,
   };
 })(window);

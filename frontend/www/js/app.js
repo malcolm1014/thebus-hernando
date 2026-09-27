@@ -147,7 +147,19 @@
       withProcessingDelay(async () => {
         let prefs;
         try { prefs = await TheBusStorage.getTripPrefs(); } catch (e) { prefs = undefined; }
-        const output = await TheBusTripPlanner.plan(tripCmd.origin, tripCmd.dest, prefs);
+        // Resolve local endpoints via the bundled OSM corpus before the
+        // online geocoder (same as the map planner).
+        const rf = global.TheBusLocalPlaces ? TheBusLocalPlaces.resolve(tripCmd.origin) : null;
+        const rt = global.TheBusLocalPlaces ? TheBusLocalPlaces.resolve(tripCmd.dest) : null;
+        const opts = {};
+        if (rf) opts.fromCoords = { lat: rf.lat, lon: rf.lon };
+        if (rt) opts.toCoords = { lat: rt.lat, lon: rt.lon };
+        const output = await TheBusTripPlanner.plan(
+          rf ? rf.name : tripCmd.origin,
+          rt ? rt.name : tripCmd.dest,
+          prefs,
+          Object.keys(opts).length ? opts : undefined,
+        );
         appendEntry('sys', output);
       });
       return;
@@ -598,7 +610,10 @@
       head.textContent = `${fromName} -> ${toName}`;
       results.appendChild(head);
 
-      if (result.from && result.to && TheBusLiveMap.showTripEndpoints) {
+      // Draw the first option's route lines + A/B pins on the map.
+      if (TheBusLiveMap.drawTripPlan) {
+        TheBusLiveMap.drawTripPlan(result);
+      } else if (result.from && result.to && TheBusLiveMap.showTripEndpoints) {
         TheBusLiveMap.showTripEndpoints(result.from, result.to);
       }
 
@@ -661,6 +676,11 @@
       }
     }
 
+    function localResolve(text) {
+      if (!global.TheBusLocalPlaces) return null;
+      try { return TheBusLocalPlaces.resolve(text); } catch (e) { return null; }
+    }
+
     async function runPlan() {
       const fromText = fromInput.value.trim();
       const toText = toInput.value.trim();
@@ -669,11 +689,28 @@
       goBtn.disabled = true;
       goBtn.textContent = '[ PLANNING... ]';
       setMsg('PLANNING...');
-      const opts = usingMyLocation ? { fromCoords: myLocationCoords } : undefined;
-      const outcome = await TheBusTripPlanner.planStructured(fromText, toText, currentPrefs(), opts);
+
+      // Resolve local endpoints against the bundled OSM corpus first (a
+      // landmark the online geocoder may not know); fall back to sending
+      // the text for Transitous to geocode (cities/addresses).
+      const opts = {};
+      let fromLabel = fromText;
+      let toLabel = toText;
+      if (usingMyLocation) {
+        opts.fromCoords = myLocationCoords;
+        fromLabel = MY_LOCATION;
+      } else {
+        const rf = localResolve(fromText);
+        if (rf) { opts.fromCoords = { lat: rf.lat, lon: rf.lon }; fromLabel = rf.name || fromText; }
+      }
+      const rt = localResolve(toText);
+      if (rt) { opts.toCoords = { lat: rt.lat, lon: rt.lon }; toLabel = rt.name || toText; }
+
+      const outcome = await TheBusTripPlanner.planStructured(fromLabel, toLabel, currentPrefs(), Object.keys(opts).length ? opts : undefined);
       goBtn.disabled = false;
       goBtn.textContent = '[ PLAN ]';
       if (outcome.error) { setMsg(outcome.error); return; }
+      // Save the rider's original typed text (so a re-plan re-resolves).
       const saveTrip = (!usingMyLocation && fromText && toText) ? { from: fromText, to: toText } : null;
       renderResult(outcome.result, saveTrip);
     }
@@ -805,6 +842,7 @@
     // know the on-disk/on-the-wire shape differs from what they expect.
     const data = TheBusSync.expandDataset(rawData);
     TheBusQueryEngine.setDataset(data);
+    if (global.TheBusLocalPlaces) TheBusLocalPlaces.setDataset(data); // offline place lookup for the trip planner
     lastDataset = data;
     // Covers the case where the rider switched to the map tab before this
     // ran -- the map would've drawn with no routes/stops yet otherwise.

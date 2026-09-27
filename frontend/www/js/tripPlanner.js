@@ -33,10 +33,14 @@
   function buildPlanQuery(origin, dest, prefs, opts) {
     const o = opts || {};
     const params = [];
+    // Always send the text as the NAME label; when coords are supplied
+    // (rider's location, or a place we resolved offline from the bundled
+    // OSM corpus), add them too -- the backend then routes from the exact
+    // point and still labels it with the readable name.
+    if (origin) params.push(`from=${encodeURIComponent(origin)}`);
     if (o.fromCoords) params.push(`fromLat=${encodeURIComponent(o.fromCoords.lat)}`, `fromLon=${encodeURIComponent(o.fromCoords.lon)}`);
-    else params.push(`from=${encodeURIComponent(origin)}`);
+    if (dest) params.push(`to=${encodeURIComponent(dest)}`);
     if (o.toCoords) params.push(`toLat=${encodeURIComponent(o.toCoords.lat)}`, `toLon=${encodeURIComponent(o.toCoords.lon)}`);
-    else params.push(`to=${encodeURIComponent(dest)}`);
     const p = prefs || {};
     if (p.fewerTransfers) params.push('maxTransfers=1');
     if (p.lessWalking) params.push('maxWalk=10'); // cap access/egress walking at ~10 min each end
@@ -114,12 +118,12 @@
    * string (success, no-route, or a clear error message) -- never throws,
    * so the caller can print whatever comes back directly.
    */
-  async function plan(origin, dest, prefs) {
+  async function plan(origin, dest, prefs, opts) {
     if (!global.navigator || !navigator.onLine) {
       return 'TRIP PLANNING NEEDS A CONNECTION. LOCAL TRIPS WORK OFFLINE -- TRY "FROM <STOP> TO <STOP>".';
     }
     const base = global.TheBusSync && TheBusSync.API_BASE ? TheBusSync.API_BASE : '';
-    const url = `${base}/api/plan?${buildPlanQuery(origin, dest, prefs)}`;
+    const url = `${base}/api/plan?${buildPlanQuery(origin, dest, prefs, opts)}`;
     let res;
     try {
       res = await fetch(url);

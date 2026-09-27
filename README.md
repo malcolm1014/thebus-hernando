@@ -978,7 +978,24 @@ There are two ways to reach it: the terminal command `PLAN <origin> to
 duration, transfers, per-leg walk/bus detail) and drops **A / B pins** on
 the map, fitting the view to them — a friendlier surface than the terminal
 for a multi-leg journey. It also offers **use-my-location** for the start
-and a from/to **swap**.
+and a from/to **swap**, and it **draws the first option's route lines on
+the map** (walk legs dashed, transit legs solid) plus the A/B pins. The
+leg shapes come from MOTIS as encoded polylines (precision 7), decoded
+server-side (`tripPlanner.js`) into `[[lat,lon],…]` arrays; the client
+draws them behind a plausibility guard (any leg whose points fall outside a
+box around the endpoints is skipped) so a decode/precision mismatch can
+never scatter garbage across the map.
+
+**Corpus-powered place resolution**: before sending an endpoint to
+Transitous's online geocoder, both planner surfaces resolve it against the
+**bundled OSM corpus** (the same `data.places`/`data.roads` +
+transit stops the terminal search engine uses — see below) via
+`frontend/www/js/localPlaces.js`. So a local landmark the online geocoder
+might not know ("Avalon Publix", "Springstead High School") resolves
+instantly and offline to exact coordinates, and only cities/addresses fall
+through to Transitous. The resolver is deliberately conservative (exact
+name/alias or a clear prefix match) so a vague query isn't force-matched to
+a random local road.
 
 **Preferences** (panel checkboxes; persisted on-device via `TheBusStorage`,
 and also applied to the terminal `PLAN` command): fewer transfers, less
@@ -1019,8 +1036,20 @@ these for server-to-server use, not direct browser calls):
 - **Trip updates** → authoritative arrival predictions
   (`swiftlyGtfsRt.js`, `/api/predictions?stop=`). Surfaced in a stop's map
   popup: tap a stop and its next few **live** arrivals fold in under the
-  scheduled routes. Falls back silently to the schedule offline, or for
-  stops with no live data.
+  scheduled routes, each with schedule adherence ("3 MIN LATE"). Falls back
+  silently to the schedule offline, or for stops with no live data.
+
+**Follow a route + notifications** (`frontend/www/js/routeAlerts.js`): tap
+a route line on the map to **FOLLOW ALERTS** for it (stored on-device).
+When the alerts feed refreshes, any active alert affecting a followed route
+fires a notification — via the Capacitor LocalNotifications plugin if the
+native shell has it, else the Web Notifications API when permission is
+granted, and always the in-app banner. De-duped by alert id so a
+long-running alert notifies once, not every refresh. This is
+foreground-oriented: true background push (device notified while the app is
+closed) needs the LocalNotifications plugin (`npm i
+@capacitor/local-notifications && npx cap sync` — the code already
+feature-detects and uses it) or a push service, which this app doesn't run.
 
 Both alerts and trip updates are requested as **JSON** (`?format=json`) —
 the standard GTFS-RT `FeedMessage` shape, so no protobuf dependency and no

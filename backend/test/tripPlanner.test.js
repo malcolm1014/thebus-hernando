@@ -56,7 +56,7 @@ test('plans with explicit coords: builds the MOTIS plan URL, sends a User-Agent,
     assert.equal(it.transfers, 1);
     assert.equal(it.legs.length, 2);
     assert.deepEqual(it.legs[1], {
-      mode: 'BUS', routeName: '200', headsign: 'Orlando', agency: 'HART',
+      mode: 'BUS', geometry: [], routeName: '200', headsign: 'Orlando', agency: 'HART',
       from: 'Marion Transit Ctr', to: 'Orlando Amtrak',
       departure: '2026-09-27T14:20:00Z', arrival: '2026-09-27T16:00:00Z',
       durationMinutes: 100, distanceMeters: null,
@@ -65,6 +65,16 @@ test('plans with explicit coords: builds the MOTIS plan URL, sends a User-Agent,
   } finally {
     global.fetch = original;
   }
+});
+
+test('decodePolyline decodes a standard Google-encoded polyline', () => {
+  const tp = freshModule();
+  // The canonical precision-5 example from Google's polyline docs.
+  const pts = tp.decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@', 5);
+  assert.equal(pts.length, 3);
+  assert.deepEqual(pts[0].map((n) => Math.round(n * 1000) / 1000), [38.5, -120.2]);
+  assert.deepEqual(pts[2].map((n) => Math.round(n * 1000) / 1000), [43.252, -126.453]);
+  assert.deepEqual(tp.decodePolyline('', 7), []);
 });
 
 test('buildPlanUrl maps rider preferences to MOTIS params', () => {

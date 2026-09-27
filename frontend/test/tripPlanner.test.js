@@ -32,7 +32,7 @@ test('buildPlanQuery encodes preferences and coordinate overrides', () => {
   assert.match(coords, /fromLat=28\.5/);
   assert.match(coords, /fromLon=-82\.6/);
   assert.match(coords, /to=Publix/);
-  assert.doesNotMatch(coords, /from=MY/); // coords replace the text origin
+  assert.match(coords, /from=MY%20LOCATION/); // name label kept alongside the coords
 });
 
 test('formatResult renders a retro itinerary with walk + bus legs', () => {

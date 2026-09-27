@@ -109,6 +109,8 @@
       const data = await res.json();
       latest = Array.isArray(data.alerts) ? data.alerts : [];
       render();
+      // Notify the rider about alerts on routes they follow (best-effort).
+      if (global.TheBusRouteAlerts) { try { TheBusRouteAlerts.onAlerts(latest); } catch (e) { /* never disrupt the app */ } }
     } catch (e) {
       // Best-effort: a failed alerts fetch never disrupts the app.
     }
