@@ -89,7 +89,9 @@ async function fetchLiveBuses() {
     headers: { Authorization: apiKey },
   });
   if (!res.ok) {
-    throw new Error(`Swiftly (HART) live-bus request failed: HTTP ${res.status}`);
+    let detail = '';
+    try { detail = (await res.text() || '').slice(0, 300).replace(/\s+/g, ' ').trim(); } catch (e) { /* ignore */ }
+    throw new Error(`Swiftly (HART) live-bus request failed for agency "${agencyKey}": HTTP ${res.status}${detail ? ` -- ${detail}` : ''}`);
   }
   const raw = await res.json();
 

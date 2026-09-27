@@ -57,7 +57,15 @@ async function fetchFeed(pathSegment, agencyKey) {
   const url = new URL(`${baseUrl()}/real-time/${agencyKey}/${pathSegment}`);
   url.searchParams.set('format', 'json');
   const res = await fetch(url, { headers: { Authorization: apiKey, Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`Swiftly ${pathSegment} request failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    // Include Swiftly's own error text (e.g. "not authorized for agency X"
+    // on a 403) + the agency key we used, so the logs pinpoint whether it's
+    // a wrong agency key vs. a key not licensed for this feed -- not just
+    // an opaque status code.
+    let detail = '';
+    try { detail = (await res.text() || '').slice(0, 300).replace(/\s+/g, ' ').trim(); } catch (e) { /* ignore */ }
+    throw new Error(`Swiftly ${pathSegment} request failed for agency "${agencyKey}": HTTP ${res.status}${detail ? ` -- ${detail}` : ''}`);
+  }
   return res.json();
 }
 
