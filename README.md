@@ -77,9 +77,14 @@ thebus-hernando/
       geocode.js                proxies OpenStreetMap Nominatim to resolve
                                a place name ("Springstead High School") to
                                coordinates for "nearest stop to X" queries
+      tripPlanner.js            proxies the free Transitous/MOTIS routing
+                               network for cross-agency / cross-country
+                               A->B journeys (the "Tier 2" online planner,
+                               see "Trip planning" below) -- geocode + plan,
+                               normalized to a compact itinerary shape
     server.js                 GET /api/version, GET /api/download,
                                GET /api/live-buses, GET /api/geocode,
-                               POST /api/refresh (secret-protected)
+                               GET /api/plan, POST /api/refresh (secret-protected)
     test/                     node --test unit tests (transform, gtfsParse, ETL safety check,
                                passio shaping, shape-polyline simplification) -- also run in CI
                                (.github/workflows/backend-tests.yml) on every push, though it
@@ -928,6 +933,38 @@ field-name casings (`Latitude`/`lat`, `Heading`/`CalculatedCourse`/
 real names against a live response during weekday daytime service and
 trim the fallback list down, the same verification MANUAL_TEST_SCRIPT.md
 already asks for on other unconfirmed-until-real-service-hours behavior.
+
+## Trip planning (cross-country)
+
+The offline rule engine plans A→B trips **inside** the bundled tri-county
+dataset (see `queryEngine.js` — "from X to Y" resolved entirely offline).
+For trips that leave that dataset — Tampa to Orlando, Brooksville to
+Atlanta — there's a second, online-only planner.
+
+Rather than build or self-host a nationwide routing engine, TriBus proxies
+**Transitous** (`api.transitous.org`), a free, community-run instance of
+the **MOTIS** engine that aggregates thousands of agency feeds worldwide
+behind one JSON API. `backend/src/tripPlanner.js` geocodes each endpoint
+and calls MOTIS's `/api/v1/plan`, normalizing the result to a compact
+`{ from, to, itineraries[] }` shape; `GET /api/plan?from=…&to=…` exposes
+it. This is the same "proxy a third party through our own backend" pattern
+the live-bus feeds use (`passio.js` / `pascoRealtime.js` /
+`swiftlyRealtime.js`) — the app never makes a cross-origin call, and the
+required Transitous `User-Agent` and result caching live in one place.
+
+Client side (`frontend/www/js/tripPlanner.js`), it's a deliberately
+**explicit, online-only command**: a rider types `PLAN <origin> to
+<destination>` (e.g. `PLAN Tampa to Orlando`). It's kept separate from the
+offline "from X to Y" planner so it never collides with it and only fires
+when the rider clearly wants a long-distance route; offline, it says so
+plainly instead of failing. Itineraries render in the terminal in the same
+retro style as every other answer (walk/bus legs, times, transfers).
+
+Two env knobs, both optional (`backend/.env.example`): `TRANSITOUS_BASE_URL`
+(point at a self-hosted MOTIS instance if you ever outgrow the donated
+service — identical API, no code changes) and `TRIP_PLANNER_USER_AGENT`
+(Transitous requires a meaningful one; set your own contact if you deploy a
+fork). No API key exists or is needed.
 
 ## Keeping the payload lean
 

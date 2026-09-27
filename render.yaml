@@ -34,3 +34,12 @@ services:
         sync: false
       - key: SWIFTLY_HART_AGENCY_KEY
         sync: false
+      # Cross-country trip planning (GET /api/plan). Both optional -- the
+      # planner proxies the free Transitous/MOTIS network by default (no
+      # key needed). Set TRIP_PLANNER_USER_AGENT to your own contact if you
+      # deploy a fork; set TRANSITOUS_BASE_URL only to use a self-hosted
+      # MOTIS instance. See backend/.env.example.
+      - key: TRIP_PLANNER_USER_AGENT
+        sync: false
+      - key: TRANSITOUS_BASE_URL
+        sync: false

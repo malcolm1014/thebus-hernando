@@ -21,7 +21,21 @@ const path = require('path');
 const JS_DIR = path.join(__dirname, '..', 'www', 'js');
 
 global.window = global;
-if (!global.navigator) global.navigator = { onLine: true };
+// Node 18 had no global `navigator`, so the original guard here installed
+// a stub. Node 21+ ships a built-in global `navigator` that has no
+// `onLine` (and is a non-writable accessor, so a plain assignment silently
+// no-ops) -- which left `navigator.onLine` undefined, i.e. "offline", and
+// broke every test that exercises the online geocoder path. Install a
+// plain, writable navigator stub whenever the real one lacks a usable
+// `onLine`, so those tests see "online" by default and can still toggle
+// it per-test (e.g. to assert offline behavior).
+if (!global.navigator || typeof global.navigator.onLine !== 'boolean') {
+  Object.defineProperty(global, 'navigator', {
+    value: { onLine: true },
+    configurable: true,
+    writable: true,
+  });
+}
 // searchIndex.js persists through TheBusStorage -- an in-memory stand-in
 // here (no real Preferences/localStorage in Node) so tests never hit
 // disk. Individual tests can override this per-test the same way they

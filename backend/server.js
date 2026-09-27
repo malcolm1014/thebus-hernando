@@ -9,6 +9,7 @@ const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
 const { fetchLiveBuses: fetchHartLiveBuses } = require('./src/swiftlyRealtime');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
+const { planTrip, PlaceNotFoundError } = require('./src/tripPlanner');
 const { fetchStaticMap } = require('./src/staticmap');
 const { enhanceAnswer } = require('./src/grokAnswer');
 const { createRateLimiter } = require('./src/rateLimit');
@@ -34,6 +35,10 @@ const versionRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 const downloadRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 const crashReportRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 10 });
 const enhanceAnswerRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
+// Trip planning proxies a donated, volunteer-run service (Transitous), so
+// keep this tight -- one plan per rider tap is plenty under 15/min, and
+// tripPlanner.js also caches results to absorb bursts.
+const planRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 15 });
 
 let etlRunning = false;
 
@@ -172,6 +177,62 @@ app.get('/api/geocode', geocodeRateLimit, async (req, res) => {
   } catch (err) {
     console.error('[server] geocode failed:', err);
     res.status(502).json({ error: 'geocoding unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/plan?from=<place>&to=<place>[&time=<ISO>][&arriveBy=1]
+ *   (or pass explicit coords: fromLat/fromLon/toLat/toLon)
+ *
+ * Cross-agency / cross-country journey planning -- "Tier 2" from the
+ * research brief. Where the offline app plans trips inside the bundled
+ * tri-county dataset, this proxies the free Transitous/MOTIS API for any
+ * two places nationwide (see src/tripPlanner.js). Requires network; the
+ * client only calls it on an explicit "PLAN ... to ..." command and falls
+ * back to a plain offline message when there's no connection.
+ *
+ * Returns { from, to, itineraries } -- itineraries is [] (HTTP 200) when
+ * both places are real but no transit route connects them, so the client
+ * can say "no route found" rather than treating it as an error. A place
+ * that can't be resolved is 422 (naming which one); an upstream failure
+ * is 502.
+ */
+app.get('/api/plan', planRateLimit, express.json(), async (req, res) => {
+  const from = (req.query.from || '').toString().trim();
+  const to = (req.query.to || '').toString().trim();
+  const fromLat = Number(req.query.fromLat);
+  const fromLon = Number(req.query.fromLon);
+  const toLat = Number(req.query.toLat);
+  const toLon = Number(req.query.toLon);
+  const hasFromCoords = Number.isFinite(fromLat) && Number.isFinite(fromLon);
+  const hasToCoords = Number.isFinite(toLat) && Number.isFinite(toLon);
+
+  if (!from && !hasFromCoords) {
+    return res.status(400).json({ error: 'missing origin: provide from=<place> or fromLat/fromLon' });
+  }
+  if (!to && !hasToCoords) {
+    return res.status(400).json({ error: 'missing destination: provide to=<place> or toLat/toLon' });
+  }
+
+  const time = (req.query.time || '').toString().trim() || undefined;
+  const arriveBy = req.query.arriveBy === '1' || req.query.arriveBy === 'true';
+
+  try {
+    const result = await planTrip({
+      from: from || undefined,
+      to: to || undefined,
+      fromCoords: hasFromCoords ? { name: from || 'START', lat: fromLat, lon: fromLon } : undefined,
+      toCoords: hasToCoords ? { name: to || 'DESTINATION', lat: toLat, lon: toLon } : undefined,
+      time,
+      arriveBy,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof PlaceNotFoundError) {
+      return res.status(422).json({ error: 'place not found', which: err.which, text: err.text, message: err.message });
+    }
+    console.error('[server] trip plan failed:', err);
+    res.status(502).json({ error: 'trip planning unavailable', message: err.message });
   }
 });
 

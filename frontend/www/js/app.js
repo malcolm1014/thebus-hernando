@@ -137,6 +137,20 @@
     commandLog.push(text);
     historyPointer = commandLog.length;
 
+    // Cross-country / cross-agency trip planning ("PLAN <origin> to
+    // <destination>") is an explicit, online-only command handled by the
+    // Transitous proxy (see tripPlanner.js). Checked before the offline
+    // rule engine so it never collides with the engine's own local
+    // "from X to Y" planner. Everything else falls through unchanged.
+    const tripCmd = TheBusTripPlanner.parseCommand(text);
+    if (tripCmd) {
+      withProcessingDelay(async () => {
+        const output = await TheBusTripPlanner.plan(tripCmd.origin, tripCmd.dest);
+        appendEntry('sys', output);
+      });
+      return;
+    }
+
     withProcessingDelay(async () => {
       let answer;
       try {
@@ -555,6 +569,7 @@
       setStatus(source === 'bundled' ? 'READY (BUILT-IN SCHEDULE DATA)' : 'READY (OFFLINE CACHE)');
       renderFreshness();
       appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+      appendEntry('sys', 'GOING FARTHER? TRY "PLAN TAMPA TO ORLANDO" (NEEDS A CONNECTION).');
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
