@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TriBus — Free Offline Transit for the Nature Coast &amp; Tampa Bay</title>
-<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough (Tampa) transit riders. Ask in plain English, plan trips across agencies, and try it live in your browser. No logging. No accounts. Available for Android.">
+<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough (Tampa) transit riders. Ask in plain English, plan trips across agencies (and cross-country), track buses in real time, and get service alerts for your routes. Try it live in your browser. No logging. No accounts. Available for Android.">
 <link rel="icon" href="assets/icon.png">
 
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://malcolm1014.github.io/thebus-hernando/">
 <meta property="og:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta property="og:description" content="Free. No logging. No accounts. Offline ready. Plans trips across Hernando, Pasco, and Tampa Bay (HART) — and you can try the real terminal live in your browser.">
+<meta property="og:description" content="Free. No logging. No accounts. Offline ready. Live bus tracking, real-time arrivals, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trip planning. Try the real terminal live in your browser.">
 <meta property="og:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -21,7 +21,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta name="twitter:description" content="Free. No logging. No accounts. Offline ready. Plans trips across Hernando, Pasco, and Tampa Bay (HART) — try the real terminal live in your browser.">
+<meta name="twitter:description" content="Free. No logging. No accounts. Offline ready. Live bus tracking, real-time arrivals, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trips. Try the real terminal live in your browser.">
 <meta name="twitter:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -376,7 +376,8 @@
       <span class="badge">100% Free</span>
       <span class="badge">No Logging</span>
       <span class="badge">Works Offline</span>
-      <span class="badge">Cross-County Trips</span>
+      <span class="badge">Live Bus Tracking</span>
+      <span class="badge">Cross-Agency Trips</span>
       <span class="badge">Android</span>
     </div>
 
@@ -403,13 +404,15 @@
       TriBus is a free, offline-first transit assistant styled after a retro MS-DOS terminal.
       It merges GTFS schedule data from multiple Florida transit agencies into a single
       lightweight dataset that lives entirely on your phone — so once it's synced, checking a
-      schedule, finding the nearest stop, or planning a trip works with zero signal and zero
-      backend calls. Ask it plain-English questions like "next bus at Avalon Publix" or "from
-      Spring Hill to downtown Tampa," and it answers instantly from data already on your
-      device — no LLM guessing at the facts, just the real schedule. A second tab adds a live
-      map with real-time bus positions whenever you have a connection. There's no account, no
-      tracking, and nothing phoning home in the background — just a fast, private way to catch
-      the bus.
+      schedule, finding the nearest stop, or planning a trip works with zero signal. Ask it
+      plain-English questions like "next bus at Avalon Publix" or "from Spring Hill to downtown
+      Tampa," and it answers instantly from data already on your device — no LLM guessing at the
+      facts, just the real schedule. When you're online, TriBus adds a live layer on top: real
+      buses moving on the map across all three counties, live arrival predictions at your stop,
+      service alerts for detours and cancellations, push notifications when something affects a
+      route you follow, and long-distance trip planning that can reach far beyond the tri-county
+      area. There's still no account, no tracking, and nothing selling your data — just a fast,
+      private way to catch the bus.
     </p>
   </div>
 </section>
@@ -449,7 +452,8 @@
       <p class="route-caption">
         Trip planning can cross agency boundaries automatically — TriBus will route you from a
         Hernando stop all the way into Tampa on HART, transfers and all. Real-time bus positions
-        are live for Hernando and Pasco today.
+        are now live across all three — Hernando, Pasco, and HART (Tampa) — and HART also feeds
+        live arrival predictions and service alerts.
       </p>
     </div>
   </div>
@@ -464,32 +468,47 @@
       <div class="feature">
         <div class="icon">💬</div>
         <h3>Ask in Plain English</h3>
-        <p>"Next bus at Avalon Publix," "first and last bus," "timetable for a route," "where is Spring Hill Dr" — type it how you'd say it.</p>
+        <p>"Next bus at Avalon Publix," "first and last bus," "timetable for a route," "where is Spring Hill Dr" — type it how you'd say it, and TriBus starts answering as you type.</p>
       </div>
       <div class="feature">
         <div class="icon">🗺️</div>
-        <h3>Cross-County Trip Planning</h3>
-        <p>Ask "from A to B" and TriBus finds a route even if it means transferring between agencies — Hernando to Tampa, transfers and all.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">📍</div>
-        <h3>Find Stops &amp; Places</h3>
-        <p>Nearest stop to you or to any landmark, plus "nearest pharmacy / gas station / grocery" from built-in OpenStreetMap places.</p>
-      </div>
-      <div class="feature">
-        <div class="icon">📡</div>
-        <h3>No Backend Needed</h3>
-        <p>Sync your regional schedule once, then every search, route, and trip plan runs entirely on-device — no signal required.</p>
+        <h3>Cross-Agency &amp; Long-Distance Trips</h3>
+        <p>Ask "from A to B" and TriBus routes you even across agencies — Hernando to Tampa on HART, transfers and all — and can plan trips that reach far beyond the tri-county area.</p>
       </div>
       <div class="feature">
         <div class="icon">🛰️</div>
         <h3>Live Bus Map</h3>
-        <p>When you're online, watch real buses move on the map with real-time position data, filtered by county.</p>
+        <p>Watch real buses move across all three counties — Hernando, Pasco, and HART — with their route lines drawn right on the map.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⏱️</div>
+        <h3>Real-Time Arrivals</h3>
+        <p>Live "next arrival" predictions at your stop, straight from the agency's real-time feed — not just the printed schedule.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⚠️</div>
+        <h3>Service Alerts</h3>
+        <p>Detours, cancellations, and stop closures surface right in the app so you're not caught out at the curb.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🔔</div>
+        <h3>Alerts for Your Routes</h3>
+        <p>Follow the routes you ride and get a push notification the moment an alert affects one — even when the app is closed.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎫</div>
+        <h3>Fares &amp; Where to Buy</h3>
+        <p>See each agency's fare and how to pay — right down to where to buy a ticket — available offline.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📍</div>
+        <h3>Find Stops &amp; Places</h3>
+        <p>Nearest stop to you or to any landmark, plus "nearest pharmacy / gas station / grocery" from a built-in OpenStreetMap corpus that works offline.</p>
       </div>
       <div class="feature">
         <div class="icon">🔒</div>
-        <h3>No Logging</h3>
-        <p>No accounts, no analytics, no location history stored anywhere. Your trips are yours.</p>
+        <h3>Private by Design</h3>
+        <p>No accounts, no analytics, no location history stored anywhere. High-contrast mode built in. Your trips are yours.</p>
       </div>
     </div>
   </div>
