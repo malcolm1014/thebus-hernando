@@ -56,7 +56,7 @@ test('plans with explicit coords: builds the MOTIS plan URL, sends a User-Agent,
     assert.equal(it.transfers, 1);
     assert.equal(it.legs.length, 2);
     assert.deepEqual(it.legs[1], {
-      mode: 'BUS', geometry: [], routeName: '200', headsign: 'Orlando', agency: 'HART',
+      mode: 'BUS', geometry: [], rental: null, routeName: '200', headsign: 'Orlando', agency: 'HART',
       from: 'Marion Transit Ctr', to: 'Orlando Amtrak',
       departure: '2026-09-27T14:20:00Z', arrival: '2026-09-27T16:00:00Z',
       durationMinutes: 100, distanceMeters: null,
@@ -90,6 +90,36 @@ test('buildPlanUrl maps rider preferences to MOTIS params', () => {
   // No prefs -> none of those params present (MOTIS defaults apply).
   const bare = String(tp.buildPlanUrl({ fromLatLon: '1,2', toLatLon: '3,4' }));
   assert.doesNotMatch(bare, /maxTransfers|pedestrianProfile|maxPreTransitTime/);
+});
+
+test('buildPlanUrl enables GBFS shared mobility when rental is requested', () => {
+  const tp = freshModule();
+  const url = String(tp.buildPlanUrl({ fromLatLon: '1,2', toLatLon: '3,4', prefs: { rental: true } }));
+  assert.match(url, /preTransitModes=WALK%2CRENTAL/);
+  assert.match(url, /postTransitModes=WALK%2CRENTAL/);
+  assert.match(url, /directModes=WALK%2CRENTAL/);
+});
+
+test('a rental plan that MOTIS rejects falls back to a walk-only plan (never worse)', async () => {
+  const original = global.fetch;
+  const seen = [];
+  global.fetch = async (url) => {
+    const s = String(url);
+    seen.push(s);
+    if (s.includes('RENTAL')) return jsonRes(null, false, 400); // MOTIS rejects the rental mode
+    return jsonRes(SAMPLE_PLAN); // walk-only retry succeeds
+  };
+  try {
+    const tp = freshModule();
+    const result = await tp.planTrip({
+      fromCoords: { lat: 1, lon: 2 }, toCoords: { lat: 3, lon: 4 }, prefs: { rental: true },
+    });
+    assert.equal(result.itineraries.length, 1); // got a plan anyway
+    assert.ok(seen.some((u) => u.includes('RENTAL')), 'tried rental first');
+    assert.ok(seen.some((u) => !u.includes('RENTAL')), 'fell back without rental');
+  } finally {
+    global.fetch = original;
+  }
 });
 
 test('geocodes text endpoints, biasing the destination search toward the origin', async () => {

@@ -597,6 +597,7 @@
   // shows them across the top of both tabs; stays hidden otherwise.
   TheBusServiceAlerts.init(document.getElementById('alerts-banner'));
   if (global.TheBusRouteAlerts) TheBusRouteAlerts.init(); // set up the notification channel (native only; no-op on web)
+  if (global.TheBusPushClient) TheBusPushClient.init(); // register for server push if already permitted (native only)
 
   // ---- Live Map trip planner panel (Transitous via /api/plan) ----
   (function setupTripPlannerPanel() {
@@ -612,6 +613,7 @@
     const prefTransfers = document.getElementById('tp-pref-transfers');
     const prefWalking = document.getElementById('tp-pref-walking');
     const prefWheelchair = document.getElementById('tp-pref-wheelchair');
+    const prefBikeShare = document.getElementById('tp-pref-bikeshare');
     const savedWrap = document.getElementById('tp-saved-wrap');
     const savedList = document.getElementById('tp-saved');
     if (!toggle || !panel) return;
@@ -624,11 +626,12 @@
       prefTransfers.checked = p.fewerTransfers;
       prefWalking.checked = p.lessWalking;
       prefWheelchair.checked = p.wheelchair;
+      prefBikeShare.checked = p.bikeShare;
     }).catch(() => {});
     function currentPrefs() {
-      return { fewerTransfers: prefTransfers.checked, lessWalking: prefWalking.checked, wheelchair: prefWheelchair.checked };
+      return { fewerTransfers: prefTransfers.checked, lessWalking: prefWalking.checked, wheelchair: prefWheelchair.checked, bikeShare: prefBikeShare.checked };
     }
-    [prefTransfers, prefWalking, prefWheelchair].forEach((cb) =>
+    [prefTransfers, prefWalking, prefWheelchair, prefBikeShare].forEach((cb) =>
       cb.addEventListener('change', () => { TheBusStorage.setTripPrefs(currentPrefs()).catch(() => {}); }));
 
     // Editing FROM by hand clears any "use my location" coords tied to it.
@@ -758,12 +761,10 @@
         opt.appendChild(meta);
 
         (it.legs || []).forEach((leg) => {
-          const isWalk = (leg.mode || '').toUpperCase() === 'WALK';
           const row = document.createElement('div');
           row.className = 'tp-leg';
-          if (isWalk) {
-            const dist = leg.distanceMeters != null ? ` ${(leg.distanceMeters / 1609.34).toFixed(2)} MI` : '';
-            row.textContent = `WALK${dist}${leg.to ? ' TO ' + leg.to.toUpperCase() : ''}`;
+          if (fmt.isActiveLeg(leg)) {
+            row.textContent = fmt.activeLegText(leg);
             opt.appendChild(row);
           } else {
             row.textContent = `${fmt.modeLabel(leg)}${leg.headsign ? ' -> ' + leg.headsign.toUpperCase() : ''}`;

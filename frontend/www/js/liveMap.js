@@ -580,10 +580,12 @@
         if (followed) {
           await TheBusStorage.removeFollowedRoute(info.id);
           followed = false;
+          if (global.TheBusPushClient) TheBusPushClient.sync(); // update server-side route set
         } else {
           await TheBusStorage.addFollowedRoute(info);
           followed = true;
-          if (global.TheBusRouteAlerts) TheBusRouteAlerts.requestPermission(); // ask on this user gesture
+          if (global.TheBusRouteAlerts) TheBusRouteAlerts.requestPermission(); // local/web notifications
+          if (global.TheBusPushClient) TheBusPushClient.enable(); // server push (native): permission + register + sync
         }
         label();
       } catch (e) { /* storage hiccup -- leave the button as-is */ }
@@ -652,13 +654,14 @@
       itin.legs.forEach((leg) => {
         const geom = Array.isArray(leg.geometry) ? leg.geometry.filter(inGuard) : [];
         if (geom.length < 2) return;
-        const isWalk = (leg.mode || '').toUpperCase() === 'WALK';
-        L.polyline(geom, {
-          color: isWalk ? '#7dff5c' : '#33ff00',
-          weight: isWalk ? 3 : 5,
-          opacity: 0.9,
-          dashArray: isWalk ? '4 6' : null,
-        }).addTo(tripLayerGroup);
+        const mode = (leg.mode || '').toUpperCase();
+        const isWalk = mode === 'WALK';
+        const isRental = !!leg.rental || mode === 'RENTAL' || mode === 'BIKE' || mode === 'SCOOTER';
+        let style;
+        if (isRental) style = { color: '#ffb000', weight: 4, opacity: 0.9, dashArray: '1 6' }; // amber, bike/scooter share
+        else if (isWalk) style = { color: '#7dff5c', weight: 3, opacity: 0.9, dashArray: '4 6' };
+        else style = { color: '#33ff00', weight: 5, opacity: 0.9, dashArray: null };
+        L.polyline(geom, style).addTo(tripLayerGroup);
         geom.forEach((p) => bounds.push(p));
       });
     }

@@ -43,3 +43,10 @@ services:
         sync: false
       - key: TRANSITOUS_BASE_URL
         sync: false
+      # Push notifications for followed-route alerts (optional). FCM_SERVICE_ACCOUNT
+      # is the whole Firebase service-account JSON on one line; leave unset and
+      # push is off (in-app/web notifications still work). See README.
+      - key: FCM_SERVICE_ACCOUNT
+        sync: false
+      - key: PUSH_CHECK_CRON
+        sync: false

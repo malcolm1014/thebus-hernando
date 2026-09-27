@@ -26,7 +26,10 @@ test('buildPlanQuery encodes preferences and coordinate overrides', () => {
   assert.match(withPrefs, /wheelchair=1/);
 
   const bare = TheBusTripPlanner.buildPlanQuery('A', 'B', {});
-  assert.doesNotMatch(bare, /maxTransfers|maxWalk|wheelchair/);
+  assert.doesNotMatch(bare, /maxTransfers|maxWalk|wheelchair|rental/);
+
+  const bike = TheBusTripPlanner.buildPlanQuery('A', 'B', { bikeShare: true });
+  assert.match(bike, /rental=1/);
 
   const coords = TheBusTripPlanner.buildPlanQuery('MY LOCATION', 'Publix', {}, { fromCoords: { lat: 28.5, lon: -82.6 } });
   assert.match(coords, /fromLat=28\.5/);
@@ -52,6 +55,21 @@ test('formatResult renders a retro itinerary with walk + bus legs', () => {
   assert.match(out, /1 TRANSFER/);
   assert.match(out, /WALK 0\.47 MI TO MARION TRANSIT CTR/);
   assert.match(out, /BUS 200 \(HART\) -> ORLANDO/);
+});
+
+test('renders a GBFS bike/scooter-share leg distinctly', () => {
+  const out = TheBusTripPlanner.formatResult({
+    from: { name: 'A' }, to: { name: 'B' },
+    itineraries: [{
+      durationMinutes: 30, transfers: 0, departure: '2026-09-27T14:00:00Z', arrival: '2026-09-27T14:30:00Z',
+      legs: [
+        { mode: 'RENTAL', rental: { systemName: 'Lime', formFactor: 'scooter' }, to: 'Downtown', distanceMeters: 1300, durationMinutes: 8 },
+        { mode: 'BUS', routeName: '5', from: 'Downtown', to: 'B', departure: '2026-09-27T14:10:00Z', arrival: '2026-09-27T14:30:00Z' },
+      ],
+    }],
+  });
+  assert.match(out, /BIKE\/SCOOTER SHARE \(LIME\)/);
+  assert.match(out, /0\.81 MI TO DOWNTOWN/);
 });
 
 test('formatResult states plainly when no route is found', () => {

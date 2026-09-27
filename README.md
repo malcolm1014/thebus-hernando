@@ -87,10 +87,18 @@ thebus-hernando/
                                A->B journeys (the "Tier 2" online planner,
                                see "Trip planning" below) -- geocode + plan,
                                normalized to a compact itinerary shape
+      push.js                   sends Firebase Cloud Messaging (FCM HTTP v1)
+                               notifications via Node crypto (no firebase-admin),
+                               gated on FCM_SERVICE_ACCOUNT -- see "Push
+                               notifications server" below
+      pushRegistry.js           token -> followed-routes registry + alert
+                               matching for the push cron
     server.js                 GET /api/version, GET /api/download,
                                GET /api/live-buses, GET /api/service-alerts,
                                GET /api/predictions, GET /api/geocode,
-                               GET /api/plan, POST /api/refresh (secret-protected)
+                               GET /api/plan, POST /api/push/register,
+                               POST /api/push/unregister, POST /api/refresh
+                               (secret-protected)
     test/                     node --test unit tests (transform, gtfsParse, ETL safety check,
                                passio shaping, shape-polyline simplification) -- also run in CI
                                (.github/workflows/backend-tests.yml) on every push, though it
@@ -1033,10 +1041,22 @@ a random local road.
 
 **Preferences** (panel checkboxes; persisted on-device via `TheBusStorage`,
 and also applied to the terminal `PLAN` command): fewer transfers, less
-walking, and wheelchair-accessible. These map to MOTIS plan params in
-`/api/plan` — `maxTransfers`, `maxPreTransitTime`/`maxPostTransitTime`, and
-`pedestrianProfile=WHEELCHAIR` respectively (query params `maxTransfers`,
-`maxWalk` in minutes, `wheelchair=1`).
+walking, wheelchair-accessible, and **bike/scooter share**. These map to
+MOTIS plan params in `/api/plan` — `maxTransfers`,
+`maxPreTransitTime`/`maxPostTransitTime`, `pedestrianProfile=WHEELCHAIR`,
+and (for shared mobility) adding the GBFS `RENTAL` mode to
+`preTransitModes`/`postTransitModes`/`directModes` (query params
+`maxTransfers`, `maxWalk` minutes, `wheelchair=1`, `rental=1`).
+
+**Multimodal via GBFS**: with bike/scooter share enabled, MOTIS blends
+shared-mobility legs (from any GBFS feed Transitous has for the area) into
+the first-mile/last-mile, so a plan can be "scoot 0.8 mi → bus → walk".
+Rental legs are labeled distinctly ("BIKE/SCOOTER SHARE (system)"), drawn
+in amber on the map, and normalized with their system/form-factor. Because
+the exact mode name could differ across MOTIS versions, the mode is
+configurable (`TRANSITOUS_RENTAL_MODE`, default `RENTAL`) and a
+rental-enabled plan MOTIS rejects **auto-retries walk-only** — so enabling
+shared mobility can only ever add options, never break a plan.
 
 **Saved trips**: a planned text trip can be saved (`[ SAVE THIS TRIP ]`)
 and re-planned in one tap from the panel's SAVED TRIPS list — stored
@@ -1100,6 +1120,44 @@ hidden and stop popups show schedule only — exactly the prior behavior.
 Our dataset namespaces stop ids as `<agencyId>:<rawId>`, so the predictions
 endpoint strips that prefix before matching the raw agency stop_id the RT
 feed uses.
+
+## Push notifications server
+
+For alerts that reach a rider while the app is **fully closed**, the backend
+can push via **Firebase Cloud Messaging (FCM)**. It's entirely optional and
+gated on config — with nothing set up, followed-route alerts still work in
+the foreground (local + web notifications), this just adds the closed-app path.
+
+How it works:
+- The client (`@capacitor/push-notifications`, `frontend/www/js/pushClient.js`)
+  registers the device's FCM token and posts it with the rider's followed
+  route ids to `POST /api/push/register` (updated on every follow/unfollow).
+- `src/pushRegistry.js` stores token→routes (in memory, persisted to
+  `data/push-registry.json`; devices re-register on launch after a cold
+  environment).
+- A cron (`PUSH_CHECK_CRON`, default every 2 min) runs `checkAndPushAlerts()`:
+  fetch HART's active alerts, find every registered device whose followed
+  routes an alert touches and that hasn't been notified for it yet, and send.
+- `src/push.js` sends via the **FCM HTTP v1 API using Node's built-in crypto**
+  (service-account JWT → OAuth2 token → `messages:send`) — no `firebase-admin`
+  dependency. Dead tokens (FCM 404) are dropped.
+
+Setup (one time):
+1. Create a Firebase project; add an **Android app** with package id
+   `com.savvysecurity.thebus`; download `google-services.json` into
+   `android/app/` and add the Firebase gradle plugin (standard Capacitor
+   push setup), then `npx cap sync android`.
+2. In Firebase → Project settings → Service accounts, **Generate new private
+   key**. Set the whole JSON as the `FCM_SERVICE_ACCOUNT` env var on Render
+   (one line). The server derives the project id from it.
+3. Redeploy. `GET`-ping the service to keep it warm, or use a paid instance —
+   the cron only fires while the instance is awake.
+
+Limitations, stated honestly: the free Render tier sleeps when idle (so the
+check pauses until the next request), and the in-memory registry resets on a
+cold environment (devices re-register on next launch). Both are the same
+free-tier realities the ETL cron and geocode cache already document; a paid
+instance + a datastore remove them.
 
 ## Keeping the payload lean
 

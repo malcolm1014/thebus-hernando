@@ -45,6 +45,7 @@
     if (p.fewerTransfers) params.push('maxTransfers=1');
     if (p.lessWalking) params.push('maxWalk=10'); // cap access/egress walking at ~10 min each end
     if (p.wheelchair) params.push('wheelchair=1');
+    if (p.bikeShare) params.push('rental=1'); // GBFS bike/scooter share for first/last mile
     return params.join('&');
   }
 
@@ -72,6 +73,29 @@
     return `${mode === 'BUS' ? 'BUS' : mode} ${route}${agency}`.trim();
   }
 
+  // A "self-powered" access leg (walk or a GBFS shared bike/scooter/car),
+  // rendered with a distance instead of a route number.
+  function isActiveLeg(leg) {
+    const mode = (leg.mode || '').toUpperCase();
+    return mode === 'WALK' || mode === 'BIKE' || mode === 'RENTAL' || mode === 'SCOOTER' || mode === 'CAR' || !!leg.rental;
+  }
+
+  /** Terminal-style text for an active leg, e.g. "WALK 0.5 MI TO X" or "BIKE SHARE (LIME) 0.8 MI TO X". */
+  function activeLegText(leg) {
+    const mode = (leg.mode || '').toUpperCase();
+    let verb = 'WALK';
+    if (leg.rental || mode === 'RENTAL' || mode === 'BIKE' || mode === 'SCOOTER') {
+      const sys = leg.rental && leg.rental.systemName ? ` (${leg.rental.systemName.toUpperCase()})` : '';
+      verb = `BIKE/SCOOTER SHARE${sys}`;
+    } else if (mode === 'CAR') {
+      verb = 'DRIVE';
+    }
+    const dist = leg.distanceMeters != null ? ` ${(leg.distanceMeters / 1609.34).toFixed(2)} MI` : '';
+    const dest = leg.to ? ` TO ${leg.to.toUpperCase()}` : '';
+    const dur = fmtDuration(leg.durationMinutes);
+    return `${verb}${dist}${dest}${dur ? ` (${dur})` : ''}`;
+  }
+
   /** Turns one planner result into retro-terminal text (multi-line string; #history renders pre-wrap). */
   function formatResult(result) {
     const from = (result.from && result.from.name ? result.from.name : 'START').toUpperCase();
@@ -95,12 +119,8 @@
       lines.push(meta ? `${head}  (${meta})` : head);
 
       (it.legs || []).forEach((leg) => {
-        if ((leg.mode || '').toUpperCase() === 'WALK') {
-          const dist = leg.distanceMeters != null
-            ? ` ${(leg.distanceMeters / 1609.34).toFixed(2)} MI`
-            : '';
-          const dest = leg.to ? ` TO ${leg.to.toUpperCase()}` : '';
-          lines.push(`  WALK${dist}${dest} (${fmtDuration(leg.durationMinutes) || '~'})`);
+        if (isActiveLeg(leg)) {
+          lines.push(`  ${activeLegText(leg)}`);
         } else {
           lines.push(`  ${modeLabel(leg)}${leg.headsign ? ' -> ' + leg.headsign.toUpperCase() : ''}`);
           const board = leg.from ? leg.from.toUpperCase() : '';
@@ -178,7 +198,7 @@
   }
 
   // Small formatting helpers the panel renderer reuses.
-  const format = { time: fmtTime, duration: fmtDuration, modeLabel };
+  const format = { time: fmtTime, duration: fmtDuration, modeLabel, isActiveLeg, activeLegText };
 
   global.TheBusTripPlanner = { parseCommand, plan, planStructured, formatResult, format, buildPlanQuery };
 })(typeof window !== 'undefined' ? window : this);

@@ -8,6 +8,8 @@ const { fetchLiveBuses } = require('./src/passio');
 const { fetchLiveBuses: fetchPascoLiveBuses } = require('./src/pascoRealtime');
 const { fetchLiveBuses: fetchHartLiveBuses } = require('./src/swiftlyRealtime');
 const { fetchServiceAlerts, predictionsForStop } = require('./src/swiftlyGtfsRt');
+const push = require('./src/push');
+const pushRegistry = require('./src/pushRegistry');
 const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { planTrip, PlaceNotFoundError } = require('./src/tripPlanner');
@@ -45,6 +47,7 @@ const planRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 15 });
 // bound abuse of the public endpoints.
 const alertsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
 const predictionsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
+const pushRegisterRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 
 let etlRunning = false;
 
@@ -212,6 +215,29 @@ app.get('/api/predictions', predictionsRateLimit, async (req, res) => {
 });
 
 /**
+ * POST /api/push/register  { token, routes: [rawRouteId, ...] }
+ * Registers a device's FCM token and the (raw agency) route ids it wants
+ * service-alert notifications for. Idempotent -- re-posting updates the
+ * route set. Always accepted (stored) even when FCM isn't configured
+ * server-side; pushes only actually send once FCM_SERVICE_ACCOUNT is set.
+ */
+app.post('/api/push/register', pushRegisterRateLimit, express.json({ limit: '10kb' }), (req, res) => {
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  const routes = req.body && Array.isArray(req.body.routes) ? req.body.routes : [];
+  if (!token) return res.status(400).json({ error: 'missing token' });
+  pushRegistry.register(token, routes);
+  res.json({ ok: true, pushConfigured: push.isConfigured() });
+});
+
+/** POST /api/push/unregister  { token } */
+app.post('/api/push/unregister', pushRegisterRateLimit, express.json({ limit: '10kb' }), (req, res) => {
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'missing token' });
+  pushRegistry.unregister(token);
+  res.json({ ok: true });
+});
+
+/**
  * GET /api/geocode?q=<place name>
  * Resolves a free-text place name (a business, school, landmark -- not
  * necessarily a known transit stop) to coordinates via Nominatim, so the
@@ -283,6 +309,7 @@ app.get('/api/plan', planRateLimit, express.json(), async (req, res) => {
     if (Number.isFinite(mins) && mins > 0) prefs.maxWalkSeconds = Math.round(mins * 60);
   }
   if (req.query.wheelchair === '1' || req.query.wheelchair === 'true') prefs.wheelchair = true;
+  if (req.query.rental === '1' || req.query.rental === 'true') prefs.rental = true; // GBFS bike/scooter share
 
   try {
     const result = await planTrip({
@@ -425,6 +452,41 @@ async function main() {
       }
     });
     console.log(`[server] scheduled ETL cron: "${config.etlCron}"`);
+  }
+
+  // Push notifications: check alerts and push to matching registered devices.
+  // Only meaningful when both a Swiftly key (for the alerts feed) and FCM
+  // credentials are configured; otherwise this stays idle.
+  if (push.isConfigured() && config.swiftlyApiKey && config.pushCheckCron) {
+    cron.schedule(config.pushCheckCron, checkAndPushAlerts);
+    console.log(`[server] scheduled push-alert cron: "${config.pushCheckCron}"`);
+  } else {
+    console.log('[server] push-alert cron not scheduled (needs FCM_SERVICE_ACCOUNT + SWIFTLY_API_KEY).');
+  }
+}
+
+/**
+ * One push cycle: fetch HART's active alerts, find every registered device
+ * whose followed routes an alert touches (and that hasn't been notified for
+ * that alert yet), and send it an FCM message. Dead tokens (FCM 404) are
+ * dropped. Safe to call on a timer; never throws.
+ */
+async function checkAndPushAlerts() {
+  if (!push.isConfigured() || !config.swiftlyApiKey) return;
+  try {
+    const { alerts } = await fetchServiceAlerts(config.swiftlyHartAgencyKey);
+    const sends = pushRegistry.pendingSends(alerts);
+    for (const s of sends) {
+      try {
+        const result = await push.sendToToken(s.token, { title: s.title, body: s.body, data: { alertId: s.alertId } });
+        if (result.unregister) pushRegistry.unregister(s.token);
+      } catch (err) {
+        console.error('[server] push send failed:', err.message);
+      }
+    }
+    if (sends.length) console.log(`[server] pushed ${sends.length} alert notification(s).`);
+  } catch (err) {
+    console.error('[server] push-alert check failed:', err.message);
   }
 }
 

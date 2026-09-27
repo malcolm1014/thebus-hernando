@@ -20,6 +20,7 @@
     "@capacitor/geolocation": "^6.1.0",
     "@capacitor/local-notifications": "^6.1.0",
     "@capacitor/preferences": "^6.0.2",
+    "@capacitor/push-notifications": "^6.0.3",
     "capacitor-valhalla-routing": "file:./plugins/valhalla-routing"
   },
   "devDependencies": {

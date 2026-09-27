@@ -143,9 +143,15 @@ function normalizeLeg(leg) {
   const geo = pick(leg, ['legGeometry', 'geometry']);
   const encoded = geo && typeof geo === 'object' ? pick(geo, ['points']) : (typeof geo === 'string' ? geo : null);
   const geometry = encoded ? decodePolyline(encoded) : [];
+  const rentalRaw = pick(leg, ['rental']);
+  const rental = rentalRaw ? {
+    systemName: pick(rentalRaw, ['systemName', 'system_name', 'systemId', 'system_id']) != null ? String(pick(rentalRaw, ['systemName', 'system_name', 'systemId', 'system_id'])) : null,
+    formFactor: pick(rentalRaw, ['formFactor', 'form_factor']) != null ? String(pick(rentalRaw, ['formFactor', 'form_factor'])) : null,
+  } : null;
   return {
     mode: pick(leg, ['mode']) || 'UNKNOWN',
     geometry, // [[lat,lon],...] for drawing the leg on the map (may be [])
+    rental, // GBFS shared-mobility info when this is a rental leg, else null
     routeName: (() => {
       const r = pick(leg, ['routeShortName', 'routeLongName', 'route']);
       return r != null ? String(r) : null;
@@ -198,6 +204,14 @@ function buildPlanUrl({ fromLatLon, toLatLon, time, arriveBy, prefs }) {
   if (p.wheelchair) {
     url.searchParams.set('pedestrianProfile', 'WHEELCHAIR');
   }
+  // Multimodal: allow GBFS shared mobility (bike/scooter/car share) for the
+  // first-mile, last-mile, and direct portions, in addition to walking.
+  if (p.rental) {
+    const modes = `WALK,${config.transitousRentalMode || 'RENTAL'}`;
+    url.searchParams.set('preTransitModes', modes);
+    url.searchParams.set('postTransitModes', modes);
+    url.searchParams.set('directModes', modes);
+  }
   return url;
 }
 
@@ -223,7 +237,15 @@ async function planTrip({ from, to, fromCoords, toCoords, time, arriveBy, prefs 
   if (cached && Date.now() < cached.expiresAt) return cached.data;
 
   const url = buildPlanUrl({ fromLatLon: originLatLon, toLatLon: `${dest.lat},${dest.lon}`, time, arriveBy, prefs });
-  const res = await fetch(url, { headers: requestHeaders() });
+  let res = await fetch(url, { headers: requestHeaders() });
+  // Graceful multimodal fallback: if a shared-mobility (rental) plan is
+  // rejected (e.g. a MOTIS version that names the mode differently, or no
+  // GBFS coverage), retry once without it so enabling bike/scooter share can
+  // only ever ADD options, never break planning.
+  if (!res.ok && prefs && prefs.rental) {
+    const fallbackUrl = buildPlanUrl({ fromLatLon: originLatLon, toLatLon: `${dest.lat},${dest.lon}`, time, arriveBy, prefs: { ...prefs, rental: false } });
+    res = await fetch(fallbackUrl, { headers: requestHeaders() });
+  }
   if (!res.ok) throw new Error(`Transitous plan failed: HTTP ${res.status}`);
   const raw = await res.json();
 

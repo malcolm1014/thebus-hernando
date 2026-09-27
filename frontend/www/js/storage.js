@@ -249,6 +249,7 @@
       fewerTransfers: !!(p && p.fewerTransfers),
       lessWalking: !!(p && p.lessWalking),
       wheelchair: !!(p && p.wheelchair),
+      bikeShare: !!(p && p.bikeShare),
     };
   }
   async function setTripPrefs(prefs) {
@@ -256,6 +257,7 @@
       fewerTransfers: !!prefs.fewerTransfers,
       lessWalking: !!prefs.lessWalking,
       wheelchair: !!prefs.wheelchair,
+      bikeShare: !!prefs.bikeShare,
     });
   }
 
