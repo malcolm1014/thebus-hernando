@@ -90,10 +90,11 @@ module.exports = {
   // mainly for testing; there's no reason to change it in production.
   swiftlyBaseUrl: process.env.SWIFTLY_BASE_URL || 'https://api.goswift.ly',
   // Swiftly namespaces every agency by its own key (NOT our internal
-  // 'hart' agencyId). Confirm the exact value in your Swiftly dashboard
-  // / onboarding email -- it's overridable here so a wrong guess is a
-  // one-line env change, never a code change.
-  swiftlyHartAgencyKey: process.env.SWIFTLY_HART_AGENCY_KEY || 'hart',
+  // 'hart' agencyId). HART's Swiftly agencyKey is 'tampa' -- confirmed in
+  // the Swiftly onboarding email (2026-09-24); using 'hart' returns HTTP
+  // 403 on every feed. Still overridable via env in case Swiftly ever
+  // renames it, so a change stays a one-line env edit, never a code change.
+  swiftlyHartAgencyKey: process.env.SWIFTLY_HART_AGENCY_KEY || 'tampa',
 
   // Cross-agency / cross-country trip planning (src/tripPlanner.js). We
   // proxy the free, community-run Transitous instance of the MOTIS
