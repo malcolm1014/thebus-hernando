@@ -10,7 +10,7 @@
  * handled natively -- we only touch `.value` on submit and on history
  * recall, never mid-keystroke.
  */
-(function () {
+(function (global) {
   const historyEl = document.getElementById('history');
   const commandInput = document.getElementById('command-input');
   const bootStatus = document.getElementById('boot-status');
@@ -1054,4 +1054,4 @@
       window.Capacitor.Plugins.App.exitApp();
     });
   }
-})();
+})(typeof window !== 'undefined' ? window : globalThis);
