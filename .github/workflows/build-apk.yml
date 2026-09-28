@@ -11,6 +11,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Needed so the workflow's GITHUB_TOKEN can create/update the rolling
+    # debug release below (see the "Publish rolling debug release" step).
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: frontend
@@ -135,6 +139,29 @@ jobs:
           name: thebus-hernando-debug-apk
           path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: Publish rolling debug release (so the download link always serves the newest build)
+        # Only on real main builds -- not on a manual workflow_dispatch from a
+        # side branch. Publishes app-debug.apk to a single moving release
+        # (`latest-debug`, marked "latest"), so the public direct-download URL
+        #   https://github.com/<owner>/<repo>/releases/latest/download/app-debug.apk
+        # always resolves to the newest build with NO login and NO zip -- which
+        # a shortened link (TinyURL etc.) can point at permanently. Delete +
+        # recreate (with --cleanup-tag / --target) keeps the tag on the current
+        # commit and the notes fresh each build. `gh` is preinstalled on the
+        # runner and authenticates via GH_TOKEN; the job's contents:write
+        # permission (above) is what lets it write releases.
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          gh release delete latest-debug --yes --cleanup-tag || true
+          gh release create latest-debug "$APK" \
+            --target "${GITHUB_SHA}" \
+            --title "Fast Path — latest debug build" \
+            --notes "Automatically published from main (commit ${GITHUB_SHA}). This is the newest build; install the app-debug.apk below. Direct link: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk" \
+            --latest
 
       # ---- Release build (Play Store submission) ----
       # Only runs once the four secrets below are configured in this
