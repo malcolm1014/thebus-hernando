@@ -14,6 +14,7 @@ const { filterPlausibleBuses } = require('./src/liveBusSanity');
 const { geocode } = require('./src/geocode');
 const { planTrip, PlaceNotFoundError } = require('./src/tripPlanner');
 const { fetchStaticMap } = require('./src/staticmap');
+const { fetchTile } = require('./src/mapTiles');
 const { enhanceAnswer } = require('./src/grokAnswer');
 const { createRateLimiter } = require('./src/rateLimit');
 
@@ -27,6 +28,9 @@ app.use(cors());
 
 const geocodeRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
 const staticmapRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
+// A single map view pulls many tiles at once (and more while panning), so
+// this cap is deliberately high; the server-side tile cache absorbs repeats.
+const mapTilesRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 500 });
 // Generous relative to real usage (a device checks /api/version once per
 // app open, and only pulls /api/download when that check finds a newer
 // version -- both far under these limits for any real rider, including
@@ -365,6 +369,36 @@ app.get('/api/staticmap', staticmapRateLimit, async (req, res) => {
   } catch (err) {
     console.error('[server] static map fetch failed:', err);
     res.status(502).json({ error: 'static map unavailable', message: err.message });
+  }
+});
+
+/**
+ * GET /api/tiles/:z/:x/:y.png
+ * Live-map basemap tiles, proxied from Geoapify (see src/mapTiles.js). We
+ * deliberately do NOT let the app hit OSM's own tile server -- its usage
+ * policy forbids app use and blocks it on-device (a black map). A 503 here
+ * (no GEOAPIFY_API_KEY configured) tells the client to fall back to a keyless
+ * basemap; a 502 is an upstream failure. Tiles are static, so we allow long
+ * client-side caching.
+ */
+app.get('/api/tiles/:z/:x/:y.png', mapTilesRateLimit, async (req, res) => {
+  const z = Number(req.params.z);
+  const x = Number(req.params.x);
+  const y = Number(req.params.y);
+  if (![z, x, y].every(Number.isInteger)) {
+    return res.status(400).json({ error: 'tile coordinates must be integers' });
+  }
+  try {
+    const tile = await fetchTile(z, x, y);
+    if (!tile) {
+      return res.status(503).json({ error: 'map tiles not configured (set GEOAPIFY_API_KEY)' });
+    }
+    res.setHeader('Content-Type', tile.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=604800'); // a week; tiles are static
+    res.send(tile.buffer);
+  } catch (err) {
+    console.error('[server] map tile fetch failed:', err.message);
+    res.status(502).json({ error: 'map tile unavailable' });
   }
 });
 
