@@ -139,17 +139,23 @@ app.post('/api/refresh', express.json(), async (req, res) => {
  * (0, 0) "unset GPS" sentinel for a vehicle that hasn't gotten a real
  * fix yet).
  */
-app.get('/api/live-buses', async (req, res) => {
+// The live-bus sources that have a real-time feed wired in: Hernando
+// (Passio), Pasco (Avail/myStop), and HART (Swiftly) -- the last only when a
+// Swiftly key is configured, since an unset key would fail every poll. Shared
+// by /api/live-buses and /api/live-status so the two can never drift.
+function liveBusSources() {
   const sources = [
     { agencyId: 'hernando', fetch: fetchLiveBuses },
     { agencyId: 'pasco', fetch: fetchPascoLiveBuses },
   ];
-  // HART only joins the merge when a Swiftly key is configured -- an
-  // unset key would 401 every poll, so skip the source entirely rather
-  // than adding a guaranteed-failing fetch to Promise.allSettled.
   if (config.swiftlyApiKey) {
     sources.push({ agencyId: 'hart', fetch: fetchHartLiveBuses });
   }
+  return sources;
+}
+
+app.get('/api/live-buses', async (req, res) => {
+  const sources = liveBusSources();
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
 
   let buses = [];
@@ -168,6 +174,36 @@ app.get('/api/live-buses', async (req, res) => {
     return res.status(502).json({ error: 'live bus data unavailable' });
   }
   res.json({ buses, fetchedAt: new Date().toISOString() });
+});
+
+/**
+ * GET /api/live-status
+ * Per-agency real-time health for the Live Map's bus feeds: how many live
+ * vehicles each source returns right now, and the error if it failed. Purely
+ * diagnostic -- answers "why is only one county showing live buses?" by
+ * making each feed's state visible without digging through server logs. Same
+ * sources as /api/live-buses.
+ */
+app.get('/api/live-status', async (req, res) => {
+  const sources = liveBusSources();
+  const results = await Promise.allSettled(sources.map((s) => s.fetch()));
+  const agencies = results.map((result, i) => {
+    if (result.status === 'fulfilled') {
+      return { agencyId: sources[i].agencyId, ok: true, count: result.value.buses.length };
+    }
+    const reason = result.reason;
+    return {
+      agencyId: sources[i].agencyId,
+      ok: false,
+      count: 0,
+      error: String((reason && reason.message) || reason),
+    };
+  });
+  // Name any wired agency not in the list (e.g. HART when no Swiftly key is
+  // set) so "not configured" is distinguishable from "present but zero buses".
+  const configured = new Set(sources.map((s) => s.agencyId));
+  const notConfigured = ['hernando', 'pasco', 'hart'].filter((a) => !configured.has(a));
+  res.json({ agencies, notConfigured, fetchedAt: new Date().toISOString() });
 });
 
 /**

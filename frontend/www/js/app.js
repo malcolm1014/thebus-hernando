@@ -515,11 +515,11 @@
 
   /**
    * Starts (or stops) live bus polling based on which county is
-   * currently selected -- real-time positions only exist for the
-   * agencies in LIVE_TRACKING_AGENCIES (Hernando + Pasco today; HART has
-   * no source wired in yet, see README), so switching to HART says so
-   * plainly instead of leaving "CONNECTING TO LIVE TRACKER..." up
-   * forever for a county that will never actually connect. Selecting
+   * currently selected -- real-time positions exist for every agency in
+   * LIVE_TRACKING_AGENCIES: Hernando (Passio), Pasco (Avail/myStop), and
+   * HART (Swiftly). Selecting any OTHER agency (e.g. a future Citrus with
+   * no live feed) says so plainly instead of leaving "CONNECTING TO LIVE
+   * TRACKER..." up forever for a county that will never connect. Selecting
    * TRI-COUNTY (selectedAgencyId === null) polls every source at once,
    * unfiltered -- see startPolling()'s own agencyFilter param. Pulled
    * out of showMap() so selectCounty() can re-run it on every switch,
