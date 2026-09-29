@@ -51,21 +51,55 @@
     map = L.map(containerId, { zoomControl: true, attributionControl: true })
       .setView([28.55, -82.6], 11); // rough Hernando County center; refined by fitBounds once stop data draws
 
-    // Plain OpenStreetMap tiles -- CARTO's basemaps (used here previously)
-    // started requiring a free API key partway through this project and
-    // watermarked every tile without one. OSM's own tile servers need no
-    // key or account and never will (that's their whole model), so this
-    // can't silently break again the same way. It's a light basemap by
-    // default; the terminal-green "dark mode" look comes from a CSS
-    // filter on .leaflet-tile-pane (see terminal.css) rather than a
-    // purpose-built dark tileset -- real street names/labels are OSM's
-    // own standard style, just recolored, not a separate lookup.
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    // Basemap tiles are proxied through OUR backend (/api/tiles), which
+    // fetches them from Geoapify -- a provider whose terms cover app use,
+    // with the API key kept server-side (see backend/src/mapTiles.js). This
+    // replaces talking to tile.openstreetmap.org directly: OSM's tile usage
+    // policy forbids app/bulk use and blocks it on-device, which showed up
+    // as a black map (our route/stop overlays drew fine, but every street
+    // tile request failed). It's a light basemap; the terminal-green "dark
+    // mode" look still comes from the CSS filter on .leaflet-tile-pane (see
+    // terminal.css), so real street names/labels are OSM's own style, just
+    // recolored.
+    //
+    // If the proxy is unavailable (e.g. no GEOAPIFY_API_KEY set on the
+    // backend -> repeated 503s), we swap ONCE to a keyless basemap so the
+    // rider always gets real streets instead of a black screen. We only
+    // swap after several tile errors with zero successful loads, so a
+    // transient hiccup during normal panning never triggers it.
+    const tileBase = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    const FALLBACK_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+    let usingFallbackTiles = false;
+    function addFallbackTiles() {
+      if (usingFallbackTiles) return;
+      usingFallbackTiles = true;
+      L.tileLayer(FALLBACK_TILES, {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 19,
+      })
+        .on('tileerror', () => { basemapHealthy = false; })
+        .on('load', () => { basemapHealthy = true; })
+        .addTo(map);
+    }
+
+    let primaryTileErrors = 0;
+    let primaryTileLoaded = false;
+    const primaryTiles = L.tileLayer(`${tileBase}/api/tiles/{z}/{x}/{y}.png`, {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://www.geoapify.com/">Geoapify</a>',
       maxZoom: 19,
-    })
-      .on('tileerror', () => { basemapHealthy = false; })
+    });
+    primaryTiles
+      .on('tileload', () => { primaryTileLoaded = true; })
       .on('load', () => { basemapHealthy = true; }) // a full batch finishing means tiles ARE reaching this device again
+      .on('tileerror', () => {
+        basemapHealthy = false;
+        primaryTileErrors += 1;
+        // Real proxy failure (nothing has ever loaded) -> go keyless once.
+        if (!primaryTileLoaded && !usingFallbackTiles && primaryTileErrors >= 3) {
+          if (map.removeLayer) map.removeLayer(primaryTiles);
+          addFallbackTiles();
+        }
+      })
       .addTo(map);
 
     routeLayerGroup = L.layerGroup().addTo(map);

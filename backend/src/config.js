@@ -60,6 +60,13 @@ module.exports = {
   // scraping OSM's own tile server). Leaving this unset just means
   // answers stay text-only, exactly as before this feature existed.
   geoapifyApiKey: process.env.GEOAPIFY_API_KEY,
+  // Geoapify raster map-tile style for the live-map basemap, proxied via
+  // GET /api/tiles (see src/mapTiles.js). Any Geoapify map-style id works;
+  // a LIGHT style is expected here because the client applies a CSS invert
+  // filter to produce the terminal-green dark look (see terminal.css). The
+  // basemap reuses geoapifyApiKey above -- one Geoapify key powers both the
+  // static-map thumbnails and the live-map tiles.
+  mapTileStyle: process.env.MAP_TILE_STYLE || 'osm-bright-smooth',
 
   // Optional: when a rider's device is online, the rule-based query
   // engine's already-correct answer (see queryEngine.js -- this is
