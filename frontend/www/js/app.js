@@ -24,9 +24,11 @@
   const crtEl = document.getElementById('crt');
   const fxToggle = document.getElementById('fx-toggle');
 
+  const i18n = global.TheBusI18n || { t: (k) => k, apply: () => {}, setLang: () => {}, getLang: () => 'en' };
+
   function applyEffectsEnabled(enabled) {
     crtEl.classList.toggle('effects-off', !enabled);
-    fxToggle.textContent = enabled ? '[ EFFECTS: ON ]' : '[ EFFECTS: OFF ]';
+    fxToggle.textContent = i18n.t(enabled ? 'fx.on' : 'fx.off');
     fxToggle.setAttribute('aria-pressed', String(enabled));
   }
 
@@ -44,7 +46,7 @@
   const contrastToggle = document.getElementById('contrast-toggle');
   function applyHighContrast(enabled) {
     document.documentElement.setAttribute('data-contrast', enabled ? 'high' : 'normal');
-    contrastToggle.textContent = enabled ? '[ HIGH CONTRAST: ON ]' : '[ HIGH CONTRAST: OFF ]';
+    contrastToggle.textContent = i18n.t(enabled ? 'contrast.on' : 'contrast.off');
     contrastToggle.setAttribute('aria-pressed', String(enabled));
   }
   contrastToggle.addEventListener('click', async () => {
@@ -55,6 +57,30 @@
   TheBusStorage.getHighContrast()
     .then(applyHighContrast)
     .catch((err) => console.error('contrast toggle: failed to read stored preference', err));
+
+  // ---- Language toggle (English / Spanish) ----
+  const langToggle = document.getElementById('lang-toggle');
+  // Re-render everything that carries translatable text: the static [data-i18n]
+  // DOM, plus the few labels set from JS (the toggles reflect their own state).
+  function applyLanguage(lang) {
+    i18n.setLang(lang);
+    i18n.apply(document);
+    langToggle.textContent = i18n.t('lang.switch');
+    // Toggle labels depend on both language AND current on/off state, so
+    // recompute them from storage rather than from the static table.
+    TheBusStorage.getEffectsEnabled().then(applyEffectsEnabled).catch(() => {});
+    TheBusStorage.getHighContrast().then(applyHighContrast).catch(() => {});
+  }
+  if (langToggle) {
+    langToggle.addEventListener('click', async () => {
+      const next = i18n.getLang() === 'es' ? 'en' : 'es';
+      try { await TheBusStorage.setLang(next); } catch (e) { /* ignore */ }
+      applyLanguage(next);
+    });
+    TheBusStorage.getLang()
+      .then((lang) => applyLanguage(lang))
+      .catch(() => applyLanguage('en'));
+  }
 
   // ---- Crash reporting -- see backend's /api/crash-report for what
   // this deliberately does NOT send (query text, location). Best-effort:
@@ -1033,9 +1059,9 @@
       bootStatus.classList.add('ready');
       setStatus(source === 'bundled' ? 'READY (BUILT-IN SCHEDULE DATA)' : 'READY (OFFLINE CACHE)');
       renderFreshness();
-      appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
-      appendEntry('sys', 'GOING FARTHER? TRY "PLAN TAMPA TO ORLANDO" (NEEDS A CONNECTION).');
-      appendEntry('sys', 'FARES & TICKETS: TYPE "FARES" (OR "FARES HART").');
+      appendEntry('sys', i18n.t('seed.ask'));
+      appendEntry('sys', i18n.t('seed.farther'));
+      appendEntry('sys', i18n.t('seed.fares'));
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
@@ -1058,7 +1084,7 @@
       bootStatus.classList.add('ready');
       setStatus('DATASET SYNCED -- READY');
       if (!initialData) {
-        appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+        appendEntry('sys', i18n.t('seed.ask'));
       }
     }
     // Re-render regardless of whether anything NEW came down -- a check
