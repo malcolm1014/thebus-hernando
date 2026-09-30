@@ -17,6 +17,7 @@
   const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
   const HIGH_CONTRAST_KEY = 'thebus_high_contrast';
   const REMINDERS_KEY = 'thebus_arrival_reminders';
+  const FAVORITE_STOPS_KEY = 'thebus_favorite_stops';
   const LANG_KEY = 'thebus_lang';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
@@ -313,6 +314,28 @@
     return next;
   }
 
+  /** Favorite stops: array of { stopId, name, savedAt }, newest first. Powers the "favorites" departures board. */
+  async function getFavoriteStops() {
+    const list = await getJson(FAVORITE_STOPS_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  async function isFavoriteStop(stopId) {
+    return (await getFavoriteStops()).some((s) => String(s.stopId) === String(stopId));
+  }
+  async function addFavoriteStop(stop) {
+    if (!stop || stop.stopId == null) return getFavoriteStops();
+    const stopId = String(stop.stopId);
+    const existing = (await getFavoriteStops()).filter((s) => String(s.stopId) !== stopId);
+    const next = [{ stopId, name: stop.name || stopId, savedAt: Date.now() }, ...existing].slice(0, 30);
+    await setJson(FAVORITE_STOPS_KEY, next);
+    return next;
+  }
+  async function removeFavoriteStop(stopId) {
+    const next = (await getFavoriteStops()).filter((s) => String(s.stopId) !== String(stopId));
+    await setJson(FAVORITE_STOPS_KEY, next);
+    return next;
+  }
+
   /** UI language ('en' | 'es'). Defaults to 'en'. */
   async function getLang() {
     let value;
@@ -349,6 +372,7 @@
     getTripPrefs, setTripPrefs,
     getFollowedRoutes, isRouteFollowed, addFollowedRoute, removeFollowedRoute,
     getReminders, isReminderSet, addReminder, removeReminder,
+    getFavoriteStops, isFavoriteStop, addFavoriteStop, removeFavoriteStop,
     getLang, setLang,
     getHighContrast, setHighContrast,
   };

@@ -216,6 +216,13 @@
       return;
     }
 
+    // Favorites board: "FAVORITES", "MY STOPS", "SAVED STOPS" -> each favorite
+    // stop with its next arrivals. Computed offline from the schedule.
+    if (global.TheBusFavorites && /^\s*(?:favou?rites?|my stops|saved stops)\s*$/i.test(text)) {
+      withProcessingDelay(async () => { appendEntry('sys', await buildFavoritesBoard()); });
+      return;
+    }
+
     withProcessingDelay(async () => {
       let answer;
       try {
@@ -279,6 +286,24 @@
       });
       appendEntry('sys', `LIVE ARRIVALS AT ${String(stop.name).toUpperCase()}: ${lines.join('  ·  ')}`);
     } catch (e) { /* live arrivals are a bonus; the schedule answer already stands */ }
+  }
+
+  /** Build the "favorites" departures board from saved stops + the offline schedule. */
+  async function buildFavoritesBoard() {
+    let favs = [];
+    try { favs = await TheBusStorage.getFavoriteStops(); } catch (e) { favs = []; }
+    const now = new Date();
+    const stops = favs.map((f) => {
+      let arrivals = [];
+      try {
+        arrivals = (TheBusQueryEngine.nextArrivals(f.stopId, null, now, 3) || []).map((a) => ({
+          routeLabel: a.shortName || a.longName || a.routeId || 'BUS',
+          minutesUntil: a.minutesUntil,
+        }));
+      } catch (e) { arrivals = []; }
+      return { name: f.name, arrivals };
+    });
+    return TheBusFavorites.formatBoard(stops);
   }
 
   function submitAndClear() {
@@ -1062,6 +1087,7 @@
       appendEntry('sys', i18n.t('seed.ask'));
       appendEntry('sys', i18n.t('seed.farther'));
       appendEntry('sys', i18n.t('seed.fares'));
+      appendEntry('sys', i18n.t('seed.favorites'));
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();

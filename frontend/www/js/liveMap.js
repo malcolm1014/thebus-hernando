@@ -638,35 +638,60 @@
     }
   }
 
-  /** On popupopen, fold this stop's next live arrivals into its popup (leaves the base popup untouched if there are none, or offline). */
+  /** On popupopen, add a favorite toggle to the stop popup, plus (when online) its live arrivals and a reminder toggle. */
   async function augmentStopPopup(popup) {
     const marker = popup && popup._source;
     const info = marker && marker._stopInfo;
     if (!info) return;
-    if (!global.navigator || !navigator.onLine) return; // schedule-only popup offline
-    const predictions = await fetchStopPredictions(info.id);
-    if (!predictions.length) return; // no live data (offline, non-HART stop, or nothing due) -> keep the schedule-only popup
-    const lines = predictions.slice(0, 4).map((p) => {
-      const route = escapeHtml(String(routeShortNameFor(p.routeId)).toUpperCase());
-      const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
-      // Schedule adherence from the feed's delay (seconds): + = late.
-      let adherence = '';
-      if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
-        const m = Math.round(p.delaySeconds / 60);
-        if (m >= 1) adherence = ` (${m} MIN LATE)`;
-        else if (m <= -1) adherence = ` (${-m} MIN EARLY)`;
-        else adherence = ' (ON TIME)';
-      }
-      return `RT ${route}: ${mins}${adherence}`;
-    });
+
+    const online = !!(global.navigator && navigator.onLine);
+    const predictions = online ? await fetchStopPredictions(info.id) : [];
+
+    let html = info.baseHtml;
+    if (predictions.length) {
+      const lines = predictions.slice(0, 4).map((p) => {
+        const route = escapeHtml(String(routeShortNameFor(p.routeId)).toUpperCase());
+        const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
+        // Schedule adherence from the feed's delay (seconds): + = late.
+        let adherence = '';
+        if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
+          const m = Math.round(p.delaySeconds / 60);
+          if (m >= 1) adherence = ` (${m} MIN LATE)`;
+          else if (m <= -1) adherence = ` (${-m} MIN EARLY)`;
+          else adherence = ' (ON TIME)';
+        }
+        return `RT ${route}: ${mins}${adherence}`;
+      });
+      html += `<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`;
+    }
 
     const wrap = document.createElement('div');
-    wrap.innerHTML = `${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`;
+    wrap.innerHTML = html;
+
+    // ★ Favorite toggle -- works on ANY stop, online or off (saved locally;
+    // powers the terminal "favorites" departures board).
+    if (global.TheBusStorage && TheBusStorage.addFavoriteStop) {
+      const fav = document.createElement('button');
+      fav.className = 'route-follow-btn';
+      let isFav = false;
+      try { isFav = await TheBusStorage.isFavoriteStop(info.id); } catch (e) { isFav = false; }
+      const favLabel = () => { fav.textContent = isFav ? '★ FAVORITED -- TAP TO REMOVE' : '☆ FAVORITE THIS STOP'; };
+      favLabel();
+      fav.addEventListener('click', async () => {
+        try {
+          if (isFav) { await TheBusStorage.removeFavoriteStop(info.id); isFav = false; }
+          else { await TheBusStorage.addFavoriteStop({ stopId: info.id, name: info.name || info.id }); isFav = true; }
+          favLabel();
+        } catch (e) { /* leave the button as-is on failure */ }
+      });
+      wrap.appendChild(document.createElement('br'));
+      wrap.appendChild(fav);
+    }
 
     // "Remind me" toggle: buzz the rider when a bus is ~5 min from this stop
     // (reminders.js polls predictions + fires a local notification). Only
-    // wired when the reminders module + storage are present.
-    if (global.TheBusReminders && global.TheBusStorage && TheBusStorage.addReminder) {
+    // meaningful where there's a live feed, so gated on having predictions.
+    if (predictions.length && global.TheBusReminders && global.TheBusStorage && TheBusStorage.addReminder) {
       const btn = document.createElement('button');
       btn.className = 'route-follow-btn';
       let set = false;
