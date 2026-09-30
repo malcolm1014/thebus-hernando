@@ -64,6 +64,29 @@ function entitiesOf(feed) {
 }
 
 /**
+ * GTFS-rt OccupancyStatus -> a simple three-level crowding value the client
+ * renders (low/medium/high), or null when the feed doesn't report it. The
+ * spec's 9 values (and their JSON enum ordinals, which some serializers emit
+ * as numbers instead of names) collapse to the three levels riders actually
+ * act on, matching how Transit/Google surface crowding. Kept in the shared
+ * bus shape so Passio/Avail could populate it later if their feeds ever do.
+ */
+function simplifyOccupancy(status) {
+  if (status == null) return null;
+  const s = String(status).toUpperCase();
+  // low: plenty of room
+  if (s === 'EMPTY' || s === 'MANY_SEATS_AVAILABLE' || s === '0' || s === '1') return 'low';
+  // medium: filling up
+  if (s === 'FEW_SEATS_AVAILABLE' || s === '2') return 'medium';
+  // high: standing room only / full / not accepting
+  if (s === 'STANDING_ROOM_ONLY' || s === 'CRUSHED_STANDING_ROOM_ONLY'
+    || s === 'FULL' || s === 'NOT_ACCEPTING_PASSENGERS' || s === 'NOT_BOARDABLE'
+    || s === '3' || s === '4' || s === '5' || s === '6' || s === '8') return 'high';
+  // NO_DATA_AVAILABLE (7) or anything unrecognized -> don't show a guess
+  return null;
+}
+
+/**
  * One GTFS-rt VehiclePosition entity -> the shared bus shape the client
  * expects (same shape passio.js/pascoRealtime.js emit). Returns null for an
  * entity with no usable position, so a partial feed never yields NaN pins.
@@ -84,6 +107,7 @@ function normalizeVehicle(entity) {
   const id = vehId != null ? vehId : pick(entity, ['id']);
   const bearing = pick(pos, ['bearing', 'heading']);
   const speed = pick(pos, ['speed']);
+  const occupancy = simplifyOccupancy(pick(vp, ['occupancyStatus', 'occupancy_status']));
 
   return {
     busId: String(id != null ? id : `${routeId}-${lat}-${lon}`),
@@ -96,6 +120,8 @@ function normalizeVehicle(entity) {
     course: bearing != null ? Number(bearing) : null,
     speed: speed != null ? Number(speed) : null,
     tripId: tripId != null ? String(tripId) : null,
+    // Live crowding (low/medium/high) when the feed reports it, else null.
+    occupancy,
   };
 }
 
@@ -130,4 +156,4 @@ async function fetchLiveBuses() {
   return result;
 }
 
-module.exports = { fetchLiveBuses, normalizeVehicle };
+module.exports = { fetchLiveBuses, normalizeVehicle, simplifyOccupancy };
