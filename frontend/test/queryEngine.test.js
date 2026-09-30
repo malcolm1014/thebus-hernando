@@ -1206,3 +1206,14 @@ test('FIND_FIRST_LAST_BUS: no span note with only a single trip all day', async 
   const answer = await TheBusQueryEngine.answerQuery('first bus at Avalon Publix', TUESDAY_9AM_ET);
   assert.doesNotMatch(answer, /TRIPS TODAY/);
 });
+
+test('getLastLiveStop: set to the stop a next-arrival answer resolved, and reset by a non-stop query', async () => {
+  TheBusQueryEngine.setDataset(buildMockDataset());
+  await TheBusQueryEngine.answerQuery('when is the next bus at Avalon Publix', TUESDAY_9AM_ET);
+  const s = TheBusQueryEngine.getLastLiveStop();
+  assert.ok(s && /avalon publix/i.test(s.name), 'expected the resolved stop to be exposed for live-arrival augmentation');
+  // A query that resolves no specific stop must clear it (so app.js never
+  // shows a previous stop's live arrivals under an unrelated answer).
+  await TheBusQueryEngine.answerQuery('list stops on route 1', TUESDAY_9AM_ET);
+  assert.equal(TheBusQueryEngine.getLastLiveStop(), null);
+});

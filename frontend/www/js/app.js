@@ -216,8 +216,43 @@
       if (navigator.onLine) {
         const loc = TheBusQueryEngine.getLastLocation();
         if (loc) appendMapImage(loc.lat, loc.lon, loc.label);
+        // Fold this stop's LIVE arrivals (GTFS-RT) under the schedule answer,
+        // the terminal counterpart of the map's stop popup. HART-only today;
+        // a stop with no live feed just shows nothing extra.
+        const liveStop = TheBusQueryEngine.getLastLiveStop && TheBusQueryEngine.getLastLiveStop();
+        if (liveStop) appendLiveArrivals(liveStop);
       }
     });
+  }
+
+  /** Resolve a predictions route_id to a rider-facing label via the dataset (HART namespace). */
+  function liveRouteLabel(routeId) {
+    if (routeId == null) return 'BUS';
+    const r = lastDataset && lastDataset.routes && lastDataset.routes[`hart:${routeId}`];
+    const name = r && (r.shortName || r.longName);
+    return `ROUTE ${String(name || routeId)}`;
+  }
+
+  /** Fetch and append a stop's live next-arrivals (with schedule adherence) beneath a terminal answer. Best-effort. */
+  async function appendLiveArrivals(stop) {
+    try {
+      const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+      const res = await fetch(`${base}/api/predictions?stop=${encodeURIComponent(stop.id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const preds = Array.isArray(data.predictions) ? data.predictions : [];
+      if (!preds.length) return; // no live feed for this stop (offline, or non-HART) -> schedule answer stands alone
+      const lines = preds.slice(0, 3).map((p) => {
+        const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
+        let adherence = '';
+        if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
+          const m = Math.round(p.delaySeconds / 60);
+          adherence = m >= 1 ? ` (${m} MIN LATE)` : (m <= -1 ? ` (${-m} MIN EARLY)` : ' (ON TIME)');
+        }
+        return `${liveRouteLabel(p.routeId)}: ${mins}${adherence}`;
+      });
+      appendEntry('sys', `LIVE ARRIVALS AT ${String(stop.name).toUpperCase()}: ${lines.join('  ·  ')}`);
+    } catch (e) { /* live arrivals are a bonus; the schedule answer already stands */ }
   }
 
   function submitAndClear() {
