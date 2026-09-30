@@ -27,13 +27,14 @@ function freshSwiftlyModule(env = {}) {
   };
 }
 
-// A minimal slice of Swiftly's documented JSON /vehicles response shape:
-// { data: { vehicles: [ { id, routeId, routeShortName, tripId, loc: {...} } ] } }.
-function mockOk(vehicles) {
-  return async () => ({ ok: true, status: 200, json: async () => ({ data: { vehicles } }) });
+// A minimal slice of Swiftly's JSON serialization of the GTFS-realtime
+// vehicle-positions FeedMessage: { entity: [ { id, vehicle: { trip, vehicle,
+// position } } ] } -- the licensed feed (NOT the unlicensed /vehicles JSON).
+function feedRes(entities) {
+  return async () => ({ ok: true, status: 200, json: async () => ({ entity: entities }) });
 }
 
-test('shapes Swiftly JSON into the shared bus shape and sends the key as an Authorization header', async () => {
+test('shapes a GTFS-rt VehiclePosition into the shared bus shape and sends the key as an Authorization header', async () => {
   const originalFetch = global.fetch;
   let sawUrl = null;
   let sawAuth = null;
@@ -41,9 +42,15 @@ test('shapes Swiftly JSON into the shared bus shape and sends the key as an Auth
   global.fetch = async (url, opts) => {
     sawUrl = String(url);
     sawAuth = opts && opts.headers && opts.headers.Authorization;
-    return mockOk([
-      { id: '4021', routeId: '6', routeShortName: '6', tripId: 'T-99', headsign: 'Downtown',
-        loc: { lat: 27.95, lon: -82.46, heading: 90, speed: 12.5, time: 1700000000 } },
+    return feedRes([
+      {
+        id: 'v1',
+        vehicle: {
+          trip: { routeId: '6', tripId: 'T-99' },
+          vehicle: { id: '4021' },
+          position: { latitude: 27.95, longitude: -82.46, bearing: 90, speed: 12.5 },
+        },
+      },
     ])(url, opts);
   };
 
@@ -51,11 +58,12 @@ test('shapes Swiftly JSON into the shared bus shape and sends the key as an Auth
     const result = await mod.fetchLiveBuses();
     assert.equal(result.buses.length, 1);
     assert.deepEqual(result.buses[0], {
-      busId: '4021', routeId: '6', routeName: '6',
+      busId: '4021', routeId: '6', routeName: null,
       lat: 27.95, lon: -82.46, course: 90, speed: 12.5, tripId: 'T-99',
     });
     assert.equal(sawAuth, 'test-key');
-    assert.match(sawUrl, /\/real-time\/tampa\/vehicles$/); // default agency key (HART's Swiftly key is 'tampa')
+    // The licensed GTFS-rt feed, JSON serialization, default agency key 'tampa'.
+    assert.match(sawUrl, /\/real-time\/tampa\/gtfs-rt-vehicle-positions\?format=json$/);
   } finally {
     global.fetch = originalFetch;
     restore();
@@ -66,27 +74,32 @@ test('uses an overridden Swiftly agency key when set', async () => {
   const originalFetch = global.fetch;
   let sawUrl = null;
   const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: 'k', SWIFTLY_HART_AGENCY_KEY: 'other-agency' });
-  global.fetch = async (url, opts) => { sawUrl = String(url); return mockOk([])(url, opts); };
+  global.fetch = async (url, opts) => { sawUrl = String(url); return feedRes([])(url, opts); };
   try {
     await mod.fetchLiveBuses();
-    assert.match(sawUrl, /\/real-time\/other-agency\/vehicles$/);
+    assert.match(sawUrl, /\/real-time\/other-agency\/gtfs-rt-vehicle-positions\?format=json$/);
   } finally {
     global.fetch = originalFetch;
     restore();
   }
 });
 
-test('falls back to headsign for routeName, and skips a vehicle missing coordinates', async () => {
+test('tolerates snake_case fields, falls back to entity id, and skips a vehicle missing coordinates', async () => {
   const originalFetch = global.fetch;
   const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: 'k' });
-  global.fetch = mockOk([
-    { id: '1', routeId: '9', headsign: 'Airport', loc: { lat: 28.0, lon: -82.5 } }, // no routeShortName -> headsign
-    { id: '2', routeId: '9', loc: { lat: null, lon: null } },                        // no coords -> dropped
+  global.fetch = feedRes([
+    // snake_case serializer variant; no vehicle.vehicle.id -> falls back to entity id; no bearing/speed.
+    { id: 'e2', vehicle: { trip: { route_id: '9', trip_id: 'T2' }, position: { latitude: 28.0, longitude: -82.5 } } },
+    // no position -> dropped
+    { id: 'e3', vehicle: { trip: { routeId: '9' } } },
   ]);
   try {
     const result = await mod.fetchLiveBuses();
     assert.equal(result.buses.length, 1);
-    assert.equal(result.buses[0].routeName, 'Airport');
+    assert.equal(result.buses[0].busId, 'e2');
+    assert.equal(result.buses[0].routeId, '9');
+    assert.equal(result.buses[0].tripId, 'T2');
+    assert.equal(result.buses[0].routeName, null); // GTFS-rt has no rider-facing short name
     assert.equal(result.buses[0].course, null);
     assert.equal(result.buses[0].speed, null);
   } finally {
@@ -98,7 +111,7 @@ test('falls back to headsign for routeName, and skips a vehicle missing coordina
 test('throws when the upstream request fails, rather than silently returning empty', async () => {
   const originalFetch = global.fetch;
   const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: 'k' });
-  global.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  global.fetch = async () => ({ ok: false, status: 503, text: async () => 'upstream down' });
   try {
     await assert.rejects(() => mod.fetchLiveBuses(), /503/);
   } finally {
@@ -111,7 +124,7 @@ test('throws a clear error (and makes no request) when no key is configured', as
   const originalFetch = global.fetch;
   const { mod, restore } = freshSwiftlyModule({ SWIFTLY_API_KEY: undefined });
   let called = false;
-  global.fetch = async () => { called = true; return mockOk([])(); };
+  global.fetch = async () => { called = true; return feedRes([])(); };
   try {
     await assert.rejects(() => mod.fetchLiveBuses(), /SWIFTLY_API_KEY/);
     assert.equal(called, false);

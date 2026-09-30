@@ -1,35 +1,36 @@
 /**
  * Live vehicle positions for HART (Hillsborough Area Regional Transit,
- * Tampa) via Swiftly's real-time API. Unlike Hernando's Passio GO
- * (passio.js) and PascoGo's Avail/myStop (pascoRealtime.js) -- both
- * reverse-engineered from an unauthenticated web widget -- this is an
- * OFFICIAL, documented, key-authenticated API. HART is Swiftly's
- * customer; this is the vendor-sanctioned path, so there is no defensive
- * field-name guessing here the way the other two need.
+ * Tampa) via Swiftly's official, key-authenticated real-time API.
  *
- * Endpoint choice -- JSON `/vehicles`, not protobuf GTFS-RT:
- * Swiftly exposes the same live data two ways: a protobuf
- * `gtfs-rt-vehicle-positions` feed (the README's original sketch, back
- * when the key hadn't arrived) and a plain-JSON `/vehicles` endpoint.
- * This uses the JSON one on purpose:
- *   - No new dependency. Protobuf would pull in MobilityData's
- *     `gtfs-realtime-bindings` + protobufjs; this app deliberately keeps
- *     the backend dependency list tiny, and passio.js/pascoRealtime.js
- *     already establish "live vendor feed -> plain JSON -> normalize".
- *   - Richer, already-decoded data. Swiftly's JSON carries `routeShortName`
- *     and a real `tripId` per vehicle -- something neither Passio nor Avail
- *     provide (the whole vehicleAllocation.js machinery on the client
- *     exists to RECONSTRUCT a trip_id those feeds omit). We normalize to
- *     the exact shared bus shape the other two emit so the client works
- *     unchanged, and additionally pass Swiftly's `tripId` through for a
- *     future pass that could skip allocation entirely for HART.
+ * Endpoint choice -- the GTFS-rt vehicle-positions feed, NOT Swiftly's
+ * `/vehicles` JSON endpoint:
+ * Swiftly exposes live vehicle data two ways, and they are licensed
+ * SEPARATELY. Our API key's grant (per the Swiftly onboarding email) covers
+ * the GTFS-realtime feeds -- "GTFS-rt: vehicle positions", trip updates, and
+ * alerts -- and nothing else. The plain-JSON `/real-time/{agency}/vehicles`
+ * endpoint is a DIFFERENT Swiftly product (their "Real-time API"), which the
+ * key is NOT authorized for: hitting it returned HTTP 403 "Permission
+ * Denied" for every poll (confirmed via /api/live-status) even though the
+ * agency key ('tampa') and auth were correct -- alerts on the same key work
+ * fine. So we use the licensed `gtfs-rt-vehicle-positions` feed instead.
  *
- * Auth: Swiftly authenticates with an `Authorization: <key>` request
- * header (the raw key, no "Bearer " prefix). The key is a secret --
- * config.swiftlyApiKey, never committed; see .env.example. Proxied
- * through our own backend (like the other two feeds) so the mobile client
- * never holds the key or makes a cross-origin call, and a future API
- * change is a server update rather than an app-store release.
+ * We request Swiftly's JSON serialization (`?format=json`) of the standard
+ * GTFS-Realtime FeedMessage -- exactly like swiftlyGtfsRt.js does for
+ * alerts/trip-updates -- so there's NO protobuf dependency and the shape is
+ * the published GTFS-rt spec rather than a vendor guess. Protobuf<->JSON
+ * field names are canonically camelCase (vehicle, position, latitude,
+ * routeId, ...); we also accept snake_case defensively, since JSON
+ * serializers vary.
+ *
+ * Tradeoff vs. the old `/vehicles` endpoint: GTFS-rt VehiclePosition carries
+ * the GTFS route_id and trip_id but NOT a rider-facing route short name, so
+ * routeName comes back null here and the client resolves the label from the
+ * bundled schedule via routeId (HART's routes are in the dataset). Lat/lon,
+ * bearing, speed and a real trip id all still come through.
+ *
+ * Auth: Swiftly authenticates with an `Authorization: <key>` header (raw
+ * key, no "Bearer " prefix). Proxied through our backend (like the other
+ * feeds) so the mobile client never holds the key.
  */
 
 const config = require('./config');
@@ -46,28 +47,55 @@ const SWIFTLY_BASE = config.swiftlyBaseUrl || 'https://api.goswift.ly';
 const CACHE_TTL_MS = 8000;
 let cache = { data: null, expiresAt: 0 };
 
-function normalizeVehicle(v) {
-  // Swiftly nests the fix under `loc`; tolerate a flat shape too rather
-  // than crashing if a payload variant ever omits the wrapper.
-  const loc = v.loc || v;
-  const lat = loc.lat;
-  const lon = loc.lon;
+/** First present key from `names` on `obj` (tolerates camelCase vs snake_case serializers). */
+function pick(obj, names) {
+  if (!obj) return null;
+  for (const name of names) {
+    if (obj[name] != null) return obj[name];
+  }
+  return null;
+}
+
+/** A GTFS-rt FeedMessage entity[] array, across the spellings a serializer might use (or a bare array). */
+function entitiesOf(feed) {
+  if (Array.isArray(feed)) return feed;
+  const entities = pick(feed, ['entity', 'entities']);
+  return Array.isArray(entities) ? entities : [];
+}
+
+/**
+ * One GTFS-rt VehiclePosition entity -> the shared bus shape the client
+ * expects (same shape passio.js/pascoRealtime.js emit). Returns null for an
+ * entity with no usable position, so a partial feed never yields NaN pins.
+ */
+function normalizeVehicle(entity) {
+  const vp = pick(entity, ['vehicle']); // the VehiclePosition
+  if (!vp) return null;
+  const pos = pick(vp, ['position']);
+  const lat = pick(pos, ['latitude', 'lat']);
+  const lon = pick(pos, ['longitude', 'lon']);
   if (lat == null || lon == null) return null;
+
+  const trip = pick(vp, ['trip']) || {};
+  const routeId = pick(trip, ['routeId', 'route_id']);
+  const tripId = pick(trip, ['tripId', 'trip_id']);
+  const descriptor = pick(vp, ['vehicle']); // nested VehicleDescriptor { id, label }
+  const vehId = pick(descriptor, ['id', 'label']);
+  const id = vehId != null ? vehId : pick(entity, ['id']);
+  const bearing = pick(pos, ['bearing', 'heading']);
+  const speed = pick(pos, ['speed']);
+
   return {
-    busId: String(v.id != null ? v.id : `${v.routeId}-${lat}-${lon}`),
-    routeId: v.routeId != null ? String(v.routeId) : null,
-    // Prefer the rider-facing short name ("1", "6", "275LX"); fall back
-    // to the headsign so the client always has something to label with.
-    routeName: v.routeShortName != null ? String(v.routeShortName)
-      : (v.headsign != null ? String(v.headsign) : null),
+    busId: String(id != null ? id : `${routeId}-${lat}-${lon}`),
+    routeId: routeId != null ? String(routeId) : null,
+    // GTFS-rt VehiclePosition has no rider-facing short name; the client
+    // resolves the label from the bundled schedule via routeId.
+    routeName: null,
     lat: Number(lat),
     lon: Number(lon),
-    course: loc.heading != null ? Number(loc.heading) : null,
-    speed: loc.speed != null ? Number(loc.speed) : null,
-    // Bonus over Passio/Avail: Swiftly gives a real trip id directly.
-    // Passed through (not required by the shared shape) for a future
-    // pass that could use it instead of client-side trip allocation.
-    tripId: v.tripId != null ? String(v.tripId) : null,
+    course: bearing != null ? Number(bearing) : null,
+    speed: speed != null ? Number(speed) : null,
+    tripId: tripId != null ? String(tripId) : null,
   };
 }
 
@@ -85,9 +113,9 @@ async function fetchLiveBuses() {
   }
 
   const agencyKey = config.swiftlyHartAgencyKey;
-  const res = await fetch(`${SWIFTLY_BASE}/real-time/${agencyKey}/vehicles`, {
-    headers: { Authorization: apiKey },
-  });
+  const url = new URL(`${SWIFTLY_BASE}/real-time/${agencyKey}/gtfs-rt-vehicle-positions`);
+  url.searchParams.set('format', 'json');
+  const res = await fetch(url, { headers: { Authorization: apiKey, Accept: 'application/json' } });
   if (!res.ok) {
     let detail = '';
     try { detail = (await res.text() || '').slice(0, 300).replace(/\s+/g, ' ').trim(); } catch (e) { /* ignore */ }
@@ -95,11 +123,7 @@ async function fetchLiveBuses() {
   }
   const raw = await res.json();
 
-  // Swiftly wraps the array as { data: { vehicles: [...] } }.
-  const rawVehicles = (raw && raw.data && Array.isArray(raw.data.vehicles))
-    ? raw.data.vehicles
-    : [];
-  const buses = rawVehicles.map(normalizeVehicle).filter(Boolean);
+  const buses = entitiesOf(raw).map(normalizeVehicle).filter(Boolean);
 
   const result = { buses, fetchedAt: new Date().toISOString() };
   cache = { data: result, expiresAt: Date.now() + CACHE_TTL_MS };
