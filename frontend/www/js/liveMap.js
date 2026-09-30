@@ -220,7 +220,7 @@
       marker.bindPopup(baseHtml);
       // Stashed so the delegated popupopen handler can fetch live arrivals
       // for this specific stop and rebuild the popup around the base text.
-      marker._stopInfo = { id: stop.id, baseHtml };
+      marker._stopInfo = { id: stop.id, name: stop.name, baseHtml };
       bounds.push([stop.lat, stop.lon]);
     }
 
@@ -603,7 +603,39 @@
       }
       return `RT ${route}: ${mins}${adherence}`;
     });
-    popup.setContent(`${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`);
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `${info.baseHtml}<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`;
+
+    // "Remind me" toggle: buzz the rider when a bus is ~5 min from this stop
+    // (reminders.js polls predictions + fires a local notification). Only
+    // wired when the reminders module + storage are present.
+    if (global.TheBusReminders && global.TheBusStorage && TheBusStorage.addReminder) {
+      const btn = document.createElement('button');
+      btn.className = 'route-follow-btn';
+      let set = false;
+      try { set = await TheBusStorage.isReminderSet(info.id); } catch (e) { set = false; }
+      const label = () => { btn.textContent = set ? '⏰ REMINDER ON -- TAP TO CANCEL' : '⏰ REMIND ME (5 MIN)'; };
+      label();
+      btn.addEventListener('click', async () => {
+        try {
+          if (set) {
+            await TheBusStorage.removeReminder(info.id);
+            set = false;
+          } else {
+            await TheBusReminders.requestPermission();
+            await TheBusStorage.addReminder({ stopId: info.id, stopName: info.name || info.id, minutesBefore: 5 });
+            TheBusReminders.start();
+            set = true;
+          }
+          label();
+        } catch (e) { /* leave the button as-is on failure */ }
+      });
+      wrap.appendChild(document.createElement('br'));
+      wrap.appendChild(btn);
+    }
+
+    popup.setContent(wrap);
   }
 
   // --- Follow-a-route popup (service-alert notifications) ----------------
