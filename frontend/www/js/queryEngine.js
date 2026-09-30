@@ -227,6 +227,27 @@
     return /^route\b/i.test(name) ? `${prefix}${name.toUpperCase()}` : `${prefix}ROUTE ${name.toUpperCase()}`;
   }
 
+  // ---- Bilingual answer helpers ------------------------------------------
+  // tr() returns the English template by default -- so with no i18n loaded
+  // (the unit tests) or language 'en', every answer is byte-identical to what
+  // it always was, and the 85 English-asserting tests keep passing. When the
+  // rider has picked Spanish, it returns the Spanish template. {name}-style
+  // placeholders are substituted from params. Only the answers translated
+  // below pass an `es` template; anything still English simply omits it.
+  function currentLang() {
+    return (global.TheBusI18n && TheBusI18n.getLang) ? TheBusI18n.getLang() : 'en';
+  }
+  function tr(en, es, params) {
+    let s = (currentLang() === 'es' && es != null) ? es : en;
+    if (params) for (const k in params) s = s.split(`{${k}}`).join(String(params[k]));
+    return s;
+  }
+  /** Route label, with the "ROUTE" prefix localized ("RUTA") in Spanish -- used only inside translated answers so English answers stay untouched. */
+  function rl(route) {
+    const s = routeLabel(route);
+    return currentLang() === 'es' ? s.replace(/\bROUTE\b/g, 'RUTA') : s;
+  }
+
   /** Great-circle distance in miles -- accurate enough at county scale, no external library needed. */
   function haversineMiles(lat1, lon1, lat2, lon2) {
     const R = 3958.8; // Earth's radius in miles
@@ -428,25 +449,32 @@
       if (!next) {
         return routeEntry.arrivals.length === 0
           ? noPublishedTimeLine(routeEntry, stop.lat, stop.lon, stop.id, now)
-          : `${routeLabel(routeEntry)} -- NO MORE SERVICE TODAY`;
+          : tr('{route} -- NO MORE SERVICE TODAY', '{route} -- NO HAY MÁS SERVICIO HOY', { route: rl(routeEntry) });
       }
-      const day = next.isTomorrow ? 'TOMORROW ' : '';
+      const day = next.isTomorrow ? tr('TOMORROW ', 'MAÑANA ') : '';
       const timing = next.minutesUntil > COUNTDOWN_THRESHOLD_MIN
-        ? `${day}AT ${next.clock}`
-        : `${next.minutesUntil} MIN (${day}${next.clock})`;
-      return `${routeLabel(next)} -- ${timing} TOWARD ${next.headsign.toUpperCase() || 'N/A'}`;
+        ? tr('{day}AT {clock}', '{day}A LAS {clock}', { day, clock: next.clock })
+        : tr('{n} MIN ({day}{clock})', '{n} MIN ({day}{clock})', { n: next.minutesUntil, day, clock: next.clock });
+      return tr('{route} -- {timing} TOWARD {headsign}', '{route} -- {timing} HACIA {headsign}',
+        { route: rl(next), timing, headsign: next.headsign.toUpperCase() || 'N/A' });
     });
   }
 
   function withNextArrivals(stop, now) {
     const lines = nextArrivalLines(stop, now);
-    return lines.length ? `\nNEXT ARRIVALS:\n${lines.join('\n')}` : '';
+    return lines.length ? tr('\nNEXT ARRIVALS:\n{lines}', '\nPRÓXIMAS LLEGADAS:\n{lines}', { lines: lines.join('\n') }) : '';
   }
 
   /** "did you mean X, Y, or Z?" when fuzzy matching found 2-4 equally-good candidates instead of one clear winner -- see intentParser.js's pickBestOrFlagTie for why this can happen (git's "did you mean" precedent: list every tied candidate, don't silently guess). */
   function disambiguationMessage(entity, kind) {
     const names = [entity.name, ...entity.alternatives.map((a) => a.name)];
-    return `MULTIPLE ${kind} MATCH THAT: ${names.map((n) => n.toUpperCase()).join(' / ')}. TRY BEING MORE SPECIFIC.`;
+    const list = names.map((n) => n.toUpperCase()).join(' / ');
+    const kindLocalized = currentLang() === 'es'
+      ? (kind === 'ROUTES' ? 'RUTAS' : (kind === 'STOPS' ? 'PARADAS' : kind))
+      : kind;
+    return tr('MULTIPLE {kind} MATCH THAT: {list}. TRY BEING MORE SPECIFIC.',
+      'VARIAS {kind} COINCIDEN: {list}. INTENTA SER MÁS ESPECÍFICO.',
+      { kind: kindLocalized, list });
   }
 
   /** Past this many minutes out, show a plain clock time instead of a countdown -- "in 47 min" implies false precision this far ahead; industry-standard cutover for transit-arrival displays. */
@@ -674,7 +702,7 @@
           return locationFailureMessage('OR TRY: WHEN IS THE NEXT BUS AT <STOP NAME>?');
         }
         const nearest = nearestStopToPoint(pos.lat, pos.lon);
-        if (!nearest) return 'NO STOPS ON FILE.';
+        if (!nearest) return tr('NO STOPS ON FILE.', 'NO HAY PARADAS EN ARCHIVO.');
         parsed = { ...parsed, stop: { id: nearest.stop.id, name: nearest.stop.name, score: 1, alternatives: [] } };
         usedGps = true;
         setLastContextStop(nearest.stop);
@@ -688,8 +716,9 @@
       const servesStop = stop.routes.some((r) => r.routeId === parsed.route.id);
       if (!servesStop) {
         const route = dataset.routes[parsed.route.id];
-        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || tr('NONE ON FILE', 'NINGUNA EN ARCHIVO');
+        return tr('{route} DOES NOT SERVE {stop}. ROUTES HERE: {here}.', '{route} NO PASA POR {stop}. RUTAS AQUÍ: {here}.',
+          { route: rl(route), stop: stop.name.toUpperCase(), here: routesHere });
       }
     }
 
@@ -697,11 +726,12 @@
     const arrivals = nextArrivals(parsed.stop.id, parsed.route ? parsed.route.id : null, now, 3);
 
     const lines = arrivals.map((a) => {
-      const day = a.isTomorrow ? 'TOMORROW ' : '';
+      const day = a.isTomorrow ? tr('TOMORROW ', 'MAÑANA ') : '';
       const timing = a.minutesUntil > COUNTDOWN_THRESHOLD_MIN
-        ? `${day}AT ${a.clock}`
-        : `${a.minutesUntil} MIN (${day}${a.clock})`;
-      return `${routeLabel(a)} -- ${timing} TOWARD ${a.headsign.toUpperCase() || 'N/A'}`;
+        ? tr('{day}AT {clock}', '{day}A LAS {clock}', { day, clock: a.clock })
+        : tr('{n} MIN ({day}{clock})', '{n} MIN ({day}{clock})', { n: a.minutesUntil, day, clock: a.clock });
+      return tr('{route} -- {timing} TOWARD {headsign}', '{route} -- {timing} HACIA {headsign}',
+        { route: rl(a), timing, headsign: a.headsign.toUpperCase() || 'N/A' });
     });
 
     // Only appended (once, to the first line) when the rider named a
@@ -728,16 +758,17 @@
       // different situation from "ran today, already finished."
       lines.push(r.arrivals.length === 0
         ? noPublishedTimeLine(r, stop.lat, stop.lon, stop.id, now)
-        : `${routeLabel(r)} -- NO MORE SERVICE TODAY`);
+        : tr('{route} -- NO MORE SERVICE TODAY', '{route} -- NO HAY MÁS SERVICIO HOY', { route: rl(r) }));
     }
 
-    const stopLabel = usedGps ? `${stop.name.toUpperCase()} (NEAREST TO YOU)`
-      : usedContext ? `${stop.name.toUpperCase()} (SAME STOP AS BEFORE)`
-      : stop.name.toUpperCase();
+    const upperName = stop.name.toUpperCase();
+    const stopLabel = usedGps ? tr('{s} (NEAREST TO YOU)', '{s} (LA MÁS CERCANA A TI)', { s: upperName })
+      : usedContext ? tr('{s} (SAME STOP AS BEFORE)', '{s} (LA MISMA PARADA DE ANTES)', { s: upperName })
+      : upperName;
     if (lines.length === 0) {
-      return `NO SERVICE TODAY AT ${stopLabel}.`;
+      return tr('NO SERVICE TODAY AT {s}.', 'HOY NO HAY SERVICIO EN {s}.', { s: stopLabel });
     }
-    return `NEXT ARRIVALS AT ${stopLabel}:\n${lines.join('\n')}`;
+    return tr('NEXT ARRIVALS AT {s}:\n{lines}', 'PRÓXIMAS LLEGADAS EN {s}:\n{lines}', { s: stopLabel, lines: lines.join('\n') });
   }
 
   /** "shop:pharmacy" -> "PHARMACY" -- drops the OSM key prefix and the category value's own underscores for a plain rider-facing label. */
@@ -814,8 +845,9 @@
       stop = dataset.stops[parsed.stop.id];
       const servesStop = stop.routes.some((r) => r.routeId === route.id);
       if (!servesStop) {
-        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || tr('NONE ON FILE', 'NINGUNA EN ARCHIVO');
+        return tr('{route} DOES NOT SERVE {stop}. ROUTES HERE: {here}.', '{route} NO PASA POR {stop}. RUTAS AQUÍ: {here}.',
+          { route: rl(route), stop: stop.name.toUpperCase(), here: routesHere });
       }
     } else {
       stop = route.stopIds
@@ -838,7 +870,8 @@
   function answerFindFirstLastBus(parsed, now) {
     if (!parsed.stop) {
       if (!lastContext.stop) {
-        return "I DIDN'T CATCH A STOP NAME. TRY: FIRST BUS AT <STOP NAME>? OR LAST BUS AT <STOP NAME>?";
+        return tr("I DIDN'T CATCH A STOP NAME. TRY: FIRST BUS AT <STOP NAME>? OR LAST BUS AT <STOP NAME>?",
+          "NO ENTENDÍ EL NOMBRE DE LA PARADA. PRUEBA: FIRST BUS AT <PARADA>? O LAST BUS AT <PARADA>?");
       }
       // Bare follow-up ("what about the last bus?") -- no GPS fallback
       // here (this intent never had one), just the stop/route we were
@@ -856,17 +889,18 @@
       const servesStop = stop.routes.some((r) => r.routeId === parsed.route.id);
       if (!servesStop) {
         const route = dataset.routes[parsed.route.id];
-        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
-        return `${routeLabel(route)} DOES NOT SERVE ${stop.name.toUpperCase()}. ROUTES HERE: ${routesHere}.`;
+        const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || tr('NONE ON FILE', 'NINGUNA EN ARCHIVO');
+        return tr('{route} DOES NOT SERVE {stop}. ROUTES HERE: {here}.', '{route} NO PASA POR {stop}. RUTAS AQUÍ: {here}.',
+          { route: rl(route), stop: stop.name.toUpperCase(), here: routesHere });
       }
     }
 
     const all = dayArrivals(parsed.stop.id, parsed.route ? parsed.route.id : null, now);
     if (all.length === 0) {
-      return `NO SERVICE TODAY AT ${stop.name.toUpperCase()}.`;
+      return tr('NO SERVICE TODAY AT {s}.', 'HOY NO HAY SERVICIO EN {s}.', { s: stop.name.toUpperCase() });
     }
     const picked = parsed.firstOrLast === 'last' ? all[all.length - 1] : all[0];
-    const label = parsed.firstOrLast === 'last' ? 'LAST BUS' : 'FIRST BUS';
+    const label = parsed.firstOrLast === 'last' ? tr('LAST BUS', 'ÚLTIMO AUTOBÚS') : tr('FIRST BUS', 'PRIMER AUTOBÚS');
 
     // Same-route service span, first bus to last -- distinct from
     // headwaySuffix's "right now" time-of-day window: a rider asking
@@ -877,10 +911,14 @@
     if (all.length >= 2) {
       const spanMinutes = all[all.length - 1].minutesUntil - all[0].minutesUntil;
       const avgHeadway = Math.round(spanMinutes / (all.length - 1));
-      spanNote = `\n${all.length} TRIPS TODAY, AVG SERVICE ABOUT EVERY ${avgHeadway} MIN (${all[0].clock} - ${all[all.length - 1].clock})`;
+      spanNote = tr('\n{n} TRIPS TODAY, AVG SERVICE ABOUT EVERY {avg} MIN ({a} - {b})',
+        '\n{n} VIAJES HOY, SERVICIO EN PROMEDIO CADA {avg} MIN ({a} - {b})',
+        { n: all.length, avg: avgHeadway, a: all[0].clock, b: all[all.length - 1].clock });
     }
 
-    return `${label} TODAY AT ${stop.name.toUpperCase()}:\n${routeLabel(picked)} -- AT ${picked.clock} TOWARD ${picked.headsign.toUpperCase() || 'N/A'}${spanNote}`;
+    return tr('{label} TODAY AT {stop}:\n{route} -- AT {clock} TOWARD {headsign}{span}',
+      '{label} HOY EN {stop}:\n{route} -- A LAS {clock} HACIA {headsign}{span}',
+      { label, stop: stop.name.toUpperCase(), route: rl(picked), clock: picked.clock, headsign: picked.headsign.toUpperCase() || 'N/A', span: spanNote });
   }
 
   /**
@@ -933,19 +971,23 @@
   const SELF_LOCATION_RE = /^(me|here|my location|my current location|my position)$/i;
 
   function knownStopAnswer(landmarkLabel, stop, now) {
-    const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    const routesHere = stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || tr('NONE ON FILE', 'NINGUNA EN ARCHIVO');
     setLastLocation(stop.lat, stop.lon, stop.name);
     setLastContextStop(stop);
-    return `"${landmarkLabel.toUpperCase()}" IS A KNOWN STOP:\n${stop.name.toUpperCase()}\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(stop, now)}`;
+    return tr('"{label}" IS A KNOWN STOP:\n{name}\nSERVED BY ROUTES: {routes}{tail}',
+      '"{label}" ES UNA PARADA CONOCIDA:\n{name}\nRUTAS QUE PASAN: {routes}{tail}',
+      { label: landmarkLabel.toUpperCase(), name: stop.name.toUpperCase(), routes: routesHere, tail: withNextArrivals(stop, now) });
   }
 
   function nearestToPointAnswer(landmarkLabel, lat, lon, now) {
     const best = nearestStopToPoint(lat, lon);
-    if (!best) return 'NO STOPS ON FILE.';
-    const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || 'NONE ON FILE';
+    if (!best) return tr('NO STOPS ON FILE.', 'NO HAY PARADAS EN ARCHIVO.');
+    const routesHere = best.stop.routes.map((r) => routeLabel(r).replace(/^ROUTE /, '')).join(', ') || tr('NONE ON FILE', 'NINGUNA EN ARCHIVO');
     setLastLocation(best.stop.lat, best.stop.lon, best.stop.name);
     setLastContextStop(best.stop);
-    return `NEAREST STOP TO ${landmarkLabel.toUpperCase()}:\n${best.stop.name.toUpperCase()} (${best.dist.toFixed(2)} MI AWAY)\nSERVED BY ROUTES: ${routesHere}${withNextArrivals(best.stop, now)}`;
+    return tr('NEAREST STOP TO {label}:\n{name} ({dist} MI AWAY)\nSERVED BY ROUTES: {routes}{tail}',
+      'PARADA MÁS CERCANA A {label}:\n{name} (A {dist} MI)\nRUTAS QUE PASAN: {routes}{tail}',
+      { label: landmarkLabel.toUpperCase(), name: best.stop.name.toUpperCase(), dist: best.dist.toFixed(2), routes: routesHere, tail: withNextArrivals(best.stop, now) });
   }
 
   /**
@@ -1503,7 +1545,7 @@
   async function answerQuery(text, now) {
     setLastLocation(null, null, null);
     lastLiveStop = null; // reset per answer; set again only if this one resolves a stop
-    if (!dataset) return 'DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.';
+    if (!dataset) return tr('DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.', 'DATOS NO CARGADOS. REVISA TU CONEXIÓN Y REINICIA.');
     const parsed = TheBusIntentParser.parseQuery(text, index);
     updateContextFromParsed(parsed);
 
