@@ -17,6 +17,7 @@
   const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
   const HIGH_CONTRAST_KEY = 'thebus_high_contrast';
   const REMINDERS_KEY = 'thebus_arrival_reminders';
+  const LANG_KEY = 'thebus_lang';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -312,6 +313,19 @@
     return next;
   }
 
+  /** UI language ('en' | 'es'). Defaults to 'en'. */
+  async function getLang() {
+    let value;
+    if (Preferences) ({ value } = await Preferences.get({ key: LANG_KEY }));
+    else value = global.localStorage ? localStorage.getItem(LANG_KEY) : null;
+    return value === 'es' ? 'es' : 'en';
+  }
+  async function setLang(lang) {
+    const value = lang === 'es' ? 'es' : 'en';
+    if (Preferences) await Preferences.set({ key: LANG_KEY, value });
+    else if (global.localStorage) localStorage.setItem(LANG_KEY, value);
+  }
+
   /** High-contrast accessibility mode (opt-in; defaults off -- the retro look is the app's identity). */
   async function getHighContrast() {
     let value;
@@ -335,6 +349,7 @@
     getTripPrefs, setTripPrefs,
     getFollowedRoutes, isRouteFollowed, addFollowedRoute, removeFollowedRoute,
     getReminders, isReminderSet, addReminder, removeReminder,
+    getLang, setLang,
     getHighContrast, setHighContrast,
   };
 })(window);

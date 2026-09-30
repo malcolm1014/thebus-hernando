@@ -27,6 +27,7 @@
              terminal look itself is never removed, only optional. -->
         <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
         <button type="button" id="contrast-toggle" aria-pressed="false">[ HIGH CONTRAST: OFF ]</button>
+        <button type="button" id="lang-toggle" aria-label="Switch language / Cambiar idioma">ESPAÑOL</button>
       </div>
 
       <!-- Active GTFS-Realtime service alerts (detours/closures), shown on
@@ -35,8 +36,8 @@
       <div id="alerts-banner" role="region" aria-label="Service alerts" aria-live="polite" hidden></div>
 
       <div id="view-tabs" role="tablist">
-        <button type="button" id="tab-terminal" class="view-tab active" role="tab" aria-selected="true">[ TERMINAL ]</button>
-        <button type="button" id="tab-map" class="view-tab" role="tab" aria-selected="false">[ LIVE MAP ]</button>
+        <button type="button" id="tab-terminal" class="view-tab active" role="tab" aria-selected="true" data-i18n="tab.terminal">[ TERMINAL ]</button>
+        <button type="button" id="tab-map" class="view-tab" role="tab" aria-selected="false" data-i18n="tab.map">[ LIVE MAP ]</button>
       </div>
 
       <div id="terminal-view">
@@ -82,37 +83,37 @@
         <!-- Cross-country trip planner (Transitous/MOTIS via /api/plan).
              Toggle bottom-right so it clears the zoom control (top-left),
              county selector (top-right) and bus-count status (bottom-left). -->
-        <button type="button" id="plan-trip-toggle" aria-expanded="false" aria-controls="trip-planner-panel">[ PLAN A TRIP ]</button>
+        <button type="button" id="plan-trip-toggle" aria-expanded="false" aria-controls="trip-planner-panel" data-i18n="planner.toggle">[ PLAN A TRIP ]</button>
         <div id="trip-planner-panel" hidden role="dialog" aria-label="Plan a trip">
           <div class="tp-header">
-            <span>PLAN A TRIP</span>
+            <span data-i18n="planner.header">PLAN A TRIP</span>
             <button type="button" id="tp-close" class="tp-close" aria-label="Close">X</button>
           </div>
-          <label class="tp-field" for="tp-from">FROM
+          <label class="tp-field" for="tp-from"><span data-i18n="planner.from">FROM</span>
             <span class="tp-field-row">
-              <input type="text" id="tp-from" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+              <input type="text" id="tp-from" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" data-i18n-placeholder="placeholder.stopAddrCity" />
               <button type="button" id="tp-here" class="tp-mini" title="Use my location" aria-label="Use my location">&#9678;</button>
             </span>
           </label>
           <div class="tp-swap-row">
             <button type="button" id="tp-swap" class="tp-mini" title="Swap start and destination" aria-label="Swap start and destination">&#8645;</button>
           </div>
-          <label class="tp-field" for="tp-to">TO
-            <input type="text" id="tp-to" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" />
+          <label class="tp-field" for="tp-to"><span data-i18n="planner.to">TO</span>
+            <input type="text" id="tp-to" autocomplete="off" placeholder="STOP, ADDRESS, OR CITY" data-i18n-placeholder="placeholder.stopAddrCity" />
           </label>
 
           <fieldset class="tp-prefs">
-            <legend>PREFERENCES</legend>
-            <label><input type="checkbox" id="tp-pref-transfers" /> FEWER TRANSFERS</label>
-            <label><input type="checkbox" id="tp-pref-walking" /> LESS WALKING</label>
-            <label><input type="checkbox" id="tp-pref-wheelchair" /> WHEELCHAIR ACCESSIBLE</label>
-            <label><input type="checkbox" id="tp-pref-bikeshare" /> ALLOW BIKE/SCOOTER SHARE</label>
+            <legend data-i18n="planner.prefs">PREFERENCES</legend>
+            <label><input type="checkbox" id="tp-pref-transfers" /> <span data-i18n="planner.fewerTransfers">FEWER TRANSFERS</span></label>
+            <label><input type="checkbox" id="tp-pref-walking" /> <span data-i18n="planner.lessWalking">LESS WALKING</span></label>
+            <label><input type="checkbox" id="tp-pref-wheelchair" /> <span data-i18n="planner.wheelchair">WHEELCHAIR ACCESSIBLE</span></label>
+            <label><input type="checkbox" id="tp-pref-bikeshare" /> <span data-i18n="planner.bikeShare">ALLOW BIKE/SCOOTER SHARE</span></label>
           </fieldset>
 
-          <button type="button" id="tp-go" class="tp-go">[ PLAN ]</button>
+          <button type="button" id="tp-go" class="tp-go" data-i18n="planner.go">[ PLAN ]</button>
 
           <div id="tp-saved-wrap" hidden>
-            <div class="tp-subhead">SAVED TRIPS</div>
+            <div class="tp-subhead" data-i18n="planner.saved">SAVED TRIPS</div>
             <div id="tp-saved"></div>
           </div>
 
@@ -127,15 +128,15 @@
        and only ever once (TheBusStorage.getOnboardingSeen()). -->
   <div id="onboard-location" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-location-title">
     <div class="modal-box">
-      <div id="onboard-location-title" class="modal-title">SHARE YOUR LOCATION?</div>
-      <p class="modal-body">
+      <div id="onboard-location-title" class="modal-title" data-i18n="onboard.location.title">SHARE YOUR LOCATION?</div>
+      <p class="modal-body" data-i18n="onboard.location.body">
         FAST PATH CAN FIND THE NEAREST STOP OR THE NEXT BUS NEAR YOU
         AUTOMATICALLY IF YOU SHARE YOUR LOCATION. YOU CAN ALWAYS SKIP
         THIS AND JUST TYPE A STOP OR PLACE NAME INSTEAD.
       </p>
       <div class="modal-actions">
-        <button type="button" id="onboard-location-yes" class="modal-btn">[ YES, SHARE LOCATION ]</button>
-        <button type="button" id="onboard-location-no" class="modal-btn">[ NOT NOW ]</button>
+        <button type="button" id="onboard-location-yes" class="modal-btn" data-i18n="onboard.location.yes">[ YES, SHARE LOCATION ]</button>
+        <button type="button" id="onboard-location-no" class="modal-btn" data-i18n="onboard.location.no">[ NOT NOW ]</button>
       </div>
     </div>
   </div>
@@ -143,7 +144,7 @@
   <div id="onboard-help" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="onboard-help-title">
     <div class="modal-box">
       <button type="button" id="onboard-help-close" class="modal-close" aria-label="Close">X</button>
-      <div id="onboard-help-title" class="modal-title">HOW TO USE FAST PATH</div>
+      <div id="onboard-help-title" class="modal-title" data-i18n="onboard.help.title">HOW TO USE FAST PATH</div>
       <p class="modal-body">
         START TYPING AND FAST PATH SUGGESTS STOPS, ROUTES, AND PLACES (WITH
         THE NEXT BUS TIME) -- TAP ONE FOR THE ANSWER. OR TYPE A FULL
@@ -177,6 +178,7 @@
 
   <script src="vendor/leaflet/leaflet.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/geocode.js"></script>
   <script src="js/grokEnhance.js"></script>
