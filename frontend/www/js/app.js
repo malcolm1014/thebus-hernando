@@ -598,6 +598,10 @@
   TheBusServiceAlerts.init(document.getElementById('alerts-banner'));
   if (global.TheBusRouteAlerts) TheBusRouteAlerts.init(); // set up the notification channel (native only; no-op on web)
   if (global.TheBusPushClient) TheBusPushClient.init(); // register for server push if already permitted (native only)
+  // Resume any arrival reminders the rider set in a previous session; the
+  // poll self-idles immediately when there are none, and the stop popup
+  // restarts it when a new reminder is added.
+  if (global.TheBusReminders) TheBusReminders.start();
 
   // ---- Live Map trip planner panel (Transitous via /api/plan) ----
   (function setupTripPlannerPanel() {

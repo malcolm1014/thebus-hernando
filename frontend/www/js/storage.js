@@ -16,6 +16,7 @@
   const TRIP_PREFS_KEY = 'thebus_trip_prefs';
   const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
   const HIGH_CONTRAST_KEY = 'thebus_high_contrast';
+  const REMINDERS_KEY = 'thebus_arrival_reminders';
 
   const hasCapacitor = !!(global.Capacitor && global.Capacitor.Plugins);
   const Filesystem = hasCapacitor ? global.Capacitor.Plugins.Filesystem : null;
@@ -283,6 +284,34 @@
     return next;
   }
 
+  /**
+   * Arrival reminders: array of { stopId, stopName, minutesBefore, createdAt }.
+   * One reminder per stop (keyed by stopId) is plenty -- "buzz me when a bus
+   * is ~N minutes from THIS stop." reminders.js polls live predictions and
+   * fires a local notification when one comes due.
+   */
+  async function getReminders() {
+    const list = await getJson(REMINDERS_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  async function isReminderSet(stopId) {
+    return (await getReminders()).some((r) => String(r.stopId) === String(stopId));
+  }
+  async function addReminder(reminder) {
+    if (!reminder || reminder.stopId == null) return getReminders();
+    const stopId = String(reminder.stopId);
+    const existing = (await getReminders()).filter((r) => String(r.stopId) !== stopId);
+    const minutesBefore = Number.isFinite(reminder.minutesBefore) ? reminder.minutesBefore : 5;
+    const next = [{ stopId, stopName: reminder.stopName || stopId, minutesBefore, createdAt: Date.now() }, ...existing].slice(0, 25);
+    await setJson(REMINDERS_KEY, next);
+    return next;
+  }
+  async function removeReminder(stopId) {
+    const next = (await getReminders()).filter((r) => String(r.stopId) !== String(stopId));
+    await setJson(REMINDERS_KEY, next);
+    return next;
+  }
+
   /** High-contrast accessibility mode (opt-in; defaults off -- the retro look is the app's identity). */
   async function getHighContrast() {
     let value;
@@ -305,6 +334,7 @@
     getSavedTrips, addSavedTrip, removeSavedTrip,
     getTripPrefs, setTripPrefs,
     getFollowedRoutes, isRouteFollowed, addFollowedRoute, removeFollowedRoute,
+    getReminders, isReminderSet, addReminder, removeReminder,
     getHighContrast, setHighContrast,
   };
 })(window);
