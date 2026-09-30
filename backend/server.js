@@ -431,6 +431,12 @@ app.get('/api/tiles/:z/:x/:y.png', mapTilesRateLimit, async (req, res) => {
     }
     res.setHeader('Content-Type', tile.contentType);
     res.setHeader('Cache-Control', 'public, max-age=604800'); // a week; tiles are static
+    // Allow the app (a different origin: the Capacitor webview / Pages) to
+    // READ the tile bytes via fetch() so it can store them for offline reuse
+    // (see frontend/tileCache.js). Without this, cross-origin fetch of the
+    // tile is blocked and the client falls back to a plain <img> (still shows
+    // online, just uncached).
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.send(tile.buffer);
   } catch (err) {
     console.error('[server] map tile fetch failed:', err.message);
