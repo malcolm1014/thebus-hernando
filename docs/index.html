@@ -3,25 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TriBus — Free Offline Transit for the Nature Coast &amp; Tampa Bay</title>
-<meta name="description" content="TriBus is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough (Tampa) transit riders. Ask in plain English, plan trips across agencies (and cross-country), track buses in real time, and get service alerts for your routes. Try it live in your browser. No logging. No accounts. Available for Android.">
+<title>Fast Path — Free Offline Transit for the Nature Coast &amp; Tampa Bay</title>
+<meta name="description" content="Fast Path is a free, offline-first transit assistant for Hernando, Pasco, and Hillsborough (Tampa) transit riders. Ask in plain English or Spanish, plan trips across agencies, track buses in real time, see how full they are, set arrival reminders, and get service alerts for your routes. Try it live in your browser. No logging. No accounts. Available for Android.">
 <link rel="icon" href="assets/icon.png">
 
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://malcolm1014.github.io/thebus-hernando/">
-<meta property="og:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta property="og:description" content="Free. No logging. No accounts. Offline ready. Live bus tracking, real-time arrivals, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trip planning. Try the real terminal live in your browser.">
+<meta property="og:title" content="Fast Path — Free Offline Transit for the Nature Coast & Tampa Bay">
+<meta property="og:description" content="Free. No logging. No accounts. Offline ready. Ask in English or Spanish. Live bus tracking with crowding, real-time arrivals, arrival reminders, favorite stops, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trip planning. Try the real terminal live in your browser.">
 <meta property="og:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="TriBus — Nature Coast to Tampa Bay Transit Terminal">
-<meta property="og:site_name" content="TriBus">
+<meta property="og:image:alt" content="Fast Path — Nature Coast to Tampa Bay Transit Terminal">
+<meta property="og:site_name" content="Fast Path">
 
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="TriBus — Free Offline Transit for the Nature Coast & Tampa Bay">
-<meta name="twitter:description" content="Free. No logging. No accounts. Offline ready. Live bus tracking, real-time arrivals, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trips. Try the real terminal live in your browser.">
+<meta name="twitter:title" content="Fast Path — Free Offline Transit for the Nature Coast & Tampa Bay">
+<meta name="twitter:description" content="Free. No logging. No accounts. Offline ready. Ask in English or Spanish. Live bus tracking with crowding, real-time arrivals, reminders, and service alerts across Hernando, Pasco, and Tampa Bay (HART) — plus cross-country trips. Try the real terminal live in your browser.">
 <meta name="twitter:image" content="https://malcolm1014.github.io/thebus-hernando/assets/og-image.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -95,6 +95,9 @@
     margin: 0 0 4px;
     color: var(--green);
     text-shadow: 0 0 10px var(--green-glow), 0 0 30px rgba(79,252,160,0.25);
+  }
+  @media (max-width: 480px) {
+    h1.title { font-size: 46px; letter-spacing: 3px; }
   }
 
   .subtitle {
@@ -368,14 +371,15 @@
 
 <header class="hero">
   <div class="wrap">
-    <img class="logo" src="assets/icon.png" alt="TriBus app icon">
-    <h1 class="title glow-text">TRIBUS</h1>
+    <img class="logo" src="assets/icon.png" alt="Fast Path app icon">
+    <h1 class="title glow-text">FAST PATH</h1>
     <p class="subtitle">Nature Coast → Tampa Bay Transit Terminal</p>
 
     <div class="badges">
       <span class="badge">100% Free</span>
       <span class="badge">No Logging</span>
       <span class="badge">Works Offline</span>
+      <span class="badge">English &amp; Español</span>
       <span class="badge">Live Bus Tracking</span>
       <span class="badge">Cross-Agency Trips</span>
       <span class="badge">Android</span>
@@ -389,7 +393,8 @@
       <a class="cta secondary" href="#try">▶ Try it in your browser</a>
     </div>
     <span class="cta-note">
-      Direct APK download — not on the Play Store. You may need to allow "install from unknown sources."
+      Always the latest build — this link auto-updates the moment a new version ships.
+      Direct APK download, not on the Play Store; you may need to allow "install from unknown sources."
       <br>Free &amp; open source — <a href="https://github.com/malcolm1014/thebus-hernando">view the code</a> ·
       <a href="https://raw.githubusercontent.com/malcolm1014/thebus-hernando/main/README.md">read the docs</a>
     </span>
@@ -398,21 +403,22 @@
 
 <section class="about">
   <div class="wrap">
-    <h2>What is TriBus?</h2>
-    <p class="section-lede">A transit assistant that works even when your signal doesn't.</p>
+    <h2>What is Fast Path?</h2>
+    <p class="section-lede">A transit assistant that works even when your signal doesn't — in English or Spanish.</p>
     <p>
-      TriBus is a free, offline-first transit assistant styled after a retro MS-DOS terminal.
+      Fast Path is a free, offline-first transit assistant styled after a retro MS-DOS terminal.
       It merges GTFS schedule data from multiple Florida transit agencies into a single
       lightweight dataset that lives entirely on your phone — so once it's synced, checking a
       schedule, finding the nearest stop, or planning a trip works with zero signal. Ask it
-      plain-English questions like "next bus at Avalon Publix" or "from Spring Hill to downtown
-      Tampa," and it answers instantly from data already on your device — no LLM guessing at the
-      facts, just the real schedule. When you're online, TriBus adds a live layer on top: real
-      buses moving on the map across all three counties, live arrival predictions at your stop,
-      service alerts for detours and cancellations, push notifications when something affects a
-      route you follow, and long-distance trip planning that can reach far beyond the tri-county
-      area. There's still no account, no tracking, and nothing selling your data — just a fast,
-      private way to catch the bus.
+      plain-language questions like "next bus at Avalon Publix" or "from Spring Hill to downtown
+      Tampa" — or the same thing in Spanish, "próximo autobús en Avalon Publix" — and it answers
+      instantly from data already on your device, in whichever language you're using. When you're
+      online, Fast Path adds a live layer on top: real buses moving on the map across all three
+      counties, live arrival predictions at your stop, how full the next bus is, arrival reminders
+      that buzz before your ride, service alerts for detours and cancellations, push notifications
+      when something affects a route you follow, and long-distance trip planning that can reach far
+      beyond the tri-county area. There's still no account, no tracking, and nothing selling your
+      data — just a fast, private way to catch the bus.
     </p>
   </div>
 </section>
@@ -450,10 +456,10 @@
         </div>
       </div>
       <p class="route-caption">
-        Trip planning can cross agency boundaries automatically — TriBus will route you from a
+        Trip planning can cross agency boundaries automatically — Fast Path will route you from a
         Hernando stop all the way into Tampa on HART, transfers and all. Real-time bus positions
-        are now live across all three — Hernando, Pasco, and HART (Tampa) — and HART also feeds
-        live arrival predictions and service alerts.
+        are live across all three — Hernando, Pasco, and HART (Tampa) — each with live arrival
+        predictions and service alerts.
       </p>
     </div>
   </div>
@@ -467,18 +473,28 @@
     <div class="features">
       <div class="feature">
         <div class="icon">💬</div>
-        <h3>Ask in Plain English</h3>
-        <p>"Next bus at Avalon Publix," "first and last bus," "timetable for a route," "where is Spring Hill Dr" — type it how you'd say it, and TriBus starts answering as you type.</p>
+        <h3>Ask in Plain Words</h3>
+        <p>"Next bus at Avalon Publix," "first and last bus," "timetable for a route," "where is Spring Hill Dr" — type it how you'd say it, and Fast Path answers as you type.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🌐</div>
+        <h3>English &amp; Español</h3>
+        <p>Flip the whole app to Spanish — and ask your questions in Spanish too. "Próximo autobús," "parada más cercana," "desde X hasta Y" all work, with answers in Spanish.</p>
       </div>
       <div class="feature">
         <div class="icon">🗺️</div>
         <h3>Cross-Agency &amp; Long-Distance Trips</h3>
-        <p>Ask "from A to B" and TriBus routes you even across agencies — Hernando to Tampa on HART, transfers and all — and can plan trips that reach far beyond the tri-county area.</p>
+        <p>Ask "from A to B" and Fast Path routes you even across agencies — Hernando to Tampa on HART, transfers and all — and can plan trips far beyond the tri-county area.</p>
       </div>
       <div class="feature">
         <div class="icon">🛰️</div>
         <h3>Live Bus Map</h3>
-        <p>Watch real buses move across all three counties — Hernando, Pasco, and HART — with their route lines drawn right on the map.</p>
+        <p>Watch real buses move across all three counties — Hernando, Pasco, and HART — with their route lines drawn right on the map, over real street tiles.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🚌</div>
+        <h3>See How Full the Bus Is</h3>
+        <p>Live crowding, straight from the agency feed — tap a bus and see whether it's got room, is filling up, or is packed before you head to the stop.</p>
       </div>
       <div class="feature">
         <div class="icon">⏱️</div>
@@ -486,29 +502,39 @@
         <p>Live "next arrival" predictions at your stop, straight from the agency's real-time feed — not just the printed schedule.</p>
       </div>
       <div class="feature">
-        <div class="icon">⚠️</div>
-        <h3>Service Alerts</h3>
-        <p>Detours, cancellations, and stop closures surface right in the app so you're not caught out at the curb.</p>
-      </div>
-      <div class="feature">
         <div class="icon">🔔</div>
-        <h3>Alerts for Your Routes</h3>
-        <p>Follow the routes you ride and get a push notification the moment an alert affects one — even when the app is closed.</p>
+        <h3>Arrival Reminders</h3>
+        <p>Set a reminder on a stop and Fast Path buzzes you before the bus is due — so you can leave at the right minute instead of waiting at the curb.</p>
       </div>
       <div class="feature">
-        <div class="icon">🎫</div>
-        <h3>Fares &amp; Where to Buy</h3>
-        <p>See each agency's fare and how to pay — right down to where to buy a ticket — available offline.</p>
+        <div class="icon">⚠️</div>
+        <h3>Service Alerts &amp; Push</h3>
+        <p>Detours, cancellations, and closures surface in the app — and follow the routes you ride to get a push notification the moment an alert hits one, even when the app is closed.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⭐</div>
+        <h3>Favorite Stops Board</h3>
+        <p>Star the stops you use most and get a one-word "favorites" board with the next few arrivals at each — your regular stops, always a tap away.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🧭</div>
+        <h3>Offline Maps &amp; Walking Directions</h3>
+        <p>Download the whole regional basemap once, then pan the live map and get walking directions to your stop with no signal at all.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎙️</div>
+        <h3>Voice &amp; Accessibility</h3>
+        <p>Speak your question instead of typing, bump up the text size, and switch on high-contrast mode — built in, no setup.</p>
       </div>
       <div class="feature">
         <div class="icon">📍</div>
-        <h3>Find Stops &amp; Places</h3>
-        <p>Nearest stop to you or to any landmark, plus "nearest pharmacy / gas station / grocery" from a built-in OpenStreetMap corpus that works offline.</p>
+        <h3>Find Stops, Places &amp; Fares</h3>
+        <p>Nearest stop to you or any landmark, "nearest pharmacy / gas / grocery" from a built-in OpenStreetMap corpus, plus each agency's fares and where to buy — all offline.</p>
       </div>
       <div class="feature">
         <div class="icon">🔒</div>
         <h3>Private by Design</h3>
-        <p>No accounts, no analytics, no location history stored anywhere. High-contrast mode built in. Your trips are yours.</p>
+        <p>No accounts, no analytics, no location history stored anywhere. Your trips are yours.</p>
       </div>
     </div>
   </div>
@@ -518,22 +544,23 @@
   <div class="wrap">
     <h2>Try It Live</h2>
     <p class="section-lede demo-lede">
-      This is the real TriBus terminal — the exact code that ships in the Android app — running
+      This is the real Fast Path terminal — the exact code that ships in the Android app — running
       right here in your browser. Type a question and press Enter.
     </p>
     <div class="device">
-      <iframe class="demo-frame" src="app/index.html" title="TriBus live terminal demo" allow="geolocation" loading="lazy"></iframe>
+      <iframe class="demo-frame" src="app/index.html" title="Fast Path live terminal demo" allow="geolocation" loading="lazy"></iframe>
     </div>
     <p class="demo-note">
       It boots instantly from built-in Hernando data, then quietly pulls the full
       Hernando · Pasco · HART dataset in the background.
       <a href="app/index.html" target="_blank" rel="noopener">Open the demo full screen ↗</a><br>
-      Offline walking directions and the one-time offline-map download are Android-only features;
-      everything else works right here.
+      Voice input, arrival reminders, offline walking directions, and the one-time offline-map
+      download are Android-only features; everything else works right here.
     </p>
     <div class="examples">
       <span class="label">Ask things like:</span>
       <span class="chip">when is the next bus at avalon publix</span>
+      <span class="chip">próximo autobús en avalon publix</span>
       <span class="chip">from spring hill to downtown tampa</span>
       <span class="chip">nearest stop to me</span>
       <span class="chip">nearest pharmacy</span>

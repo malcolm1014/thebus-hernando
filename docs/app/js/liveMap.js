@@ -19,6 +19,7 @@
   let routeLayerGroup = null;
   let stopLayerGroup = null;
   let busLayerGroup = null;
+  let tripLayerGroup = null; // start/end markers for a planned trip (Live Map planner)
   let pollTimer = null;
   let currentPollIntervalMs = 10000;
   let currentDataset = null;
@@ -44,36 +45,147 @@
     }[c]));
   }
 
+  // Live crowding line for a bus popup. `occupancy` is the backend's simple
+  // low/medium/high (see swiftlyRealtime.js) -- only HART reports it today,
+  // so this is '' (nothing shown) for any bus without the data. Filled dots
+  // give a glanceable level even in the monochrome terminal theme.
+  function occupancyText(occupancy) {
+    if (occupancy === 'low') return '<br/>● NOT CROWDED';
+    if (occupancy === 'medium') return '<br/>●● SOME CROWDING';
+    if (occupancy === 'high') return '<br/>●●● CROWDED';
+    return '';
+  }
+
+  // A Leaflet tile layer that caches every viewed tile (via tileCache.js) and
+  // re-serves it when offline -- so areas you've looked at with signal still
+  // show streets later without a connection. Robust by construction: if the
+  // caching fetch is blocked (CORS / backend without the header) or fails, it
+  // falls back to a plain <img> load, so it can NEVER make the online map
+  // worse than the non-caching layer did. Built lazily and only when both the
+  // cache module and a real Leaflet (with TileLayer.extend) are present, so
+  // the test stub / any reduced Leaflet transparently uses plain tiles.
+  let CachedTileLayer = null;
+  function cachedTileLayerClass() {
+    if (CachedTileLayer) return CachedTileLayer;
+    if (!(global.TheBusTileCache && L.TileLayer && typeof L.TileLayer.extend === 'function')) return null;
+    CachedTileLayer = L.TileLayer.extend({
+      createTile(coords, done) {
+        const tile = document.createElement('img');
+        tile.alt = '';
+        const url = this.getTileUrl(coords);
+        const useDirect = () => {
+          tile.onload = () => done(null, tile);
+          tile.onerror = () => done(new Error('tile load failed'), tile);
+          tile.src = url; // plain cross-origin <img> -- needs no CORS
+        };
+        const useBlob = (blob) => {
+          const obj = URL.createObjectURL(blob);
+          tile.onload = () => { try { URL.revokeObjectURL(obj); } catch (e) { /* ignore */ } done(null, tile); };
+          tile.onerror = () => { try { URL.revokeObjectURL(obj); } catch (e) { /* ignore */ } useDirect(); };
+          tile.src = obj;
+        };
+        (async () => {
+          const online = !global.navigator || navigator.onLine !== false;
+          if (online) {
+            try {
+              const res = await fetch(url);
+              if (res && res.ok) {
+                const blob = await res.blob();
+                TheBusTileCache.put(url, blob);
+                useBlob(blob);
+                return;
+              }
+            } catch (e) { /* CORS/offline -> try cache, then a plain load */ }
+          }
+          const cached = await TheBusTileCache.match(url).catch(() => null);
+          if (cached) { useBlob(cached); return; }
+          if (online) { useDirect(); return; } // online but uncacheable -> plain <img> still shows
+          done(new Error('tile unavailable offline'), tile); // offline + not cached -> Leaflet marks it errored
+        })();
+        return tile;
+      },
+    });
+    return CachedTileLayer;
+  }
+  function makeTileLayer(url, opts) {
+    const Cls = cachedTileLayerClass();
+    return Cls ? new Cls(url, opts) : L.tileLayer(url, opts);
+  }
+
   function initMap(containerId) {
     if (map) return map;
 
     map = L.map(containerId, { zoomControl: true, attributionControl: true })
       .setView([28.55, -82.6], 11); // rough Hernando County center; refined by fitBounds once stop data draws
 
-    // Plain OpenStreetMap tiles -- CARTO's basemaps (used here previously)
-    // started requiring a free API key partway through this project and
-    // watermarked every tile without one. OSM's own tile servers need no
-    // key or account and never will (that's their whole model), so this
-    // can't silently break again the same way. It's a light basemap by
-    // default; the terminal-green "dark mode" look comes from a CSS
-    // filter on .leaflet-tile-pane (see terminal.css) rather than a
-    // purpose-built dark tileset -- real street names/labels are OSM's
-    // own standard style, just recolored, not a separate lookup.
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    // Basemap tiles are proxied through OUR backend (/api/tiles), which
+    // fetches them from Geoapify -- a provider whose terms cover app use,
+    // with the API key kept server-side (see backend/src/mapTiles.js). This
+    // replaces talking to tile.openstreetmap.org directly: OSM's tile usage
+    // policy forbids app/bulk use and blocks it on-device, which showed up
+    // as a black map (our route/stop overlays drew fine, but every street
+    // tile request failed). It's a light basemap; the terminal-green "dark
+    // mode" look still comes from the CSS filter on .leaflet-tile-pane (see
+    // terminal.css), so real street names/labels are OSM's own style, just
+    // recolored.
+    //
+    // If the proxy is unavailable (e.g. no GEOAPIFY_API_KEY set on the
+    // backend -> repeated 503s), we swap ONCE to a keyless basemap so the
+    // rider always gets real streets instead of a black screen. We only
+    // swap after several tile errors with zero successful loads, so a
+    // transient hiccup during normal panning never triggers it.
+    const tileBase = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    const FALLBACK_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+    let usingFallbackTiles = false;
+    function addFallbackTiles() {
+      if (usingFallbackTiles) return;
+      usingFallbackTiles = true;
+      makeTileLayer(FALLBACK_TILES, {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 19,
+      })
+        .on('tileerror', () => { basemapHealthy = false; })
+        .on('load', () => { basemapHealthy = true; })
+        .addTo(map);
+    }
+
+    let primaryTileErrors = 0;
+    let primaryTileLoaded = false;
+    const primaryTiles = makeTileLayer(`${tileBase}/api/tiles/{z}/{x}/{y}.png`, {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://www.geoapify.com/">Geoapify</a>',
       maxZoom: 19,
-    })
-      .on('tileerror', () => { basemapHealthy = false; })
+    });
+    primaryTiles
+      .on('tileload', () => { primaryTileLoaded = true; })
       .on('load', () => { basemapHealthy = true; }) // a full batch finishing means tiles ARE reaching this device again
+      .on('tileerror', () => {
+        basemapHealthy = false;
+        primaryTileErrors += 1;
+        // Real proxy failure (nothing has ever loaded) -> go keyless once.
+        if (!primaryTileLoaded && !usingFallbackTiles && primaryTileErrors >= 3) {
+          if (map.removeLayer) map.removeLayer(primaryTiles);
+          addFallbackTiles();
+        }
+      })
       .addTo(map);
 
     routeLayerGroup = L.layerGroup().addTo(map);
     stopLayerGroup = L.layerGroup().addTo(map);
     busLayerGroup = L.layerGroup().addTo(map);
+    tripLayerGroup = L.layerGroup().addTo(map);
 
     // Trajectory rendering: clicking empty map background resets the
     // "highlight one route" state set by clickRouteToHighlight below.
     map.on('click', () => setHighlightedRoute(null));
+
+    // Delegated popup handler (one listener, not one per marker/line):
+    // route lines get a follow-alerts toggle; stop markers get live
+    // arrival predictions folded in.
+    map.on('popupopen', (e) => {
+      const src = e.popup && e.popup._source;
+      if (src && src._routeInfo) buildRoutePopup(e.popup, src._routeInfo);
+      else augmentStopPopup(e.popup);
+    });
 
     return map;
   }
@@ -142,6 +254,9 @@
         L.DomEvent.stopPropagation(e); // don't also trigger the map's own click handler (which resets the highlight)
         setHighlightedRoute(route.id);
       });
+      const rawId = route.id.includes(':') ? route.id.split(':').slice(1).join(':') : route.id;
+      line._routeInfo = { id: route.id, rawId, shortName: route.shortName || route.longName || rawId, agencyId: route.agencyId || null };
+      line.bindPopup(`ROUTE ${escapeHtml(String(line._routeInfo.shortName).toUpperCase())}`); // replaced with a follow toggle on open
       routeLinesById.set(route.id, line);
       for (const pt of route.shapePoints) bounds.push(pt);
     }
@@ -157,7 +272,11 @@
         fillOpacity: 0.9,
       }).addTo(stopLayerGroup);
       const routesHere = stop.routes.map((r) => r.shortName || r.longName).filter(Boolean).join(', ') || 'NONE';
-      marker.bindPopup(`<strong>${escapeHtml(stop.name.toUpperCase())}</strong><br/>ROUTES: ${escapeHtml(routesHere.toUpperCase())}`);
+      const baseHtml = `<strong>${escapeHtml(stop.name.toUpperCase())}</strong><br/>ROUTES: ${escapeHtml(routesHere.toUpperCase())}`;
+      marker.bindPopup(baseHtml);
+      // Stashed so the delegated popupopen handler can fetch live arrivals
+      // for this specific stop and rebuild the popup around the base text.
+      marker._stopInfo = { id: stop.id, name: stop.name, baseHtml };
       bounds.push([stop.lat, stop.lon]);
     }
 
@@ -368,7 +487,7 @@
         }
         marker.setOpacity(1); // a bus reporting again this poll is no longer stale, even if it was faded a moment ago
         const speedText = bus.speed != null ? `<br/>${Math.round(bus.speed)} MPH` : '';
-        marker.bindPopup(`<strong>${escapeHtml(String(label).toUpperCase())}</strong>${speedText}`);
+        marker.bindPopup(`<strong>${escapeHtml(String(label).toUpperCase())}</strong>${speedText}${occupancyText(bus.occupancy)}`);
       }
       ensureAnimationLoop();
 
@@ -496,5 +615,222 @@
     });
   }
 
-  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, __setNowForTesting };
+  // --- Live arrival predictions in stop popups (GTFS-RT trip updates) ---
+  function routeShortNameFor(routeId) {
+    if (!currentDataset || !currentDataset.routes || routeId == null) return routeId;
+    // Predictions carry the agency's raw route_id; our routes are keyed as
+    // `<agencyId>:<routeId>`. Only HART has a predictions feed today, so
+    // that's the namespace to look under.
+    const r = currentDataset.routes[`hart:${routeId}`];
+    return (r && (r.shortName || r.longName)) ? (r.shortName || r.longName) : routeId;
+  }
+
+  async function fetchStopPredictions(stopId) {
+    if (!global.navigator || !navigator.onLine) return [];
+    const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    try {
+      const res = await fetch(`${base}/api/predictions?stop=${encodeURIComponent(stopId)}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data.predictions) ? data.predictions : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** On popupopen, add a favorite toggle to the stop popup, plus (when online) its live arrivals and a reminder toggle. */
+  async function augmentStopPopup(popup) {
+    const marker = popup && popup._source;
+    const info = marker && marker._stopInfo;
+    if (!info) return;
+
+    const online = !!(global.navigator && navigator.onLine);
+    const predictions = online ? await fetchStopPredictions(info.id) : [];
+
+    let html = info.baseHtml;
+    if (predictions.length) {
+      const lines = predictions.slice(0, 4).map((p) => {
+        const route = escapeHtml(String(routeShortNameFor(p.routeId)).toUpperCase());
+        const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
+        // Schedule adherence from the feed's delay (seconds): + = late.
+        let adherence = '';
+        if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
+          const m = Math.round(p.delaySeconds / 60);
+          if (m >= 1) adherence = ` (${m} MIN LATE)`;
+          else if (m <= -1) adherence = ` (${-m} MIN EARLY)`;
+          else adherence = ' (ON TIME)';
+        }
+        return `RT ${route}: ${mins}${adherence}`;
+      });
+      html += `<br/><span style="color:var(--fg-bright)">LIVE ARRIVALS:</span><br/>${lines.join('<br/>')}`;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+
+    // ★ Favorite toggle -- works on ANY stop, online or off (saved locally;
+    // powers the terminal "favorites" departures board).
+    if (global.TheBusStorage && TheBusStorage.addFavoriteStop) {
+      const fav = document.createElement('button');
+      fav.className = 'route-follow-btn';
+      let isFav = false;
+      try { isFav = await TheBusStorage.isFavoriteStop(info.id); } catch (e) { isFav = false; }
+      const favLabel = () => { fav.textContent = isFav ? '★ FAVORITED -- TAP TO REMOVE' : '☆ FAVORITE THIS STOP'; };
+      favLabel();
+      fav.addEventListener('click', async () => {
+        try {
+          if (isFav) { await TheBusStorage.removeFavoriteStop(info.id); isFav = false; }
+          else { await TheBusStorage.addFavoriteStop({ stopId: info.id, name: info.name || info.id }); isFav = true; }
+          favLabel();
+        } catch (e) { /* leave the button as-is on failure */ }
+      });
+      wrap.appendChild(document.createElement('br'));
+      wrap.appendChild(fav);
+    }
+
+    // "Remind me" toggle: buzz the rider when a bus is ~5 min from this stop
+    // (reminders.js polls predictions + fires a local notification). Only
+    // meaningful where there's a live feed, so gated on having predictions.
+    if (predictions.length && global.TheBusReminders && global.TheBusStorage && TheBusStorage.addReminder) {
+      const btn = document.createElement('button');
+      btn.className = 'route-follow-btn';
+      let set = false;
+      try { set = await TheBusStorage.isReminderSet(info.id); } catch (e) { set = false; }
+      const label = () => { btn.textContent = set ? '⏰ REMINDER ON -- TAP TO CANCEL' : '⏰ REMIND ME (5 MIN)'; };
+      label();
+      btn.addEventListener('click', async () => {
+        try {
+          if (set) {
+            await TheBusStorage.removeReminder(info.id);
+            set = false;
+          } else {
+            await TheBusReminders.requestPermission();
+            await TheBusStorage.addReminder({ stopId: info.id, stopName: info.name || info.id, minutesBefore: 5 });
+            TheBusReminders.start();
+            set = true;
+          }
+          label();
+        } catch (e) { /* leave the button as-is on failure */ }
+      });
+      wrap.appendChild(document.createElement('br'));
+      wrap.appendChild(btn);
+    }
+
+    popup.setContent(wrap);
+  }
+
+  // --- Follow-a-route popup (service-alert notifications) ----------------
+  async function buildRoutePopup(popup, info) {
+    const wrap = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = `ROUTE ${String(info.shortName).toUpperCase()}`;
+    wrap.appendChild(title);
+    wrap.appendChild(document.createElement('br'));
+
+    const btn = document.createElement('button');
+    btn.className = 'route-follow-btn';
+    let followed = false;
+    try { followed = await TheBusStorage.isRouteFollowed(info.id); } catch (e) { followed = false; }
+    const label = () => { btn.textContent = followed ? 'UNFOLLOW ALERTS' : 'FOLLOW ALERTS'; };
+    label();
+    btn.addEventListener('click', async () => {
+      try {
+        if (followed) {
+          await TheBusStorage.removeFollowedRoute(info.id);
+          followed = false;
+          if (global.TheBusPushClient) TheBusPushClient.sync(); // update server-side route set
+        } else {
+          await TheBusStorage.addFollowedRoute(info);
+          followed = true;
+          if (global.TheBusRouteAlerts) TheBusRouteAlerts.requestPermission(); // local/web notifications
+          if (global.TheBusPushClient) TheBusPushClient.enable(); // server push (native): permission + register + sync
+        }
+        label();
+      } catch (e) { /* storage hiccup -- leave the button as-is */ }
+    });
+    wrap.appendChild(btn);
+    popup.setContent(wrap);
+  }
+
+  // --- Trip planner endpoints + route lines (Live Map planner) ----------
+  function clearTripEndpoints() {
+    if (tripLayerGroup) tripLayerGroup.clearLayers();
+  }
+
+  function endpointMarker(pt, letter) {
+    const icon = L.divIcon({
+      className: 'trip-endpoint',
+      html: `<div class="trip-endpoint-dot">${letter}</div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+    return L.marker([pt.lat, pt.lon], { icon })
+      .bindPopup(`<strong>${escapeHtml((pt.name || '').toUpperCase())}</strong>`);
+  }
+
+  /** Drops start/end markers for a planned trip and fits the map to them. */
+  function showTripEndpoints(from, to) {
+    if (!map || !tripLayerGroup) return;
+    clearTripEndpoints();
+    const pts = [];
+    [[from, 'A'], [to, 'B']].forEach(([pt, letter]) => {
+      if (!pt || pt.lat == null || pt.lon == null) return;
+      endpointMarker(pt, letter).addTo(tripLayerGroup);
+      pts.push([pt.lat, pt.lon]);
+    });
+    if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 14 });
+  }
+
+  /**
+   * Draws a planned trip's FIRST option: each leg's shape as a polyline
+   * (walk legs dashed, transit legs solid) plus the A/B endpoint pins,
+   * then fits the map to it. Geometry comes from the backend already
+   * decoded (backend/src/tripPlanner.js). Guarded against a bad decode:
+   * any leg whose points fall outside a generous box around the trip's
+   * endpoints is skipped (lines only, pins always draw), so a polyline
+   * precision mismatch can never scatter garbage across the map.
+   */
+  function drawTripPlan(result) {
+    if (!map || !tripLayerGroup) return;
+    clearTripEndpoints();
+    const from = result && result.from;
+    const to = result && result.to;
+    const bounds = [];
+
+    // Plausibility box: within ~2 degrees of the endpoints.
+    let guard = null;
+    if (from && to && from.lat != null && to.lat != null) {
+      guard = {
+        minLat: Math.min(from.lat, to.lat) - 2, maxLat: Math.max(from.lat, to.lat) + 2,
+        minLon: Math.min(from.lon, to.lon) - 2, maxLon: Math.max(from.lon, to.lon) + 2,
+      };
+    }
+    const inGuard = ([lat, lon]) => !guard || (lat >= guard.minLat && lat <= guard.maxLat && lon >= guard.minLon && lon <= guard.maxLon);
+
+    const itin = result && result.itineraries && result.itineraries[0];
+    if (itin && Array.isArray(itin.legs)) {
+      itin.legs.forEach((leg) => {
+        const geom = Array.isArray(leg.geometry) ? leg.geometry.filter(inGuard) : [];
+        if (geom.length < 2) return;
+        const mode = (leg.mode || '').toUpperCase();
+        const isWalk = mode === 'WALK';
+        const isRental = !!leg.rental || mode === 'RENTAL' || mode === 'BIKE' || mode === 'SCOOTER';
+        let style;
+        if (isRental) style = { color: '#ffb000', weight: 4, opacity: 0.9, dashArray: '1 6' }; // amber, bike/scooter share
+        else if (isWalk) style = { color: '#7dff5c', weight: 3, opacity: 0.9, dashArray: '4 6' };
+        else style = { color: '#33ff00', weight: 5, opacity: 0.9, dashArray: null };
+        L.polyline(geom, style).addTo(tripLayerGroup);
+        geom.forEach((p) => bounds.push(p));
+      });
+    }
+
+    [[from, 'A'], [to, 'B']].forEach(([pt, letter]) => {
+      if (!pt || pt.lat == null || pt.lon == null) return;
+      endpointMarker(pt, letter).addTo(tripLayerGroup);
+      bounds.push([pt.lat, pt.lon]);
+    });
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }
+
+  global.TheBusLiveMap = { initMap, drawStaticData, startPolling, stopPolling, invalidateSize, activeBusSummaries, isBasemapHealthy, showTripEndpoints, drawTripPlan, clearTripEndpoints, __setNowForTesting };
 })(window);
