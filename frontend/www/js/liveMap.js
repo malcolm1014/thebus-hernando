@@ -56,6 +56,62 @@
     return '';
   }
 
+  // A Leaflet tile layer that caches every viewed tile (via tileCache.js) and
+  // re-serves it when offline -- so areas you've looked at with signal still
+  // show streets later without a connection. Robust by construction: if the
+  // caching fetch is blocked (CORS / backend without the header) or fails, it
+  // falls back to a plain <img> load, so it can NEVER make the online map
+  // worse than the non-caching layer did. Built lazily and only when both the
+  // cache module and a real Leaflet (with TileLayer.extend) are present, so
+  // the test stub / any reduced Leaflet transparently uses plain tiles.
+  let CachedTileLayer = null;
+  function cachedTileLayerClass() {
+    if (CachedTileLayer) return CachedTileLayer;
+    if (!(global.TheBusTileCache && L.TileLayer && typeof L.TileLayer.extend === 'function')) return null;
+    CachedTileLayer = L.TileLayer.extend({
+      createTile(coords, done) {
+        const tile = document.createElement('img');
+        tile.alt = '';
+        const url = this.getTileUrl(coords);
+        const useDirect = () => {
+          tile.onload = () => done(null, tile);
+          tile.onerror = () => done(new Error('tile load failed'), tile);
+          tile.src = url; // plain cross-origin <img> -- needs no CORS
+        };
+        const useBlob = (blob) => {
+          const obj = URL.createObjectURL(blob);
+          tile.onload = () => { try { URL.revokeObjectURL(obj); } catch (e) { /* ignore */ } done(null, tile); };
+          tile.onerror = () => { try { URL.revokeObjectURL(obj); } catch (e) { /* ignore */ } useDirect(); };
+          tile.src = obj;
+        };
+        (async () => {
+          const online = !global.navigator || navigator.onLine !== false;
+          if (online) {
+            try {
+              const res = await fetch(url);
+              if (res && res.ok) {
+                const blob = await res.blob();
+                TheBusTileCache.put(url, blob);
+                useBlob(blob);
+                return;
+              }
+            } catch (e) { /* CORS/offline -> try cache, then a plain load */ }
+          }
+          const cached = await TheBusTileCache.match(url).catch(() => null);
+          if (cached) { useBlob(cached); return; }
+          if (online) { useDirect(); return; } // online but uncacheable -> plain <img> still shows
+          done(new Error('tile unavailable offline'), tile); // offline + not cached -> Leaflet marks it errored
+        })();
+        return tile;
+      },
+    });
+    return CachedTileLayer;
+  }
+  function makeTileLayer(url, opts) {
+    const Cls = cachedTileLayerClass();
+    return Cls ? new Cls(url, opts) : L.tileLayer(url, opts);
+  }
+
   function initMap(containerId) {
     if (map) return map;
 
@@ -84,7 +140,7 @@
     function addFallbackTiles() {
       if (usingFallbackTiles) return;
       usingFallbackTiles = true;
-      L.tileLayer(FALLBACK_TILES, {
+      makeTileLayer(FALLBACK_TILES, {
         attribution: 'Tiles &copy; Esri',
         maxZoom: 19,
       })
@@ -95,7 +151,7 @@
 
     let primaryTileErrors = 0;
     let primaryTileLoaded = false;
-    const primaryTiles = L.tileLayer(`${tileBase}/api/tiles/{z}/{x}/{y}.png`, {
+    const primaryTiles = makeTileLayer(`${tileBase}/api/tiles/{z}/{x}/{y}.png`, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://www.geoapify.com/">Geoapify</a>',
       maxZoom: 19,
     });
