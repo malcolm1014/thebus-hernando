@@ -49,6 +49,7 @@ test('shapes a GTFS-rt VehiclePosition into the shared bus shape and sends the k
           trip: { routeId: '6', tripId: 'T-99' },
           vehicle: { id: '4021' },
           position: { latitude: 27.95, longitude: -82.46, bearing: 90, speed: 12.5 },
+          occupancyStatus: 'FEW_SEATS_AVAILABLE',
         },
       },
     ])(url, opts);
@@ -60,6 +61,7 @@ test('shapes a GTFS-rt VehiclePosition into the shared bus shape and sends the k
     assert.deepEqual(result.buses[0], {
       busId: '4021', routeId: '6', routeName: null,
       lat: 27.95, lon: -82.46, course: 90, speed: 12.5, tripId: 'T-99',
+      occupancy: 'medium',
     });
     assert.equal(sawAuth, 'test-key');
     // The licensed GTFS-rt feed, JSON serialization, default agency key 'tampa'.
@@ -118,6 +120,25 @@ test('throws when the upstream request fails, rather than silently returning emp
     global.fetch = originalFetch;
     restore();
   }
+});
+
+test('simplifyOccupancy collapses GTFS-rt OccupancyStatus (names and ordinals) to low/medium/high/null', () => {
+  const { mod, restore } = freshSwiftlyModule({});
+  try {
+    const s = mod.simplifyOccupancy;
+    assert.equal(s('EMPTY'), 'low');
+    assert.equal(s('MANY_SEATS_AVAILABLE'), 'low');
+    assert.equal(s('FEW_SEATS_AVAILABLE'), 'medium');
+    assert.equal(s('STANDING_ROOM_ONLY'), 'high');
+    assert.equal(s('FULL'), 'high');
+    assert.equal(s('NOT_ACCEPTING_PASSENGERS'), 'high');
+    assert.equal(s(1), 'low');   // ordinal MANY_SEATS_AVAILABLE
+    assert.equal(s(2), 'medium'); // ordinal FEW_SEATS_AVAILABLE
+    assert.equal(s(5), 'high');   // ordinal FULL
+    assert.equal(s('NO_DATA_AVAILABLE'), null);
+    assert.equal(s(null), null);
+    assert.equal(s('WHATEVER'), null);
+  } finally { restore(); }
 });
 
 test('throws a clear error (and makes no request) when no key is configured', async () => {

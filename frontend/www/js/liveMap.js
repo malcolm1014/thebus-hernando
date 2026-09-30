@@ -45,6 +45,17 @@
     }[c]));
   }
 
+  // Live crowding line for a bus popup. `occupancy` is the backend's simple
+  // low/medium/high (see swiftlyRealtime.js) -- only HART reports it today,
+  // so this is '' (nothing shown) for any bus without the data. Filled dots
+  // give a glanceable level even in the monochrome terminal theme.
+  function occupancyText(occupancy) {
+    if (occupancy === 'low') return '<br/>● NOT CROWDED';
+    if (occupancy === 'medium') return '<br/>●● SOME CROWDING';
+    if (occupancy === 'high') return '<br/>●●● CROWDED';
+    return '';
+  }
+
   function initMap(containerId) {
     if (map) return map;
 
@@ -420,7 +431,7 @@
         }
         marker.setOpacity(1); // a bus reporting again this poll is no longer stale, even if it was faded a moment ago
         const speedText = bus.speed != null ? `<br/>${Math.round(bus.speed)} MPH` : '';
-        marker.bindPopup(`<strong>${escapeHtml(String(label).toUpperCase())}</strong>${speedText}`);
+        marker.bindPopup(`<strong>${escapeHtml(String(label).toUpperCase())}</strong>${speedText}${occupancyText(bus.occupancy)}`);
       }
       ensureAnimationLoop();
 
