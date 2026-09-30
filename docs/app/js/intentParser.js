@@ -120,11 +120,17 @@
       { pattern: /\bdirections?\b/i, weight: 2 },
       { pattern: /\btrip\b/i, weight: 1 },
       { pattern: /\btransfers?\b/i, weight: 1 },
+      // Spanish: "desde X hasta/a Y", "cómo llego/voy a", "viaje/transbordo".
+      { pattern: /\bdesde\b[\s\S]*?\b(hasta|a)\b/i, weight: 4 },
+      { pattern: /\bc[oó]mo (llego|voy|puedo llegar)\b/i, weight: 2 },
+      { pattern: /\bviaje\b/i, weight: 1 },
+      { pattern: /\btransbordos?\b/i, weight: 1 },
     ],
     // Checked with top priority: "nearest STOP" would otherwise mostly
     // score toward LIST_ROUTE_STOPS's "stop" cue.
     FIND_NEAREST_STOP: [
       { pattern: /\b(nearest|closest)\b/i, weight: 3 },
+      { pattern: /\bm[aá]s cercan[oa]s?\b/i, weight: 3 }, // Spanish: "más cercana"
     ],
     // "first bus" / "last bus" is a genuinely distinct question from
     // "next bus" (needs the WHOLE day's schedule, not just what's
@@ -134,10 +140,23 @@
     FIND_FIRST_LAST_BUS: [
       { pattern: /\b(first|last)\s+bus\b/i, weight: 3 },
       { pattern: /\bstill running\b/i, weight: 2 },
+      // Spanish: "primer/último autobús|bus|camión".
+      // NB: a leading \b won't anchor an accented word ("último") -- ú is a
+      // non-word char in JS regex, so \b never fires before it. Use a
+      // negative lookbehind over the Spanish letter set instead.
+      { pattern: /(?<![a-záéíóúñ])(primer|[uú]ltim[oa])\s+(autob[uú]s|bus|cami[oó]n)\b/i, weight: 3 },
     ],
     FIND_NEXT_ARRIVAL: [
       { pattern: /\bwhen\b/i, weight: 2 },
       { pattern: /\bnext\b/i, weight: 2 },
+      // Spanish: "próximo/próxima", "cuándo", "a qué hora", "llega/llegada",
+      // "cuándo pasa", "cerca de mí".
+      { pattern: /\bpr[oó]xim[oa]\b/i, weight: 2 },
+      { pattern: /\bcu[aá]ndo\b/i, weight: 2 },
+      { pattern: /\ba qu[eé] hora\b/i, weight: 2 },
+      { pattern: /\bllega\w*\b/i, weight: 2 },
+      { pattern: /\bpasa\b/i, weight: 1 },
+      { pattern: /\bcerca de m[ií]\b/i, weight: 1 },
       { pattern: /\b(arriv\w*|eta)\b/i, weight: 2 },
       { pattern: /\bhow (long|soon|far)\b/i, weight: 2 },
       { pattern: /\btime(?!table)\b/i, weight: 1 },
@@ -184,11 +203,18 @@
       { pattern: /\blocat\w*\b/i, weight: 2 },
       { pattern: /\bmap\b/i, weight: 1 },
       { pattern: /\baddress\b/i, weight: 1 },
+      // Spanish: "dónde está", "ubicación", "dirección".
+      { pattern: /\bd[oó]nde\b/i, weight: 2 },
+      { pattern: /\bubicaci[oó]n\b/i, weight: 2 },
+      { pattern: /\bdirecci[oó]n\b/i, weight: 1 },
     ],
     LIST_ROUTE_STOPS: [
       { pattern: /\bstops?\b/i, weight: 2 },
       { pattern: /\broute\b/i, weight: 1 },
       { pattern: /\bschedule\b/i, weight: 1 },
+      // Spanish: "paradas", "ruta". (bare "horario" is left to SHOW_TIMETABLE)
+      { pattern: /\bparadas?\b/i, weight: 2 },
+      { pattern: /\bruta\b/i, weight: 1 },
     ],
     // A genuinely distinct question from LIST_ROUTE_STOPS's bare
     // "schedule" cue (kept deliberately narrow, not just "schedule"
@@ -201,6 +227,9 @@
       { pattern: /\bfull schedule\b/i, weight: 3 },
       { pattern: /\ball (the )?times\b/i, weight: 2 },
       { pattern: /\bevery (departure|time|arrival)\b/i, weight: 2 },
+      // Spanish: "horario completo", "todas las horas".
+      { pattern: /\bhorario completo\b/i, weight: 3 },
+      { pattern: /\btodas las horas\b/i, weight: 2 },
     ],
     // "Nearest STOP" (FIND_NEAREST_STOP, weight 3 on nearest/closest
     // alone) vs. "nearest PHARMACY" are genuinely different questions --
@@ -224,6 +253,10 @@
       { pattern: /\bwalking directions?\b/i, weight: 5 },
       { pattern: /\bwalk(?:ing)?\s+to\b/i, weight: 4 },
       { pattern: /\bhow (?:do|can) i walk\b/i, weight: 4 },
+      // Spanish: "a pie", "caminando", "cómo camino/llego a pie".
+      { pattern: /\ba pie\b/i, weight: 5 },
+      { pattern: /\bcaminando\b/i, weight: 4 },
+      { pattern: /\bc[oó]mo (?:camino|llego a pie)\b/i, weight: 4 },
     ],
     // The one-time opt-in download this feature needs (~164MB, see
     // valhallaTiles.js) -- deliberately its own explicit command rather
@@ -628,6 +661,14 @@
     m = rawText.match(/\bto\s+(.+?)\s+from\s+(.+?)[\s?.!]*$/i);
     if (m && m[1].trim() && m[2].trim()) return { origin: m[2].trim(), destination: m[1].trim() };
 
+    // Spanish: "desde X hasta/a Y" and "de X a Y" (only reached for a
+    // PLAN_TRIP-classified query, so the generic "de ... a" is safe here).
+    m = rawText.match(/\bdesde\s+(.+?)\s+(?:hasta|a)\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1].trim() && m[2].trim()) return { origin: m[1].trim(), destination: m[2].trim() };
+
+    m = rawText.match(/\bde\s+(.+?)\s+a\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1].trim() && m[2].trim()) return { origin: m[1].trim(), destination: m[2].trim() };
+
     return null;
   }
 
@@ -650,6 +691,13 @@
     m = rawText.match(/\bhow (?:do|can) i walk to\s+(.+?)[\s?.!]*$/i);
     if (m && m[1] && m[1].trim()) return m[1].trim();
 
+    // Spanish: "a pie a/hasta/hacia X", "caminando a X", "cómo camino a X".
+    m = rawText.match(/\b(?:a pie|caminando)\s+(?:a|hasta|hacia)\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
+    m = rawText.match(/\bc[oó]mo (?:camino|llego a pie)\s+(?:a|hasta|hacia)\s+(.+?)[\s?.!]*$/i);
+    if (m && m[1] && m[1].trim()) return m[1].trim();
+
     return null;
   }
 
@@ -657,6 +705,8 @@
   function extractFirstOrLast(rawText) {
     if (/\blast\b/i.test(rawText)) return 'last';
     if (/\bfirst\b/i.test(rawText)) return 'first';
+    if (/(?<![a-záéíóúñ])[uú]ltim[oa]\b/i.test(rawText)) return 'last';  // Spanish "último" (accent-safe boundary)
+    if (/\bprimer[oa]?\b/i.test(rawText)) return 'first';  // Spanish "primer(o/a)"
     return 'first';
   }
 

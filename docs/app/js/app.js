@@ -10,7 +10,7 @@
  * handled natively -- we only touch `.value` on submit and on history
  * recall, never mid-keystroke.
  */
-(function () {
+(function (global) {
   const historyEl = document.getElementById('history');
   const commandInput = document.getElementById('command-input');
   const bootStatus = document.getElementById('boot-status');
@@ -24,9 +24,11 @@
   const crtEl = document.getElementById('crt');
   const fxToggle = document.getElementById('fx-toggle');
 
+  const i18n = global.TheBusI18n || { t: (k) => k, apply: () => {}, setLang: () => {}, getLang: () => 'en' };
+
   function applyEffectsEnabled(enabled) {
     crtEl.classList.toggle('effects-off', !enabled);
-    fxToggle.textContent = enabled ? '[ EFFECTS: ON ]' : '[ EFFECTS: OFF ]';
+    fxToggle.textContent = i18n.t(enabled ? 'fx.on' : 'fx.off');
     fxToggle.setAttribute('aria-pressed', String(enabled));
   }
 
@@ -39,6 +41,97 @@
   TheBusStorage.getEffectsEnabled()
     .then(applyEffectsEnabled)
     .catch((err) => console.error('effects toggle: failed to read stored preference, leaving effects on', err));
+
+  // ---- High-contrast accessibility mode (opt-in) ----
+  const contrastToggle = document.getElementById('contrast-toggle');
+  function applyHighContrast(enabled) {
+    document.documentElement.setAttribute('data-contrast', enabled ? 'high' : 'normal');
+    contrastToggle.textContent = i18n.t(enabled ? 'contrast.on' : 'contrast.off');
+    contrastToggle.setAttribute('aria-pressed', String(enabled));
+  }
+  contrastToggle.addEventListener('click', async () => {
+    const enabled = !(await TheBusStorage.getHighContrast());
+    await TheBusStorage.setHighContrast(enabled);
+    applyHighContrast(enabled);
+  });
+  TheBusStorage.getHighContrast()
+    .then(applyHighContrast)
+    .catch((err) => console.error('contrast toggle: failed to read stored preference', err));
+
+  // ---- Larger-text accessibility option (opt-in) ----
+  const textSizeToggle = document.getElementById('text-size-toggle');
+  function applyLargeText(enabled) {
+    document.documentElement.setAttribute('data-textsize', enabled ? 'large' : 'normal');
+    if (textSizeToggle) {
+      textSizeToggle.textContent = i18n.t(enabled ? 'textsize.on' : 'textsize.off');
+      textSizeToggle.setAttribute('aria-pressed', String(enabled));
+    }
+  }
+  if (textSizeToggle) {
+    textSizeToggle.addEventListener('click', async () => {
+      const enabled = !(await TheBusStorage.getLargeText());
+      await TheBusStorage.setLargeText(enabled);
+      applyLargeText(enabled);
+    });
+    TheBusStorage.getLargeText()
+      .then(applyLargeText)
+      .catch((err) => console.error('text-size toggle: failed to read stored preference', err));
+  }
+
+  // ---- Language toggle (English / Spanish) ----
+  const langToggle = document.getElementById('lang-toggle');
+  // Re-render everything that carries translatable text: the static [data-i18n]
+  // DOM, plus the few labels set from JS (the toggles reflect their own state).
+  function applyLanguage(lang) {
+    i18n.setLang(lang);
+    i18n.apply(document);
+    langToggle.textContent = i18n.t('lang.switch');
+    // Toggle labels depend on both language AND current on/off state, so
+    // recompute them from storage rather than from the static table.
+    TheBusStorage.getEffectsEnabled().then(applyEffectsEnabled).catch(() => {});
+    TheBusStorage.getHighContrast().then(applyHighContrast).catch(() => {});
+    TheBusStorage.getLargeText().then(applyLargeText).catch(() => {});
+  }
+  if (langToggle) {
+    langToggle.addEventListener('click', async () => {
+      const next = i18n.getLang() === 'es' ? 'en' : 'es';
+      try { await TheBusStorage.setLang(next); } catch (e) { /* ignore */ }
+      applyLanguage(next);
+    });
+    TheBusStorage.getLang()
+      .then((lang) => applyLanguage(lang))
+      .catch(() => applyLanguage('en'));
+  }
+
+  // ---- Voice input (voice.js): dictate a question instead of typing ----
+  const voiceBtn = document.getElementById('voice-btn');
+  if (voiceBtn && global.TheBusVoice && TheBusVoice.isAvailable()) {
+    voiceBtn.hidden = false;
+    let listening = false;
+    voiceBtn.addEventListener('click', () => {
+      if (listening) return;
+      listening = true;
+      voiceBtn.setAttribute('aria-pressed', 'true');
+      const prevPlaceholder = commandInput.getAttribute('placeholder') || '';
+      commandInput.setAttribute('placeholder', i18n.t('voice.listening'));
+      TheBusVoice.listen({
+        lang: i18n.getLang() === 'es' ? 'es-US' : 'en-US',
+        onResult: (transcript) => {
+          if (transcript) {
+            commandInput.value = transcript;
+            handleSubmit(transcript);
+            commandInput.value = '';
+          }
+        },
+        onError: () => { /* mic denied / no speech heard -> just stop quietly */ },
+        onEnd: () => {
+          listening = false;
+          voiceBtn.setAttribute('aria-pressed', 'false');
+          commandInput.setAttribute('placeholder', prevPlaceholder);
+        },
+      });
+    });
+  }
 
   // ---- Crash reporting -- see backend's /api/crash-report for what
   // this deliberately does NOT send (query text, location). Best-effort:
@@ -137,6 +230,57 @@
     commandLog.push(text);
     historyPointer = commandLog.length;
 
+    // Cross-country / cross-agency trip planning ("PLAN <origin> to
+    // <destination>") is an explicit, online-only command handled by the
+    // Transitous proxy (see tripPlanner.js). Checked before the offline
+    // rule engine so it never collides with the engine's own local
+    // "from X to Y" planner. Everything else falls through unchanged.
+    const tripCmd = TheBusTripPlanner.parseCommand(text);
+    if (tripCmd) {
+      withProcessingDelay(async () => {
+        let prefs;
+        try { prefs = await TheBusStorage.getTripPrefs(); } catch (e) { prefs = undefined; }
+        // Resolve local endpoints via the bundled OSM corpus before the
+        // online geocoder (same as the map planner).
+        const rf = global.TheBusLocalPlaces ? TheBusLocalPlaces.resolve(tripCmd.origin) : null;
+        const rt = global.TheBusLocalPlaces ? TheBusLocalPlaces.resolve(tripCmd.dest) : null;
+        const opts = {};
+        if (rf) opts.fromCoords = { lat: rf.lat, lon: rf.lon };
+        if (rt) opts.toCoords = { lat: rt.lat, lon: rt.lon };
+        const output = await TheBusTripPlanner.plan(
+          rf ? rf.name : tripCmd.origin,
+          rt ? rt.name : tripCmd.dest,
+          prefs,
+          Object.keys(opts).length ? opts : undefined,
+        );
+        appendEntry('sys', output);
+      });
+      return;
+    }
+
+    // Fares & tickets: "FARE(S)", "TICKET(S)", "HOW MUCH", optionally naming
+    // an agency ("fares hart"). Answered entirely offline from bundled data.
+    const fareMatch = text.match(/^\s*(?:fares?|tickets?|how much(?: is| does)?(?: it)?(?: cost)?)\b\s*(.*)$/i);
+    if (fareMatch && global.TheBusFares) {
+      const output = TheBusFares.formatQuery(fareMatch[1]);
+      appendEntry('sys', output || 'FARE INFO UNAVAILABLE.');
+      return;
+    }
+
+    // Favorites board: "FAVORITES", "MY STOPS", "SAVED STOPS" -> each favorite
+    // stop with its next arrivals. Computed offline from the schedule.
+    if (global.TheBusFavorites && /^\s*(?:favou?rites?|my stops|saved stops)\s*$/i.test(text)) {
+      withProcessingDelay(async () => { appendEntry('sys', await buildFavoritesBoard()); });
+      return;
+    }
+
+    // Offline map: "DOWNLOAD OFFLINE MAP" (or Spanish "descargar mapa...") ->
+    // prefetch the whole region's tiles so the Live Map works with no signal.
+    if (global.TheBusOfflineMap && /^\s*(?:download offline map|offline map|save (?:the )?map|descargar (?:el )?mapa(?: sin conexi[oó]n)?)\s*$/i.test(text)) {
+      downloadOfflineMap();
+      return;
+    }
+
     withProcessingDelay(async () => {
       let answer;
       try {
@@ -163,8 +307,96 @@
       if (navigator.onLine) {
         const loc = TheBusQueryEngine.getLastLocation();
         if (loc) appendMapImage(loc.lat, loc.lon, loc.label);
+        // Fold this stop's LIVE arrivals (GTFS-RT) under the schedule answer,
+        // the terminal counterpart of the map's stop popup. HART-only today;
+        // a stop with no live feed just shows nothing extra.
+        const liveStop = TheBusQueryEngine.getLastLiveStop && TheBusQueryEngine.getLastLiveStop();
+        if (liveStop) appendLiveArrivals(liveStop);
       }
     });
+  }
+
+  /** Resolve a predictions route_id to a rider-facing label via the dataset (HART namespace). */
+  function liveRouteLabel(routeId) {
+    if (routeId == null) return 'BUS';
+    const r = lastDataset && lastDataset.routes && lastDataset.routes[`hart:${routeId}`];
+    const name = r && (r.shortName || r.longName);
+    const word = (i18n.getLang && i18n.getLang() === 'es') ? 'RUTA' : 'ROUTE';
+    return `${word} ${String(name || routeId)}`;
+  }
+
+  /** Fetch and append a stop's live next-arrivals (with schedule adherence) beneath a terminal answer. Best-effort. */
+  async function appendLiveArrivals(stop) {
+    try {
+      const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+      const res = await fetch(`${base}/api/predictions?stop=${encodeURIComponent(stop.id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const preds = Array.isArray(data.predictions) ? data.predictions : [];
+      if (!preds.length) return; // no live feed for this stop (offline, or non-HART) -> schedule answer stands alone
+      const es = i18n.getLang && i18n.getLang() === 'es';
+      const lines = preds.slice(0, 3).map((p) => {
+        const mins = p.minutesUntil <= 0 ? (es ? 'AHORA' : 'DUE') : `${p.minutesUntil} MIN`;
+        let adherence = '';
+        if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
+          const m = Math.round(p.delaySeconds / 60);
+          adherence = m >= 1 ? (es ? ` (${m} MIN TARDE)` : ` (${m} MIN LATE)`)
+            : (m <= -1 ? (es ? ` (${-m} MIN ADELANTADO)` : ` (${-m} MIN EARLY)`)
+              : (es ? ' (A TIEMPO)' : ' (ON TIME)'));
+        }
+        return `${liveRouteLabel(p.routeId)}: ${mins}${adherence}`;
+      });
+      const label = es ? 'LLEGADAS EN VIVO EN' : 'LIVE ARRIVALS AT';
+      appendEntry('sys', `${label} ${String(stop.name).toUpperCase()}: ${lines.join('  ·  ')}`);
+    } catch (e) { /* live arrivals are a bonus; the schedule answer already stands */ }
+  }
+
+  /** Build the "favorites" departures board from saved stops + the offline schedule. */
+  async function buildFavoritesBoard() {
+    let favs = [];
+    try { favs = await TheBusStorage.getFavoriteStops(); } catch (e) { favs = []; }
+    const now = new Date();
+    const stops = favs.map((f) => {
+      let arrivals = [];
+      try {
+        arrivals = (TheBusQueryEngine.nextArrivals(f.stopId, null, now, 3) || []).map((a) => ({
+          routeLabel: a.shortName || a.longName || a.routeId || 'BUS',
+          minutesUntil: a.minutesUntil,
+        }));
+      } catch (e) { arrivals = []; }
+      return { name: f.name, arrivals };
+    });
+    return TheBusFavorites.formatBoard(stops);
+  }
+
+  /** Prefetch the whole region's basemap tiles into the cache so the Live Map works offline. */
+  async function downloadOfflineMap() {
+    const say = (kind, key) => appendEntry(kind, i18n.t(key));
+    if (!lastDataset) { say('err', 'offlinemap.nodata'); return; }
+    if (!global.TheBusTileCache || !TheBusTileCache.available()) { say('err', 'offlinemap.unsupported'); return; }
+    if (global.navigator && navigator.onLine === false) { say('err', 'offlinemap.offline'); return; }
+    const bbox = TheBusOfflineMap.boundsFromDataset(lastDataset);
+    if (!bbox) { say('err', 'offlinemap.nodata'); return; }
+
+    // z10-13: regional overview through neighborhood level (a few hundred
+    // tiles). Street-level detail (z14+) still fills in from on-view caching.
+    const tiles = TheBusOfflineMap.tilesForBounds(bbox, 10, 13);
+    const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    appendEntry('sys', i18n.t('offlinemap.start').replace('{n}', String(tiles.length)));
+    try {
+      const result = await TheBusOfflineMap.downloadRegion({
+        apiBase: base,
+        tiles,
+        onProgress: (done, total) => {
+          setStatus(i18n.t('offlinemap.progress').replace('{done}', String(done)).replace('{total}', String(total)));
+        },
+      });
+      appendEntry('sys', i18n.t('offlinemap.done').replace('{n}', String(result.cached)));
+    } catch (e) {
+      appendEntry('err', i18n.t('offlinemap.offline'));
+    } finally {
+      renderFreshness();
+    }
   }
 
   function submitAndClear() {
@@ -172,6 +404,95 @@
     commandInput.value = '';
     handleSubmit(value);
   }
+
+  // ---- Predictive search suggestions (suggest.js) ----
+  // As the rider types, rank the stops/routes/places/roads/commands they're
+  // most likely to mean and show a live "next bus" peek for the top stops,
+  // so the answer is essentially forming before they finish typing. Arrow
+  // keys move through it; Enter takes the highlighted one (or submits the
+  // raw text if none is highlighted).
+  const suggestBox = document.getElementById('suggestions');
+  const suggestions = (function () {
+    let items = [];
+    let active = -1;
+    let timer = null;
+
+    function open() { suggestBox.hidden = false; commandInput.setAttribute('aria-expanded', 'true'); }
+    function close() {
+      suggestBox.hidden = true;
+      suggestBox.textContent = '';
+      items = []; active = -1;
+      commandInput.setAttribute('aria-expanded', 'false');
+      commandInput.setAttribute('aria-activedescendant', '');
+    }
+    function isOpen() { return !suggestBox.hidden; }
+
+    // Cheap live peek for a stop suggestion: its very next arrival. Only for
+    // the top few, so it never turns typing into heavy work.
+    function peek(item) {
+      if (item.type !== 'stop' || !item.ref) return '';
+      try {
+        const arr = TheBusQueryEngine.nextArrivals(item.ref.id, null, new Date(), 1);
+        if (arr && arr.length) {
+          const m = arr[0].minutesUntil;
+          return m <= 0 ? ' · DUE NOW' : ` · NEXT ~${m} MIN`;
+        }
+      } catch (e) { /* no peek -- the label still stands */ }
+      return '';
+    }
+
+    function render() {
+      suggestBox.textContent = '';
+      items.forEach((it, i) => {
+        const li = document.createElement('li');
+        li.className = 'sugg' + (i === active ? ' active' : '');
+        li.id = `sugg-${i}`;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', i === active ? 'true' : 'false');
+        const lab = document.createElement('span');
+        lab.className = 'sugg-label';
+        lab.textContent = it.label;
+        li.appendChild(lab);
+        const hint = document.createElement('span');
+        hint.className = 'sugg-hint';
+        hint.textContent = (it.hint || '') + (i < 3 ? peek(it) : '');
+        li.appendChild(hint);
+        // mousedown (not click) so choosing fires before the input blurs.
+        li.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(it); });
+        suggestBox.appendChild(li);
+      });
+    }
+
+    function update(value) {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!global.TheBusSuggest) { close(); return; }
+        items = TheBusSuggest.suggest(value, 8) || [];
+        active = -1;
+        if (items.length) { render(); open(); } else { close(); }
+      }, 80);
+    }
+
+    function move(delta) {
+      if (!items.length) return;
+      active = (active + delta + items.length) % items.length;
+      commandInput.setAttribute('aria-activedescendant', `sugg-${active}`);
+      render();
+      const el = document.getElementById(`sugg-${active}`);
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }
+
+    function choose(it) {
+      if (it.fill) { commandInput.value = it.fill; close(); commandInput.focus(); update(it.fill); return; }
+      close();
+      commandInput.value = '';
+      handleSubmit(it.run || it.label);
+    }
+
+    function current() { return active >= 0 ? items[active] : null; }
+
+    return { update, move, close, isOpen, current, choose };
+  })();
 
   commandInput.addEventListener('input', (e) => {
     // Many Android soft keyboards (Gboard, SwiftKey) submit via a plain
@@ -181,23 +502,33 @@
     // literal newline, but strip one defensively if an IME snuck one in.
     if (e.inputType === 'insertLineBreak') {
       commandInput.value = commandInput.value.replace(/\n/g, '');
+      suggestions.close();
       submitAndClear();
+      return;
     }
+    suggestions.update(commandInput.value);
   });
 
   commandInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      submitAndClear();
+      const chosen = suggestions.isOpen() ? suggestions.current() : null;
+      if (chosen) { suggestions.choose(chosen); } else { suggestions.close(); submitAndClear(); }
+    } else if (e.key === 'Escape') {
+      if (suggestions.isOpen()) { e.preventDefault(); suggestions.close(); }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (historyPointer > 0) {
+      if (suggestions.isOpen()) {
+        suggestions.move(-1);
+      } else if (historyPointer > 0) {
         historyPointer -= 1;
         commandInput.value = commandLog[historyPointer];
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (historyPointer < commandLog.length - 1) {
+      if (suggestions.isOpen()) {
+        suggestions.move(1);
+      } else if (historyPointer < commandLog.length - 1) {
         historyPointer += 1;
         commandInput.value = commandLog[historyPointer];
       } else {
@@ -206,6 +537,10 @@
       }
     }
   });
+
+  // Tapping away closes the dropdown (mousedown-preventDefault on items
+  // keeps focus, so a suggestion tap still registers before this fires).
+  commandInput.addEventListener('blur', () => setTimeout(() => suggestions.close(), 150));
 
   // Tapping anywhere on the terminal view refocuses the input. Scoped to
   // #terminal-view specifically (not the whole #screen) so tapping the
@@ -235,10 +570,14 @@
   let selectedAgencyId = null;
   let countySelectorBuiltForVersion = null;
 
-  // Real-time bus positions (Passio) are Hernando-only today -- see
-  // README's "Live map" scope note. A single, easy-to-extend list here
-  // rather than baking that assumption into liveMap.js itself.
-  const LIVE_TRACKING_AGENCIES = new Set(['hernando', 'pasco']);
+  // Which agencies have a real-time source wired into /api/live-buses:
+  // Hernando (Passio), Pasco (Avail/myStop), and HART (Swiftly's official
+  // API -- active whenever the backend has a Swiftly key configured; when
+  // it doesn't, HART simply reports "LIVE TRACKER UNAVAILABLE" with
+  // routes/stops still shown, no worse than before). A single,
+  // easy-to-extend list here rather than baking that assumption into
+  // liveMap.js itself -- see README's "Live map" scope note.
+  const LIVE_TRACKING_AGENCIES = new Set(['hernando', 'pasco', 'hart']);
 
   function agencyIdsOf(dataset) {
     return dataset && dataset.agencies ? Object.keys(dataset.agencies) : [];
@@ -249,8 +588,8 @@
   // already treat as "no agency filter" (both check `agencyId &&
   // ...`), so this needs no special-casing in either of them: it's
   // just never filtering anything out, and live tracking still runs
-  // normally (Hernando's real buses are still worth showing on the
-  // combined view even though Pasco/HART have none yet).
+  // normally (every agency's real buses are worth showing at once on the
+  // combined view).
   const ALL_COUNTIES = null;
   const ALL_COUNTIES_LABEL = 'TRI-COUNTY';
 
@@ -355,11 +694,11 @@
 
   /**
    * Starts (or stops) live bus polling based on which county is
-   * currently selected -- real-time positions only exist for the
-   * agencies in LIVE_TRACKING_AGENCIES (Hernando + Pasco today; HART has
-   * no source wired in yet, see README), so switching to HART says so
-   * plainly instead of leaving "CONNECTING TO LIVE TRACKER..." up
-   * forever for a county that will never actually connect. Selecting
+   * currently selected -- real-time positions exist for every agency in
+   * LIVE_TRACKING_AGENCIES: Hernando (Passio), Pasco (Avail/myStop), and
+   * HART (Swiftly). Selecting any OTHER agency (e.g. a future Citrus with
+   * no live feed) says so plainly instead of leaving "CONNECTING TO LIVE
+   * TRACKER..." up forever for a county that will never connect. Selecting
    * TRI-COUNTY (selectedAgencyId === null) polls every source at once,
    * unfiltered -- see startPolling()'s own agencyFilter param. Pulled
    * out of showMap() so selectCounty() can re-run it on every switch,
@@ -431,6 +770,292 @@
 
   tabTerminal.addEventListener('click', showTerminal);
   tabMap.addEventListener('click', showMap);
+
+  // ---- Service alerts banner (GTFS-RT via /api/service-alerts) ----
+  // Independent of dataset/map init: fetches active alerts when online and
+  // shows them across the top of both tabs; stays hidden otherwise.
+  TheBusServiceAlerts.init(document.getElementById('alerts-banner'));
+  if (global.TheBusRouteAlerts) TheBusRouteAlerts.init(); // set up the notification channel (native only; no-op on web)
+  if (global.TheBusPushClient) TheBusPushClient.init(); // register for server push if already permitted (native only)
+  // Resume any arrival reminders the rider set in a previous session; the
+  // poll self-idles immediately when there are none, and the stop popup
+  // restarts it when a new reminder is added.
+  if (global.TheBusReminders) TheBusReminders.start();
+
+  // ---- Live Map trip planner panel (Transitous via /api/plan) ----
+  (function setupTripPlannerPanel() {
+    const toggle = document.getElementById('plan-trip-toggle');
+    const panel = document.getElementById('trip-planner-panel');
+    const closeBtn = document.getElementById('tp-close');
+    const fromInput = document.getElementById('tp-from');
+    const toInput = document.getElementById('tp-to');
+    const hereBtn = document.getElementById('tp-here');
+    const swapBtn = document.getElementById('tp-swap');
+    const goBtn = document.getElementById('tp-go');
+    const results = document.getElementById('tp-results');
+    const prefTransfers = document.getElementById('tp-pref-transfers');
+    const prefWalking = document.getElementById('tp-pref-walking');
+    const prefWheelchair = document.getElementById('tp-pref-wheelchair');
+    const prefBikeShare = document.getElementById('tp-pref-bikeshare');
+    const savedWrap = document.getElementById('tp-saved-wrap');
+    const savedList = document.getElementById('tp-saved');
+    if (!toggle || !panel) return;
+
+    const MY_LOCATION = 'MY LOCATION';
+    let myLocationCoords = null; // {lat,lon} when FROM is "use my location"
+
+    // Restore saved preferences into the checkboxes; persist on change.
+    TheBusStorage.getTripPrefs().then((p) => {
+      prefTransfers.checked = p.fewerTransfers;
+      prefWalking.checked = p.lessWalking;
+      prefWheelchair.checked = p.wheelchair;
+      prefBikeShare.checked = p.bikeShare;
+    }).catch(() => {});
+    function currentPrefs() {
+      return { fewerTransfers: prefTransfers.checked, lessWalking: prefWalking.checked, wheelchair: prefWheelchair.checked, bikeShare: prefBikeShare.checked };
+    }
+    [prefTransfers, prefWalking, prefWheelchair, prefBikeShare].forEach((cb) =>
+      cb.addEventListener('change', () => { TheBusStorage.setTripPrefs(currentPrefs()).catch(() => {}); }));
+
+    // Editing FROM by hand clears any "use my location" coords tied to it.
+    fromInput.addEventListener('input', () => {
+      if (fromInput.value !== MY_LOCATION) myLocationCoords = null;
+    });
+
+    function setMsg(text) {
+      results.textContent = '';
+      const d = document.createElement('div');
+      d.className = 'tp-msg';
+      d.textContent = text;
+      results.appendChild(d);
+    }
+
+    function openPanel() {
+      panel.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      renderSaved();
+      fromInput.focus();
+    }
+    function closePanel() {
+      panel.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    toggle.addEventListener('click', () => (panel.hidden ? openPanel() : closePanel()));
+    closeBtn.addEventListener('click', closePanel);
+
+    // "Use my location" -> fill FROM with a sentinel + remember coords.
+    hereBtn.addEventListener('click', async () => {
+      hereBtn.disabled = true;
+      const prev = fromInput.value;
+      fromInput.value = 'LOCATING...';
+      try {
+        const pos = await TheBusGeolocate.getCurrentPosition();
+        if (pos && pos.lat != null) {
+          myLocationCoords = { lat: pos.lat, lon: pos.lon };
+          fromInput.value = MY_LOCATION;
+        } else {
+          fromInput.value = prev;
+          setMsg("COULDN'T GET YOUR LOCATION. TYPE A START INSTEAD.");
+        }
+      } catch (e) {
+        fromInput.value = prev;
+        setMsg("COULDN'T GET YOUR LOCATION. TYPE A START INSTEAD.");
+      } finally {
+        hereBtn.disabled = false;
+      }
+    });
+
+    swapBtn.addEventListener('click', () => {
+      const f = fromInput.value;
+      fromInput.value = toInput.value;
+      toInput.value = f;
+      myLocationCoords = null; // coords no longer map cleanly after a swap
+    });
+
+    // ---- Fares footer: which agencies this trip uses, and how to pay ----
+    function renderFaresFooter(result) {
+      if (!global.TheBusFares) return;
+      const names = new Set();
+      (result.itineraries || []).forEach((it) => (it.legs || []).forEach((leg) => {
+        if (leg.agency) names.add(leg.agency);
+      }));
+      const infos = [];
+      names.forEach((n) => { const info = TheBusFares.matchByName(n); if (info && !infos.includes(info)) infos.push(info); });
+      if (infos.length === 0) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'tp-fares';
+      const h = document.createElement('div');
+      h.className = 'tp-subhead';
+      h.textContent = 'FARES & TICKETS';
+      wrap.appendChild(h);
+      infos.forEach((info) => {
+        const line = document.createElement('div');
+        line.className = 'tp-fare-line';
+        const price = info.singleRide ? info.singleRide : 'SEE OFFICIAL PAGE';
+        line.textContent = `${info.label}: ${price}`;
+        wrap.appendChild(line);
+        const link = document.createElement('a');
+        link.className = 'tp-fare-link';
+        link.href = info.officialUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = `HOW TO PAY / BUY (${info.app ? info.app.name : 'OFFICIAL'})`;
+        wrap.appendChild(link);
+      });
+      results.appendChild(wrap);
+    }
+
+    function renderResult(result, saveTrip) {
+      results.textContent = '';
+      const fmt = TheBusTripPlanner.format;
+      const head = document.createElement('div');
+      head.className = 'tp-route-head';
+      const fromName = (result.from && result.from.name ? result.from.name : 'START').toUpperCase();
+      const toName = (result.to && result.to.name ? result.to.name : 'DESTINATION').toUpperCase();
+      head.textContent = `${fromName} -> ${toName}`;
+      results.appendChild(head);
+
+      // Draw the first option's route lines + A/B pins on the map.
+      if (TheBusLiveMap.drawTripPlan) {
+        TheBusLiveMap.drawTripPlan(result);
+      } else if (result.from && result.to && TheBusLiveMap.showTripEndpoints) {
+        TheBusLiveMap.showTripEndpoints(result.from, result.to);
+      }
+
+      const itins = result.itineraries || [];
+      if (itins.length === 0) {
+        const d = document.createElement('div');
+        d.className = 'tp-msg';
+        d.textContent = 'NO TRANSIT ROUTE FOUND BETWEEN THOSE TWO PLACES.';
+        results.appendChild(d);
+        return;
+      }
+
+      itins.forEach((it, i) => {
+        const opt = document.createElement('div');
+        opt.className = 'tp-option';
+        const meta = document.createElement('div');
+        meta.className = 'tp-option-meta';
+        const transfers = it.transfers === 0 ? 'DIRECT'
+          : (it.transfers != null ? `${it.transfers} TRANSFER${it.transfers === 1 ? '' : 'S'}` : '');
+        const parts = [fmt.duration(it.durationMinutes), transfers].filter(Boolean).join(', ');
+        meta.textContent = `OPTION ${i + 1}: ${fmt.time(it.departure)} -> ${fmt.time(it.arrival)}${parts ? '  (' + parts + ')' : ''}`;
+        opt.appendChild(meta);
+
+        (it.legs || []).forEach((leg) => {
+          const row = document.createElement('div');
+          row.className = 'tp-leg';
+          if (fmt.isActiveLeg(leg)) {
+            row.textContent = fmt.activeLegText(leg);
+            opt.appendChild(row);
+          } else {
+            row.textContent = `${fmt.modeLabel(leg)}${leg.headsign ? ' -> ' + leg.headsign.toUpperCase() : ''}`;
+            opt.appendChild(row);
+            const times = document.createElement('div');
+            times.className = 'tp-leg-time';
+            times.textContent = `${(leg.from || '').toUpperCase()} ${fmt.time(leg.departure)} -> ${(leg.to || '').toUpperCase()} ${fmt.time(leg.arrival)}`;
+            opt.appendChild(times);
+          }
+        });
+        results.appendChild(opt);
+      });
+
+      renderFaresFooter(result);
+
+      // Offer to save the trip -- only when both ends are plain text (a
+      // "my location" trip can't be re-planned from saved text).
+      if (saveTrip && saveTrip.from && saveTrip.to) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'tp-save';
+        saveBtn.textContent = '[ SAVE THIS TRIP ]';
+        saveBtn.addEventListener('click', async () => {
+          await TheBusStorage.addSavedTrip(saveTrip);
+          saveBtn.textContent = '[ SAVED ]';
+          saveBtn.disabled = true;
+          renderSaved();
+        });
+        results.appendChild(saveBtn);
+      }
+    }
+
+    function localResolve(text) {
+      if (!global.TheBusLocalPlaces) return null;
+      try { return TheBusLocalPlaces.resolve(text); } catch (e) { return null; }
+    }
+
+    async function runPlan() {
+      const fromText = fromInput.value.trim();
+      const toText = toInput.value.trim();
+      const usingMyLocation = fromText === MY_LOCATION && myLocationCoords;
+      if ((!fromText && !usingMyLocation) || !toText) { setMsg('ENTER BOTH A START AND A DESTINATION.'); return; }
+      goBtn.disabled = true;
+      goBtn.textContent = '[ PLANNING... ]';
+      setMsg('PLANNING...');
+
+      // Resolve local endpoints against the bundled OSM corpus first (a
+      // landmark the online geocoder may not know); fall back to sending
+      // the text for Transitous to geocode (cities/addresses).
+      const opts = {};
+      let fromLabel = fromText;
+      let toLabel = toText;
+      if (usingMyLocation) {
+        opts.fromCoords = myLocationCoords;
+        fromLabel = MY_LOCATION;
+      } else {
+        const rf = localResolve(fromText);
+        if (rf) { opts.fromCoords = { lat: rf.lat, lon: rf.lon }; fromLabel = rf.name || fromText; }
+      }
+      const rt = localResolve(toText);
+      if (rt) { opts.toCoords = { lat: rt.lat, lon: rt.lon }; toLabel = rt.name || toText; }
+
+      const outcome = await TheBusTripPlanner.planStructured(fromLabel, toLabel, currentPrefs(), Object.keys(opts).length ? opts : undefined);
+      goBtn.disabled = false;
+      goBtn.textContent = '[ PLAN ]';
+      if (outcome.error) { setMsg(outcome.error); return; }
+      // Save the rider's original typed text (so a re-plan re-resolves).
+      const saveTrip = (!usingMyLocation && fromText && toText) ? { from: fromText, to: toText } : null;
+      renderResult(outcome.result, saveTrip);
+    }
+
+    goBtn.addEventListener('click', runPlan);
+    [fromInput, toInput].forEach((el) => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); runPlan(); }
+    }));
+
+    // ---- Saved trips ----
+    async function renderSaved() {
+      let trips = [];
+      try { trips = await TheBusStorage.getSavedTrips(); } catch (e) { trips = []; }
+      savedList.textContent = '';
+      if (!trips.length) { savedWrap.hidden = true; return; }
+      savedWrap.hidden = false;
+      trips.forEach((t) => {
+        const row = document.createElement('div');
+        row.className = 'tp-saved-row';
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'tp-saved-go';
+        go.textContent = `${t.from.toUpperCase()} -> ${t.to.toUpperCase()}`;
+        go.addEventListener('click', () => {
+          fromInput.value = t.from;
+          toInput.value = t.to;
+          myLocationCoords = null;
+          runPlan();
+        });
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'tp-mini';
+        del.setAttribute('aria-label', 'Remove saved trip');
+        del.textContent = 'X';
+        del.addEventListener('click', async () => { await TheBusStorage.removeSavedTrip(t.from, t.to); renderSaved(); });
+        row.appendChild(go);
+        row.appendChild(del);
+        savedList.appendChild(row);
+      });
+    }
+  })();
 
   // iOS Safari shrinks the *visual* viewport (not the layout viewport)
   // when the on-screen keyboard opens, which `height: 100%` doesn't
@@ -521,6 +1146,8 @@
     // know the on-disk/on-the-wire shape differs from what they expect.
     const data = TheBusSync.expandDataset(rawData);
     TheBusQueryEngine.setDataset(data);
+    if (global.TheBusLocalPlaces) TheBusLocalPlaces.setDataset(data); // offline place lookup for the trip planner
+    if (global.TheBusSuggest) TheBusSuggest.setDataset(data); // predictive search index
     lastDataset = data;
     // Covers the case where the rider switched to the map tab before this
     // ran -- the map would've drawn with no routes/stops yet otherwise.
@@ -550,7 +1177,11 @@
       bootStatus.classList.add('ready');
       setStatus(source === 'bundled' ? 'READY (BUILT-IN SCHEDULE DATA)' : 'READY (OFFLINE CACHE)');
       renderFreshness();
-      appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+      appendEntry('sys', i18n.t('seed.ask'));
+      appendEntry('sys', i18n.t('seed.farther'));
+      appendEntry('sys', i18n.t('seed.fares'));
+      appendEntry('sys', i18n.t('seed.favorites'));
+      appendEntry('sys', i18n.t('seed.offlinemap'));
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
@@ -573,7 +1204,7 @@
       bootStatus.classList.add('ready');
       setStatus('DATASET SYNCED -- READY');
       if (!initialData) {
-        appendEntry('sys', 'TYPE A QUESTION BELOW, E.G. "WHEN IS THE NEXT BUS AT AVALON PUBLIX?"');
+        appendEntry('sys', i18n.t('seed.ask'));
       }
     }
     // Re-render regardless of whether anything NEW came down -- a check
@@ -608,4 +1239,4 @@
       window.Capacitor.Plugins.App.exitApp();
     });
   }
-})();
+})(typeof window !== 'undefined' ? window : globalThis);

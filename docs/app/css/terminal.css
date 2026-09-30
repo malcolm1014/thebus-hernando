@@ -18,6 +18,10 @@
   --fg-dim: #1f9900;
   --fg-bright: #7dff5c;
   --scanline: rgba(0, 0, 0, 0.35);
+  /* Amber, deliberately OFF the green palette: a service alert should read
+     as "pay attention, this is different" against the all-green UI. */
+  --warn: #ffb000;
+  --warn-dim: #a86f00;
 }
 
 * { box-sizing: border-box; }
@@ -121,6 +125,17 @@ body {
 }
 
 #crt.effects-off #screen { text-shadow: none; }
+
+/* Larger-text accessibility option (opt-in, persisted; see storage.js /
+   app.js). The terminal's sizes are in px, so the reliable lever in the
+   Chromium webview is `zoom` on the text surfaces -- it scales everything
+   (px included) without touching the map, which keeps its own label sizes.
+   Independent of the OS font-size setting so a rider can enlarge just this
+   app. */
+:root[data-textsize="large"] #boot-banner { zoom: 1.2; }
+:root[data-textsize="large"] #terminal-view { zoom: 1.25; }
+:root[data-textsize="large"] .modal-box { zoom: 1.2; }
+:root[data-textsize="large"] #alerts-banner { zoom: 1.2; }
 
 #boot-banner {
   flex: 0 0 auto;
@@ -466,4 +481,281 @@ body {
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   border-bottom: 6px solid #000000;
+}
+
+/* ---- Service alerts banner (serviceAlerts.js) ---- */
+#alerts-banner {
+  background: rgba(0, 0, 0, 0.92);
+  border-bottom: 1px solid var(--warn-dim);
+  color: var(--warn);
+  max-height: 30vh;
+  overflow-y: auto;
+  flex: none;
+}
+#alerts-banner[hidden] { display: none; }
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(168, 111, 0, 0.4);
+}
+.alert-row:last-child { border-bottom: none; }
+.alert-body { flex: 1 1 auto; min-width: 0; }
+.alert-head { color: var(--warn); font-size: 18px; line-height: 1.2; }
+.alert-desc { color: var(--warn-dim); font-size: 16px; margin-top: 2px; }
+.alert-dismiss {
+  flex: none;
+  background: transparent;
+  color: var(--warn-dim);
+  border: 1px solid var(--warn-dim);
+  font-family: inherit;
+  font-size: 16px;
+  min-width: 32px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.alert-dismiss:active { background: rgba(255, 176, 0, 0.15); }
+
+/* ---- Live-map trip planner (tripPlanner.js) ---- */
+#plan-trip-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 18px;
+  padding: 6px 10px;
+  min-height: 44px;
+  border: 1px solid var(--fg-dim);
+  cursor: pointer;
+}
+#plan-trip-toggle:active { background: rgba(51, 255, 0, 0.15); }
+
+#trip-planner-panel {
+  position: absolute;
+  right: 8px;
+  bottom: 60px;
+  z-index: 1001;
+  width: min(380px, calc(100% - 16px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.95);
+  border: 1px solid var(--fg-dim);
+  padding: 10px 12px;
+  color: var(--fg);
+}
+#trip-planner-panel[hidden] { display: none; }
+.tp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--fg-bright);
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+.tp-close {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--fg-dim);
+  font-family: inherit;
+  font-size: 16px;
+  min-width: 32px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.tp-field {
+  display: block;
+  color: var(--fg-dim);
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.tp-field input {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  background: #000000;
+  color: var(--fg);
+  border: 1px solid var(--fg-dim);
+  font-family: inherit;
+  font-size: 18px;
+  padding: 6px 8px;
+  min-height: 40px;
+}
+.tp-field input:focus { outline: 1px solid var(--fg-bright); border-color: var(--fg-bright); }
+.tp-go {
+  width: 100%;
+  background: rgba(51, 255, 0, 0.1);
+  color: var(--fg-bright);
+  border: 1px solid var(--fg-dim);
+  font-family: inherit;
+  font-size: 18px;
+  padding: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.tp-go:active { background: rgba(51, 255, 0, 0.2); }
+.tp-go[disabled] { color: var(--fg-dim); cursor: default; }
+
+#tp-results { margin-top: 10px; font-size: 16px; }
+.tp-msg { color: var(--fg-dim); padding: 6px 0; }
+.tp-route-head { color: var(--fg-bright); font-size: 18px; margin: 6px 0 4px; }
+.tp-option { border-top: 1px solid rgba(31, 153, 0, 0.5); padding: 8px 0; }
+.tp-option-meta { color: var(--fg-bright); }
+.tp-leg { padding: 3px 0 3px 10px; color: var(--fg); }
+.tp-leg-time { color: var(--fg-dim); }
+
+/* Trip planner start/end markers (A/B) on the Live Map. */
+.trip-endpoint-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--fg-bright);
+  color: #000000;
+  border: 2px solid #000000;
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 16px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: bold;
+  box-shadow: 0 0 6px rgba(125, 255, 92, 0.7);
+}
+
+/* Alert "more info" link */
+.alert-link {
+  display: inline-block;
+  margin-top: 3px;
+  color: var(--warn);
+  text-decoration: underline;
+  font-size: 15px;
+}
+
+/* Trip planner: mini buttons, prefs, saved trips, fares */
+.tp-field-row { display: flex; gap: 6px; align-items: stretch; }
+.tp-field-row input { flex: 1 1 auto; }
+.tp-mini {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--fg-dim);
+  font-family: inherit;
+  font-size: 18px;
+  min-width: 40px;
+  min-height: 40px;
+  cursor: pointer;
+}
+.tp-mini:active { background: rgba(51, 255, 0, 0.15); }
+.tp-swap-row { display: flex; justify-content: center; margin: 2px 0 6px; }
+
+.tp-prefs {
+  border: 1px solid var(--fg-dim);
+  margin: 4px 0 10px;
+  padding: 6px 10px 8px;
+}
+.tp-prefs legend { color: var(--fg-dim); font-size: 14px; padding: 0 4px; }
+.tp-prefs label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 16px;
+  min-height: 34px;
+}
+.tp-prefs input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--fg); }
+
+.tp-subhead { color: var(--fg-dim); font-size: 14px; letter-spacing: 1px; margin: 10px 0 4px; }
+#tp-saved-wrap[hidden] { display: none; }
+.tp-saved-row { display: flex; gap: 6px; align-items: stretch; margin-bottom: 4px; }
+.tp-saved-go {
+  flex: 1 1 auto;
+  text-align: left;
+  background: rgba(51, 255, 0, 0.06);
+  color: var(--fg);
+  border: 1px solid var(--fg-dim);
+  font-family: inherit;
+  font-size: 15px;
+  padding: 6px 8px;
+  min-height: 38px;
+  cursor: pointer;
+}
+.tp-saved-go:active { background: rgba(51, 255, 0, 0.18); }
+
+.tp-save {
+  margin-top: 10px;
+  width: 100%;
+  background: transparent;
+  color: var(--fg-bright);
+  border: 1px dashed var(--fg-dim);
+  font-family: inherit;
+  font-size: 16px;
+  padding: 7px;
+  min-height: 40px;
+  cursor: pointer;
+}
+.tp-save[disabled] { color: var(--fg-dim); cursor: default; border-style: solid; }
+
+.tp-fares { margin-top: 10px; border-top: 1px solid rgba(31, 153, 0, 0.5); padding-top: 6px; }
+.tp-fare-line { color: var(--fg); font-size: 15px; margin-top: 4px; }
+.tp-fare-link { display: inline-block; color: var(--fg-bright); text-decoration: underline; font-size: 15px; margin: 2px 0 4px; }
+
+/* Follow-a-route button inside a route line's map popup */
+.route-follow-btn {
+  margin-top: 4px;
+  background: rgba(51, 255, 0, 0.1);
+  color: var(--fg-bright);
+  border: 1px solid var(--fg-dim);
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 18px;
+  padding: 5px 8px;
+  min-height: 38px;
+  cursor: pointer;
+}
+.route-follow-btn:active { background: rgba(51, 255, 0, 0.2); }
+
+/* ---- Predictive search suggestions (suggest.js) ---- */
+#suggestions {
+  flex: 0 0 auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 42vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--fg-dim);
+  background: rgba(0, 0, 0, 0.96);
+}
+#suggestions[hidden] { display: none; }
+.sugg {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(31, 153, 0, 0.25);
+  cursor: pointer;
+}
+.sugg:last-child { border-bottom: none; }
+.sugg.active { background: rgba(51, 255, 0, 0.16); }
+.sugg-label { color: var(--fg-bright); font-size: 19px; line-height: 1.15; }
+.sugg-hint { color: var(--fg-dim); font-size: 14px; }
+
+/* ---- High-contrast / accessibility mode (app.js contrast toggle) ---- */
+/* Crisp white-on-black, no CRT bloom or scanlines, larger base text --
+   for low-vision riders. The retro look is the default; this is opt-in. */
+:root[data-contrast="high"] {
+  --fg: #ffffff;
+  --fg-bright: #ffffff;
+  --fg-dim: #cfcfcf;
+}
+[data-contrast="high"] #screen { text-shadow: none !important; font-size: 1.08em; }
+[data-contrast="high"] #crt { animation: none !important; }
+[data-contrast="high"] #crt::before,
+[data-contrast="high"] #crt::after { display: none !important; }
+[data-contrast="high"] #history .sys-ai { text-shadow: none !important; color: #ffd24a; }
+[data-contrast="high"] .leaflet-tile-pane { filter: none; } /* readable street map, not inverted green */
+
+/* ---- Reduced motion: respect the OS setting for animations/transitions ---- */
+@media (prefers-reduced-motion: reduce) {
+  #crt { animation: none !important; }
+  #crt::before, #crt::after { animation: none !important; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
