@@ -321,7 +321,8 @@
     if (routeId == null) return 'BUS';
     const r = lastDataset && lastDataset.routes && lastDataset.routes[`hart:${routeId}`];
     const name = r && (r.shortName || r.longName);
-    return `ROUTE ${String(name || routeId)}`;
+    const word = (i18n.getLang && i18n.getLang() === 'es') ? 'RUTA' : 'ROUTE';
+    return `${word} ${String(name || routeId)}`;
   }
 
   /** Fetch and append a stop's live next-arrivals (with schedule adherence) beneath a terminal answer. Best-effort. */
@@ -333,16 +334,20 @@
       const data = await res.json();
       const preds = Array.isArray(data.predictions) ? data.predictions : [];
       if (!preds.length) return; // no live feed for this stop (offline, or non-HART) -> schedule answer stands alone
+      const es = i18n.getLang && i18n.getLang() === 'es';
       const lines = preds.slice(0, 3).map((p) => {
-        const mins = p.minutesUntil <= 0 ? 'DUE' : `${p.minutesUntil} MIN`;
+        const mins = p.minutesUntil <= 0 ? (es ? 'AHORA' : 'DUE') : `${p.minutesUntil} MIN`;
         let adherence = '';
         if (p.delaySeconds != null && Number.isFinite(p.delaySeconds)) {
           const m = Math.round(p.delaySeconds / 60);
-          adherence = m >= 1 ? ` (${m} MIN LATE)` : (m <= -1 ? ` (${-m} MIN EARLY)` : ' (ON TIME)');
+          adherence = m >= 1 ? (es ? ` (${m} MIN TARDE)` : ` (${m} MIN LATE)`)
+            : (m <= -1 ? (es ? ` (${-m} MIN ADELANTADO)` : ` (${-m} MIN EARLY)`)
+              : (es ? ' (A TIEMPO)' : ' (ON TIME)'));
         }
         return `${liveRouteLabel(p.routeId)}: ${mins}${adherence}`;
       });
-      appendEntry('sys', `LIVE ARRIVALS AT ${String(stop.name).toUpperCase()}: ${lines.join('  ·  ')}`);
+      const label = es ? 'LLEGADAS EN VIVO EN' : 'LIVE ARRIVALS AT';
+      appendEntry('sys', `${label} ${String(stop.name).toUpperCase()}: ${lines.join('  ·  ')}`);
     } catch (e) { /* live arrivals are a bonus; the schedule answer already stands */ }
   }
 

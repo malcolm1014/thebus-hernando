@@ -14,19 +14,24 @@
    * @returns {string} the board text (one entry per stop, soonest arrivals first)
    */
   function formatBoard(stops) {
+    // English by default (so the pure tests stay identical); Spanish when the
+    // rider has picked it -- same tr() contract as queryEngine.js.
+    const es = (global.TheBusI18n && TheBusI18n.getLang && TheBusI18n.getLang() === 'es');
+    const tr = (en, esText) => (es && esText != null ? esText : en);
     if (!stops || !stops.length) {
-      return 'NO FAVORITE STOPS YET. OPEN THE LIVE MAP, TAP A STOP, AND TAP "★ FAVORITE".';
+      return tr('NO FAVORITE STOPS YET. OPEN THE LIVE MAP, TAP A STOP, AND TAP "★ FAVORITE".',
+        'AÚN NO TIENES PARADAS FAVORITAS. ABRE EL MAPA EN VIVO, TOCA UNA PARADA Y TOCA "★ FAVORITE".');
     }
-    const lines = ['★ YOUR STOPS'];
+    const lines = [tr('★ YOUR STOPS', '★ TUS PARADAS')];
     for (const s of stops) {
       lines.push(`• ${String(s.name).toUpperCase()}`);
       const arrivals = Array.isArray(s.arrivals) ? s.arrivals.slice(0, 3) : [];
       if (!arrivals.length) {
-        lines.push('    NO MORE ARRIVALS TODAY');
+        lines.push(tr('    NO MORE ARRIVALS TODAY', '    NO HAY MÁS LLEGADAS HOY'));
         continue;
       }
       for (const a of arrivals) {
-        const mins = a.minutesUntil <= 0 ? 'DUE' : `${a.minutesUntil} MIN`;
+        const mins = a.minutesUntil <= 0 ? tr('DUE', 'AHORA') : `${a.minutesUntil} MIN`;
         lines.push(`    ${String(a.routeLabel).toUpperCase()}: ${mins}`);
       }
     }
