@@ -274,6 +274,13 @@
       return;
     }
 
+    // Offline map: "DOWNLOAD OFFLINE MAP" (or Spanish "descargar mapa...") ->
+    // prefetch the whole region's tiles so the Live Map works with no signal.
+    if (global.TheBusOfflineMap && /^\s*(?:download offline map|offline map|save (?:the )?map|descargar (?:el )?mapa(?: sin conexi[oó]n)?)\s*$/i.test(text)) {
+      downloadOfflineMap();
+      return;
+    }
+
     withProcessingDelay(async () => {
       let answer;
       try {
@@ -355,6 +362,36 @@
       return { name: f.name, arrivals };
     });
     return TheBusFavorites.formatBoard(stops);
+  }
+
+  /** Prefetch the whole region's basemap tiles into the cache so the Live Map works offline. */
+  async function downloadOfflineMap() {
+    const say = (kind, key) => appendEntry(kind, i18n.t(key));
+    if (!lastDataset) { say('err', 'offlinemap.nodata'); return; }
+    if (!global.TheBusTileCache || !TheBusTileCache.available()) { say('err', 'offlinemap.unsupported'); return; }
+    if (global.navigator && navigator.onLine === false) { say('err', 'offlinemap.offline'); return; }
+    const bbox = TheBusOfflineMap.boundsFromDataset(lastDataset);
+    if (!bbox) { say('err', 'offlinemap.nodata'); return; }
+
+    // z10-13: regional overview through neighborhood level (a few hundred
+    // tiles). Street-level detail (z14+) still fills in from on-view caching.
+    const tiles = TheBusOfflineMap.tilesForBounds(bbox, 10, 13);
+    const base = (global.TheBusSync && TheBusSync.API_BASE) ? TheBusSync.API_BASE : '';
+    appendEntry('sys', i18n.t('offlinemap.start').replace('{n}', String(tiles.length)));
+    try {
+      const result = await TheBusOfflineMap.downloadRegion({
+        apiBase: base,
+        tiles,
+        onProgress: (done, total) => {
+          setStatus(i18n.t('offlinemap.progress').replace('{done}', String(done)).replace('{total}', String(total)));
+        },
+      });
+      appendEntry('sys', i18n.t('offlinemap.done').replace('{n}', String(result.cached)));
+    } catch (e) {
+      appendEntry('err', i18n.t('offlinemap.offline'));
+    } finally {
+      renderFreshness();
+    }
   }
 
   function submitAndClear() {
@@ -1139,6 +1176,7 @@
       appendEntry('sys', i18n.t('seed.farther'));
       appendEntry('sys', i18n.t('seed.fares'));
       appendEntry('sys', i18n.t('seed.favorites'));
+      appendEntry('sys', i18n.t('seed.offlinemap'));
       // Don't pop the keyboard open behind an onboarding modal that's
       // still up -- this can finish before the rider has answered it.
       if (onboardLocation.hidden && onboardHelp.hidden) commandInput.focus();
