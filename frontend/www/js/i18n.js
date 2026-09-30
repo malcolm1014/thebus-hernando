@@ -51,6 +51,9 @@
       'fx.off': '[ EFFECTS: OFF ]',
       'contrast.on': '[ HIGH CONTRAST: ON ]',
       'contrast.off': '[ HIGH CONTRAST: OFF ]',
+      'textsize.on': '[ LARGER TEXT: ON ]',
+      'textsize.off': '[ LARGER TEXT: OFF ]',
+      'voice.listening': 'LISTENING...',
       // The language button shows the language it switches TO.
       'lang.switch': 'ESPAÑOL',
     },
@@ -82,6 +85,9 @@
       'fx.off': '[ EFECTOS: NO ]',
       'contrast.on': '[ ALTO CONTRASTE: SÍ ]',
       'contrast.off': '[ ALTO CONTRASTE: NO ]',
+      'textsize.on': '[ TEXTO GRANDE: SÍ ]',
+      'textsize.off': '[ TEXTO GRANDE: NO ]',
+      'voice.listening': 'ESCUCHANDO...',
       'lang.switch': 'ENGLISH',
     },
   };

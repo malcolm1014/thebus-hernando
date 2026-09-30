@@ -58,6 +58,26 @@
     .then(applyHighContrast)
     .catch((err) => console.error('contrast toggle: failed to read stored preference', err));
 
+  // ---- Larger-text accessibility option (opt-in) ----
+  const textSizeToggle = document.getElementById('text-size-toggle');
+  function applyLargeText(enabled) {
+    document.documentElement.setAttribute('data-textsize', enabled ? 'large' : 'normal');
+    if (textSizeToggle) {
+      textSizeToggle.textContent = i18n.t(enabled ? 'textsize.on' : 'textsize.off');
+      textSizeToggle.setAttribute('aria-pressed', String(enabled));
+    }
+  }
+  if (textSizeToggle) {
+    textSizeToggle.addEventListener('click', async () => {
+      const enabled = !(await TheBusStorage.getLargeText());
+      await TheBusStorage.setLargeText(enabled);
+      applyLargeText(enabled);
+    });
+    TheBusStorage.getLargeText()
+      .then(applyLargeText)
+      .catch((err) => console.error('text-size toggle: failed to read stored preference', err));
+  }
+
   // ---- Language toggle (English / Spanish) ----
   const langToggle = document.getElementById('lang-toggle');
   // Re-render everything that carries translatable text: the static [data-i18n]
@@ -70,6 +90,7 @@
     // recompute them from storage rather than from the static table.
     TheBusStorage.getEffectsEnabled().then(applyEffectsEnabled).catch(() => {});
     TheBusStorage.getHighContrast().then(applyHighContrast).catch(() => {});
+    TheBusStorage.getLargeText().then(applyLargeText).catch(() => {});
   }
   if (langToggle) {
     langToggle.addEventListener('click', async () => {
@@ -80,6 +101,36 @@
     TheBusStorage.getLang()
       .then((lang) => applyLanguage(lang))
       .catch(() => applyLanguage('en'));
+  }
+
+  // ---- Voice input (voice.js): dictate a question instead of typing ----
+  const voiceBtn = document.getElementById('voice-btn');
+  if (voiceBtn && global.TheBusVoice && TheBusVoice.isAvailable()) {
+    voiceBtn.hidden = false;
+    let listening = false;
+    voiceBtn.addEventListener('click', () => {
+      if (listening) return;
+      listening = true;
+      voiceBtn.setAttribute('aria-pressed', 'true');
+      const prevPlaceholder = commandInput.getAttribute('placeholder') || '';
+      commandInput.setAttribute('placeholder', i18n.t('voice.listening'));
+      TheBusVoice.listen({
+        lang: i18n.getLang() === 'es' ? 'es-US' : 'en-US',
+        onResult: (transcript) => {
+          if (transcript) {
+            commandInput.value = transcript;
+            handleSubmit(transcript);
+            commandInput.value = '';
+          }
+        },
+        onError: () => { /* mic denied / no speech heard -> just stop quietly */ },
+        onEnd: () => {
+          listening = false;
+          voiceBtn.setAttribute('aria-pressed', 'false');
+          commandInput.setAttribute('placeholder', prevPlaceholder);
+        },
+      });
+    });
   }
 
   // ---- Crash reporting -- see backend's /api/crash-report for what

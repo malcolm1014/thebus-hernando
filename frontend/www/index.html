@@ -27,6 +27,7 @@
              terminal look itself is never removed, only optional. -->
         <button type="button" id="fx-toggle" aria-pressed="true">[ EFFECTS: ON ]</button>
         <button type="button" id="contrast-toggle" aria-pressed="false">[ HIGH CONTRAST: OFF ]</button>
+        <button type="button" id="text-size-toggle" aria-pressed="false">[ LARGER TEXT: OFF ]</button>
         <button type="button" id="lang-toggle" aria-label="Switch language / Cambiar idioma">ESPAÑOL</button>
       </div>
 
@@ -65,6 +66,10 @@
                  autocorrect="off" spellcheck="false" inputmode="text"
                  role="combobox" aria-expanded="false" aria-autocomplete="list"
                  aria-controls="suggestions" aria-activedescendant="" />
+          <!-- Voice input (voice.js) -- shown by app.js only when the device
+               supports SpeechRecognition; hidden otherwise so it never sits
+               there dead. -->
+          <button type="button" id="voice-btn" aria-label="Speak your question" title="Speak your question" hidden>&#127908;</button>
         </div>
       </div>
 
@@ -191,6 +196,7 @@
   <script src="js/tripPlanner.js"></script>
   <script src="js/routeAlerts.js"></script>
   <script src="js/reminders.js"></script>
+  <script src="js/voice.js"></script>
   <script src="js/pushClient.js"></script>
   <script src="js/serviceAlerts.js"></script>
   <script src="js/faresInfo.js"></script>
