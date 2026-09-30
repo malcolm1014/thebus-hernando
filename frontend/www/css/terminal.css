@@ -126,6 +126,17 @@ body {
 
 #crt.effects-off #screen { text-shadow: none; }
 
+/* Larger-text accessibility option (opt-in, persisted; see storage.js /
+   app.js). The terminal's sizes are in px, so the reliable lever in the
+   Chromium webview is `zoom` on the text surfaces -- it scales everything
+   (px included) without touching the map, which keeps its own label sizes.
+   Independent of the OS font-size setting so a rider can enlarge just this
+   app. */
+:root[data-textsize="large"] #boot-banner { zoom: 1.2; }
+:root[data-textsize="large"] #terminal-view { zoom: 1.25; }
+:root[data-textsize="large"] .modal-box { zoom: 1.2; }
+:root[data-textsize="large"] #alerts-banner { zoom: 1.2; }
+
 #boot-banner {
   flex: 0 0 auto;
   color: var(--fg-dim);

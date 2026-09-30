@@ -16,6 +16,7 @@
   const TRIP_PREFS_KEY = 'thebus_trip_prefs';
   const FOLLOWED_ROUTES_KEY = 'thebus_followed_routes';
   const HIGH_CONTRAST_KEY = 'thebus_high_contrast';
+  const LARGE_TEXT_KEY = 'thebus_large_text';
   const REMINDERS_KEY = 'thebus_arrival_reminders';
   const FAVORITE_STOPS_KEY = 'thebus_favorite_stops';
   const LANG_KEY = 'thebus_lang';
@@ -362,6 +363,19 @@
     else localStorage.setItem(HIGH_CONTRAST_KEY, value);
   }
 
+  /** Larger-text accessibility option (opt-in; defaults off). */
+  async function getLargeText() {
+    let value;
+    if (Preferences) ({ value } = await Preferences.get({ key: LARGE_TEXT_KEY }));
+    else value = global.localStorage ? localStorage.getItem(LARGE_TEXT_KEY) : null;
+    return value === 'true';
+  }
+  async function setLargeText(enabled) {
+    const value = String(!!enabled);
+    if (Preferences) await Preferences.set({ key: LARGE_TEXT_KEY, value });
+    else if (global.localStorage) localStorage.setItem(LARGE_TEXT_KEY, value);
+  }
+
   global.TheBusStorage = {
     getLocalVersion, setLocalVersion, saveDataset, loadDataset, loadBundledSnapshot,
     getLastSyncedAt, setLastSyncedAt,
@@ -375,5 +389,6 @@
     getFavoriteStops, isFavoriteStop, addFavoriteStop, removeFavoriteStop,
     getLang, setLang,
     getHighContrast, setHighContrast,
+    getLargeText, setLargeText,
   };
 })(window);
