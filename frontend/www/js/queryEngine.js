@@ -28,9 +28,23 @@
     return lastLocation;
   }
 
+  // Per-answer side channel (reset each answerQuery, like lastLocation):
+  // the specific stop THIS answer was about, so app.js can fold in that
+  // stop's live arrivals (GTFS-RT predictions) when online -- the terminal
+  // equivalent of the map's stop popup. Distinct from lastContext, which
+  // persists across queries for pronoun resolution ("when's the next one").
+  let lastLiveStop = null;
+  // Intents whose answer is about one named stop's schedule -> live arrivals
+  // for that stop are worth folding in (see answerQuery).
+  const STOP_SCHEDULE_INTENTS = new Set(['FIND_NEXT_ARRIVAL', 'FIND_FIRST_LAST_BUS', 'SHOW_TIMETABLE', 'FIND_STOP_LOCATION']);
+  function getLastLiveStop() {
+    return lastLiveStop;
+  }
+
   let lastContext = { stop: null, route: null };
   function setLastContextStop(stop) {
     lastContext = stop ? { stop: { id: stop.id, name: stop.name }, route: null } : lastContext;
+    if (stop) lastLiveStop = { id: stop.id, name: stop.name };
   }
   function updateContextFromParsed(parsed) {
     if (parsed.stop && parsed.stop.alternatives.length === 0) {
@@ -1488,9 +1502,20 @@
    */
   async function answerQuery(text, now) {
     setLastLocation(null, null, null);
+    lastLiveStop = null; // reset per answer; set again only if this one resolves a stop
     if (!dataset) return 'DATASET NOT LOADED. CHECK YOUR CONNECTION AND RESTART.';
     const parsed = TheBusIntentParser.parseQuery(text, index);
     updateContextFromParsed(parsed);
+
+    // If this answer is about a specific, unambiguously-resolved stop's
+    // schedule, expose it so app.js can fold in that stop's live arrivals.
+    // (FIND_NEAREST_STOP resolves its stop internally, not from parsed.stop,
+    // and sets lastLiveStop via setLastContextStop instead.)
+    if (STOP_SCHEDULE_INTENTS.has(parsed.intent)
+      && parsed.stop && parsed.stop.alternatives && parsed.stop.alternatives.length === 0) {
+      const st = dataset.stops[parsed.stop.id];
+      if (st) lastLiveStop = { id: st.id, name: st.name };
+    }
 
     switch (parsed.intent) {
       case 'PLAN_TRIP': return answerPlanTrip(parsed, now);
@@ -1508,5 +1533,5 @@
     }
   }
 
-  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive, getLastLocation, getTripsIndex, agencyMinutesNow };
+  global.TheBusQueryEngine = { setDataset, getIndex, answerQuery, nextArrivals, isServiceActive, getLastLocation, getLastLiveStop, getTripsIndex, agencyMinutesNow };
 })(window);
