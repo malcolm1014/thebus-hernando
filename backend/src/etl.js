@@ -7,6 +7,7 @@ const { enrichAliases } = require('./enrich');
 const { loadOsmExtract } = require('./osm');
 const { hashContent } = require('./hash');
 const { compactForWire, expandFromWire } = require('./compact');
+const { hasCurrentService } = require('./feedFreshness');
 
 /**
  * Refuses to trust a new dataset that looks like a broken/truncated
@@ -113,6 +114,17 @@ async function fetchAndTransformAgency(agency, previousMerged) {
     await fetchGtfs(agency);
     const tables = parseAllGtfs(agency.id);
     const data = transform(tables, { id: agency.id, label: agency.label });
+    // Freshness gate: a feed whose entire service calendar has already
+    // elapsed describes only service that no longer runs -- adopting it
+    // would put a dead agency on the map (every schedule answer becomes
+    // "no service"). Refuse it and contribute nothing for this agency,
+    // rather than fall back (the previous slice would be just as stale).
+    // See feedFreshness.js for why this is a real risk (Citrus's only
+    // mirrored feed, and any agency that lets its GTFS lapse).
+    if (!hasCurrentService(data)) {
+      console.error(`[etl] [${agency.id}] feed has no current or future service (entire calendar elapsed) -- skipping this agency so it never shows as a dead agency on the map`);
+      return null;
+    }
     return { id: agency.id, label: agency.label, timezone: data.agencyTimezone, data };
   } catch (err) {
     console.error(`[etl] [${agency.id}] FAILED: ${err.message}`);
