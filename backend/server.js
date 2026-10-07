@@ -52,8 +52,36 @@ const planRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 15 });
 const alertsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30 });
 const predictionsRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 const pushRegisterRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 20 });
+// Live bus feeds. A device polls /api/live-buses every ~10s (6/min), and
+// several devices can share one NAT'd IP, so this is generous; the 8s
+// per-vendor cache (passio.js/pascoRealtime.js/swiftlyRealtime.js) already
+// bounds upstream load, so this just caps outright abuse of the public
+// endpoint, matching every other route. /api/live-status is diagnostic and
+// not polled, so it gets the tighter cap.
+const liveBusesRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 120 });
+const liveStatusRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60 });
 
 let etlRunning = false;
+
+// /api/version used to re-read AND JSON.parse the entire dataset file on
+// every single request -- and it's hit on every app launch -- just to pull
+// out two small fields. Cache those two fields keyed by the file's mtime: a
+// request only pays the read+parse when the ETL has actually written a newer
+// dataset, whichever process did the write (in-process initial ETL, the cron
+// ETL, or an external refresh). A bare fs.statSync is cheap next to parsing
+// the whole dataset.
+let versionCache = { mtimeMs: -1, payload: null };
+function readDatasetVersion() {
+  const stat = fs.statSync(config.outputPath); // caller has checked the file exists
+  if (versionCache.mtimeMs !== stat.mtimeMs) {
+    const data = JSON.parse(fs.readFileSync(config.outputPath, 'utf8'));
+    versionCache = {
+      mtimeMs: stat.mtimeMs,
+      payload: { version: data.version, generatedAt: data.generatedAt },
+    };
+  }
+  return versionCache.payload;
+}
 
 async function ensureInitialData() {
   if (fs.existsSync(config.outputPath)) return;
@@ -70,8 +98,7 @@ app.get('/api/version', versionRateLimit, (req, res) => {
   if (!fs.existsSync(config.outputPath)) {
     return res.status(503).json({ error: 'dataset not generated yet' });
   }
-  const data = JSON.parse(fs.readFileSync(config.outputPath, 'utf8'));
-  res.json({ version: data.version, generatedAt: data.generatedAt });
+  res.json(readDatasetVersion());
 });
 
 /**
@@ -154,7 +181,7 @@ function liveBusSources() {
   return sources;
 }
 
-app.get('/api/live-buses', async (req, res) => {
+app.get('/api/live-buses', liveBusesRateLimit, async (req, res) => {
   const sources = liveBusSources();
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
 
@@ -184,7 +211,7 @@ app.get('/api/live-buses', async (req, res) => {
  * making each feed's state visible without digging through server logs. Same
  * sources as /api/live-buses.
  */
-app.get('/api/live-status', async (req, res) => {
+app.get('/api/live-status', liveStatusRateLimit, async (req, res) => {
   const sources = liveBusSources();
   const results = await Promise.allSettled(sources.map((s) => s.fetch()));
   const agencies = results.map((result, i) => {

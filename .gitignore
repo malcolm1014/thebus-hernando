@@ -17,6 +17,15 @@ frontend/plugins/*/android/.gradle/
 frontend/www/data/transit_data.json
 frontend/.env
 
+# Signing keys & service credentials -- never commit a real one.
+# The debug keystore below is deliberately tracked (shared, well-known
+# "android" password, debug builds only), so it is excepted.
+*.keystore
+*.jks
+!frontend/keystore/debug.keystore
+google-services.json
+**/*service-account*.json
+
 # Misc
 .DS_Store
 *.log
