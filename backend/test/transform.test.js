@@ -1,6 +1,27 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { transform, mergeAgencyData } = require('../src/transform');
+const { transform, mergeAgencyData, normalizeTimezone } = require('../src/transform');
+
+test('normalizeTimezone: fixes the space-for-underscore typo (Citrus ships "America/New York")', () => {
+  assert.equal(normalizeTimezone('America/New York'), 'America/New_York');
+});
+
+test('normalizeTimezone: passes a valid zone through unchanged', () => {
+  assert.equal(normalizeTimezone('America/New_York'), 'America/New_York');
+  assert.equal(normalizeTimezone('America/Chicago'), 'America/Chicago');
+});
+
+test('normalizeTimezone: falls back to America/New_York for an unknown or empty value', () => {
+  assert.equal(normalizeTimezone('Not/AZone'), 'America/New_York');
+  assert.equal(normalizeTimezone(''), 'America/New_York');
+  assert.equal(normalizeTimezone(null), 'America/New_York');
+  assert.equal(normalizeTimezone(undefined), 'America/New_York');
+});
+
+test('transform: an agency feed with a malformed timezone is normalized in the output', () => {
+  const data = transform(baseTables({ agency: [{ agency_id: '1', agency_timezone: 'America/New York' }] }));
+  assert.equal(data.agencyTimezone, 'America/New_York');
+});
 
 /** Minimal hand-built GTFS row objects -- same shape csv-parse/sync produces from real CSV text, so transform() is exercised exactly as the real ETL would call it, without touching the filesystem. */
 function baseTables(overrides = {}) {

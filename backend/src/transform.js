@@ -104,9 +104,35 @@ function simplifyShapePoints(latLonPoints, toleranceMeters) {
  * behavior this function always had, so every existing single-agency
  * caller/test needs no changes at all.
  */
+/**
+ * Normalize an agency's GTFS timezone to a valid IANA name. The client
+ * feeds this straight into Intl.DateTimeFormat({ timeZone }) to compute
+ * "now" in the agency's own zone (see queryEngine.getAgencyClock), and an
+ * invalid value throws a RangeError there -- breaking arrival-time math
+ * for the whole dataset. Real feeds carry typos: Citrus County Transit's
+ * GTFS ships "America/New York" (a space instead of the required
+ * underscore). Fix the common space-for-underscore slip, then validate;
+ * anything still unrecognized falls back to America/New_York (every
+ * agency this app covers is US Eastern) with a warning rather than
+ * shipping a value that will throw on-device.
+ */
+function normalizeTimezone(raw) {
+  const DEFAULT_TZ = 'America/New_York';
+  if (!raw || typeof raw !== 'string') return DEFAULT_TZ;
+  const candidate = raw.trim().replace(/ /g, '_');
+  try {
+    // Throws RangeError for an unknown time zone; a no-op if it's valid.
+    Intl.DateTimeFormat('en-US', { timeZone: candidate });
+    return candidate;
+  } catch (e) {
+    console.warn(`[transform] agency timezone "${raw}" is not a valid IANA zone -- falling back to ${DEFAULT_TZ}`);
+    return DEFAULT_TZ;
+  }
+}
+
 function transform({ agency, routes, trips, stops, stopTimes, calendar, calendarDates, frequencies, shapes }, agencyMeta = null) {
   const ns = agencyMeta ? (id) => `${agencyMeta.id}:${id}` : (id) => id;
-  const agencyTimezone = (agency[0] && agency[0].agency_timezone) || 'America/New_York';
+  const agencyTimezone = normalizeTimezone(agency[0] && agency[0].agency_timezone);
 
   if (frequencies && frequencies.length > 0) {
     // Headway-based trips (frequencies.txt) generate arrivals dynamically
@@ -375,4 +401,4 @@ function pickMostCommonTimezone(agencyResults) {
   return best;
 }
 
-module.exports = { transform, mergeAgencyData, DOW_KEYS };
+module.exports = { transform, mergeAgencyData, normalizeTimezone, DOW_KEYS };

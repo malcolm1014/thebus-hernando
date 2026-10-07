@@ -268,6 +268,7 @@
     text-transform: uppercase;
   }
   .stop .tag.live { background: rgba(79,252,160,0.15); color: var(--green); border: 1px solid var(--green-dim); }
+  .stop .tag.sched { background: rgba(79,252,160,0.08); color: var(--green); border: 1px dashed var(--green-dim); }
   .stop .tag.soon { background: rgba(255,209,102,0.1); color: var(--amber); border: 1px dashed var(--amber); }
 
   .route-caption {
@@ -426,7 +427,7 @@
 <section class="coverage">
   <div class="wrap">
     <h2>Where It Runs</h2>
-    <p class="section-lede">One app, one search bar, three transit agencies stitched together — with a fourth on the way.</p>
+    <p class="section-lede">One app, one search bar, four transit agencies stitched together across the Nature Coast and Tampa Bay.</p>
 
     <div class="route-map">
       <div class="route-line-wrap">
@@ -448,18 +449,19 @@
           <div class="agency">HART (Tampa)</div>
           <span class="tag live">Live</span>
         </div>
-        <div class="stop upcoming">
+        <div class="stop">
           <div class="dot"></div>
           <div class="county">Citrus</div>
           <div class="agency">Citrus County Transit</div>
-          <span class="tag soon">Coming Soon</span>
+          <span class="tag sched">Schedule</span>
         </div>
       </div>
       <p class="route-caption">
         Trip planning can cross agency boundaries automatically — Fast Path will route you from a
         Hernando stop all the way into Tampa on HART, transfers and all. Real-time bus positions
-        are live across all three — Hernando, Pasco, and HART (Tampa) — each with live arrival
-        predictions and service alerts.
+        are live across three — Hernando, Pasco, and HART (Tampa) — each with live arrival
+        predictions and service alerts. Citrus County Transit route schedules are included too
+        (no live vehicle feed there yet).
       </p>
     </div>
   </div>
