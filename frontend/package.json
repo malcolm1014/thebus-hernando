@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "TriBus: offline-first 90s-terminal regional transit assistant covering Hernando, Pasco, and Tampa (HART) -- Citrus County pending. Vanilla JS/HTML/CSS bundled into a native Android shell via Capacitor.",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "refresh:snapshot": "node scripts/refresh-snapshot.js",
     "sync": "cap sync android",
     "open:android": "cap open android",
