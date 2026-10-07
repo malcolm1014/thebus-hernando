@@ -11,23 +11,31 @@ const AGENCY_DEFS = [
   { id: 'hernando', label: 'Hernando County Transit', envVar: 'GTFS_FEED_URL_HERNANDO', legacyEnvVar: 'GTFS_FEED_URL' },
   { id: 'pasco', label: 'PascoGo', envVar: 'GTFS_FEED_URL_PASCO' },
   { id: 'hart', label: 'HART (Hillsborough Area Regional Transit)', envVar: 'GTFS_FEED_URL_HART' },
-  // Citrus County Transit -- listed here inactive (no feed URL set
-  // anywhere by default) because their real feed is currently NOT
-  // fetchable by any automated client (Cloudflare-protected CMS blocks
-  // it -- see .env.example for the full investigation). Once a
-  // workaround exists, setting GTFS_FEED_URL_CITRUS activates it with no
-  // code change needed here.
-  { id: 'citrus', label: 'Citrus County Transit', envVar: 'GTFS_FEED_URL_CITRUS' },
+  // Citrus County Transit. Their live feed sits behind a Cloudflare CMS
+  // that blocks automated fetching (see .env.example), so we self-host a
+  // current snapshot of their GTFS in this repo (backend/seed/) and
+  // default to it -- Citrus activates out of the box, no Render env var
+  // needed. The feed's own calendar runs through 2040, and the ETL's
+  // freshness guard (feedFreshness.js) would skip it automatically if it
+  // ever lapsed. Set GTFS_FEED_URL_CITRUS to override (e.g. if the county
+  // ever exposes a direct, unprotected URL we can fetch live); refresh
+  // the committed snapshot when Citrus publishes a new schedule.
+  {
+    id: 'citrus',
+    label: 'Citrus County Transit',
+    envVar: 'GTFS_FEED_URL_CITRUS',
+    defaultUrl: 'https://raw.githubusercontent.com/malcolm1014/thebus-hernando/main/backend/seed/citrus-gtfs.zip',
+  },
 ];
 
 // Only agencies with an actual configured feed URL are active -- lets a
 // deployment run with just 1 or 2 agencies configured (e.g. while
 // rolling out a new one) instead of all-or-nothing.
 const agencies = AGENCY_DEFS
-  .map(({ id, label, envVar, legacyEnvVar }) => ({
+  .map(({ id, label, envVar, legacyEnvVar, defaultUrl }) => ({
     id,
     label,
-    feedUrl: process.env[envVar] || (legacyEnvVar && process.env[legacyEnvVar]) || null,
+    feedUrl: process.env[envVar] || (legacyEnvVar && process.env[legacyEnvVar]) || defaultUrl || null,
   }))
   .filter((a) => a.feedUrl);
 
