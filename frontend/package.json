@@ -5,12 +5,14 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "refresh:snapshot": "node scripts/refresh-snapshot.js",
-    "sync": "cap sync android",
+    "sync": "cap sync",
     "open:android": "cap open android",
+    "open:ios": "cap open ios",
     "add:android": "cap add android && npm run fix:android-manifest && npm run fix:min-sdk",
+    "add:ios": "cap add ios",
     "fix:android-manifest": "node scripts/patch-android-manifest.js",
     "fix:min-sdk": "node scripts/patch-min-sdk.js",
-    "gen:assets": "capacitor-assets generate --android"
+    "gen:assets": "capacitor-assets generate --android --ios"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
@@ -18,6 +20,7 @@
     "@capacitor/core": "^6.1.2",
     "@capacitor/filesystem": "^6.0.1",
     "@capacitor/geolocation": "^6.1.0",
+    "@capacitor/ios": "^6.2.2",
     "@capacitor/local-notifications": "^6.1.0",
     "@capacitor/preferences": "^6.0.2",
     "@capacitor/push-notifications": "^6.0.3",
