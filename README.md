@@ -280,16 +280,18 @@ cd frontend
 npm install
 npm test                # 25 unit tests: intentParser.js + queryEngine.js against a mock dataset
 npm run add:android     # first time only -- generates the android/ project (gitignored)
+npm run add:ios         # first time only -- generates the ios/ project (gitignored)
 npm run gen:assets      # generates all icon/splash resolutions from assets/icon.png + assets/splash.png
 # edit www/js/sync.js -> API_BASE to point at your deployed backend
 npm run sync            # copies www/ into the native shell
 npm run open:android    # opens Android Studio to build/run on device or emulator
+npm run open:ios        # opens Xcode to build/run on device or emulator
 ```
 
-`add:android` and `gen:assets` were both run and verified during
-scaffolding (87 icon/splash files generated cleanly across all
+`add:android`, `add:ios`, and `gen:assets` were run and verified during
+scaffolding (icon/splash files generated cleanly across all
 densities) -- confirmed the pipeline works end-to-end, though the
-`android/` output itself isn't committed (gitignored, regenerable, and
+`android/` and `ios/` output itself isn't committed (gitignored, regenerable, and
 -- like `node_modules` -- not something you want thousands of small
 files of on a Google Drive FUSE mount if you're building from one). The
 placeholder `assets/icon.png` / `assets/splash.png` are a plain `>_`
