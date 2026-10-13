@@ -308,7 +308,11 @@
    * those return null rather than guessing wrong.
    */
   function matchRouteId(bus) {
-    if (bus.routeId && currentDataset.routes[bus.routeId]) return bus.routeId;
+    if (bus.routeId) {
+      if (currentDataset.routes[bus.routeId]) return bus.routeId;
+      const namespacedId = bus.agencyId ? `${bus.agencyId}:${bus.routeId}` : null;
+      if (namespacedId && currentDataset.routes[namespacedId]) return namespacedId;
+    }
     const m = /route\s*#?\s*(\d+)/i.exec(bus.routeName || '');
     if (!m) return null;
     const num = m[1];
